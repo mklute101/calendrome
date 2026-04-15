@@ -25,9 +25,9 @@ describe('timesheet export', () => {
 
   it('emits one row per (date, task) with hours formatted as decimal', () => {
     const db = freshDb();
-    createProject(db, { id: 'san', name: 'SAN', prefix: 'SAN' });
-    const t1 = createTask(db, { project_id: 'san', title: 'Op-ed' });
-    const t2 = createTask(db, { project_id: 'san', title: 'Newsletter' });
+    createProject(db, { id: 'acme', name: 'Acme Corp', prefix: 'ACME' });
+    const t1 = createTask(db, { project_id: 'acme', title: 'Report' });
+    const t2 = createTask(db, { project_id: 'acme', title: 'Memo' });
 
     insertTimeLog(db, t1.id, '2026-04-14T09:00:00Z', 75); // 1.25h
     insertTimeLog(db, t2.id, '2026-04-14T11:00:00Z', 30); // 0.5h
@@ -38,15 +38,15 @@ describe('timesheet export', () => {
     expect(lines[0]).toBe('date,project,hours,task,notes');
     expect(lines.length).toBe(4);
 
-    expect(lines).toContain('2026-04-14,SAN,1.25,Op-ed,');
-    expect(lines).toContain('2026-04-14,SAN,0.5,Newsletter,');
-    expect(lines).toContain('2026-04-15,SAN,1,Op-ed,');
+    expect(lines).toContain('2026-04-14,ACME,1.25,Report,');
+    expect(lines).toContain('2026-04-14,ACME,0.5,Memo,');
+    expect(lines).toContain('2026-04-15,ACME,1,Report,');
   });
 
   it('excludes rows outside the date range', () => {
     const db = freshDb();
-    createProject(db, { id: 'san', name: 'SAN', prefix: 'SAN' });
-    const t = createTask(db, { project_id: 'san', title: 'X' });
+    createProject(db, { id: 'acme', name: 'Acme Corp', prefix: 'ACME' });
+    const t = createTask(db, { project_id: 'acme', title: 'X' });
     insertTimeLog(db, t.id, '2026-04-12T09:00:00Z', 60);
     insertTimeLog(db, t.id, '2026-04-20T09:00:00Z', 60);
 
@@ -56,9 +56,9 @@ describe('timesheet export', () => {
 
   it('quotes notes containing commas', () => {
     const db = freshDb();
-    createProject(db, { id: 'san', name: 'SAN', prefix: 'SAN' });
+    createProject(db, { id: 'acme', name: 'Acme Corp', prefix: 'ACME' });
     const t = createTask(db, {
-      project_id: 'san',
+      project_id: 'acme',
       title: 'Plain title',
       notes: 'note with, comma',
     });

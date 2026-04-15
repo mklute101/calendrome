@@ -6,7 +6,7 @@ import { listTasks } from '../src/tasks.js';
 
 function setup() {
   const db = freshDb();
-  createProject(db, { id: 'san', name: 'SAN', prefix: 'SAN' });
+  createProject(db, { id: 'acme', name: 'Acme Corp', prefix: 'ACME' });
   return db;
 }
 
@@ -24,7 +24,7 @@ describe('inbox', () => {
     inboxAdd(db, { title: 'first', notes: null });
     await new Promise((r) => setTimeout(r, 10));
     const second = inboxAdd(db, { title: 'second', notes: null });
-    inboxProcess(db, second.id, 'san');
+    inboxProcess(db, second.id, 'acme');
 
     const list = inboxList(db);
     expect(list.length).toBe(1);
@@ -45,19 +45,19 @@ describe('inbox', () => {
   it('inboxProcess creates a task in the project and flips processed', () => {
     const db = setup();
     const item = inboxAdd(db, { title: 'do laundry', notes: 'whites' });
-    const task = inboxProcess(db, item.id, 'san');
-    expect(task.project_id).toBe('san');
+    const task = inboxProcess(db, item.id, 'acme');
+    expect(task.project_id).toBe('acme');
     expect(task.title).toBe('do laundry');
 
-    expect(listTasks(db, { project_id: 'san' }).length).toBe(1);
+    expect(listTasks(db, { project_id: 'acme' }).length).toBe(1);
     expect(inboxList(db).length).toBe(0);
   });
 
   it('throws when processing an already-processed item', () => {
     const db = setup();
     const item = inboxAdd(db, { title: 'x', notes: null });
-    inboxProcess(db, item.id, 'san');
-    expect(() => inboxProcess(db, item.id, 'san')).toThrow();
+    inboxProcess(db, item.id, 'acme');
+    expect(() => inboxProcess(db, item.id, 'acme')).toThrow();
   });
 
   it('inboxNext returns null when empty', () => {

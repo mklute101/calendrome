@@ -35,16 +35,16 @@ A local, project-based task scheduling engine that replaces Reclaim.ai. Instead 
 
 | New Feature | Why |
 |---|---|
-| **Project-based organization** | Tasks belong to projects (SAN, ATN, AP, M, MTB, etc.) |
+| **Project-based organization** | Tasks belong to projects (ACME, GLBX, INIT, HOOLI, HOBBY, etc.) |
 | **Project ↔ Calendar mapping** | Each project can have its own Google Calendar; sharing is per-calendar |
-| **Weekly hour budgets per project** | "SAN = 20h/week, MTB = 5h/week" — soft cap, warns when exceeded |
+| **Weekly hour budgets per project** | "ACME = 20h/week, HOBBY = 5h/week" — soft cap, warns when exceeded |
 | **Habits as recurring time blocks** | Schedule + duration that generates calendar events and counts toward budget |
 | **Timesheet CSV export** | Date range → date, project, hours, task, notes — paste into anything |
 | **Read APIs for planner skills** | Free slots, this-week tasks, budget status, today's habits — fuel the daily/weekly planner |
 | **Local-first storage** | SQLite — fast, portable, no AWS dependency |
 | **MCP server (stdio)** | Direct Claude Code integration, no network hop |
 | **GitHub-hosted** | Enable Claude Code remote agent usage |
-| **Prefix convention built-in** | SAN:, ATN:, etc. are first-class, not just naming convention |
+| **Prefix convention built-in** | ACME:, GLBX:, etc. are first-class, not just naming convention |
 | **Task dependencies** | Optional: "do X before Y" |
 | **Estimated vs actual time** | `duration_minutes` is the estimate ("this'll take 10h"), `time_spent_minutes` is summed from start/stop timestamps. Both feed budgets and CSV export. |
 | **Due dates** | `tasks.due` (ISO 8601). Listed by `listTasks({ due_before })` so the planner can prioritize. |
@@ -81,9 +81,9 @@ A local, project-based task scheduling engine that replaces Reclaim.ai. Instead 
 
 ```sql
 CREATE TABLE projects (
-  id          TEXT PRIMARY KEY,        -- e.g. "san", "atn", "mtb"
-  name        TEXT NOT NULL,           -- e.g. "Straight Arrow News"
-  prefix      TEXT NOT NULL UNIQUE,    -- e.g. "SAN"
+  id          TEXT PRIMARY KEY,        -- e.g. "acme", "glbx", "hobby"
+  name        TEXT NOT NULL,           -- e.g. "Acme Corp"
+  prefix      TEXT NOT NULL UNIQUE,    -- e.g. "ACME"
   calendar_id TEXT,                    -- Google Calendar ID (null = primary)
   color       TEXT,                    -- hex color for UI
   weekly_budget_minutes INTEGER,       -- soft weekly hour budget (null = no budget)
@@ -102,7 +102,7 @@ CREATE TABLE time_policies (
   day_of_week INTEGER NOT NULL,        -- 0=Sun, 1=Mon, ... 6=Sat
   start_time  TEXT NOT NULL,           -- "09:00"
   end_time    TEXT NOT NULL,           -- "17:00"
-  timezone    TEXT DEFAULT 'America/Chicago'
+  timezone    TEXT DEFAULT 'UTC'
 );
 ```
 
@@ -162,7 +162,7 @@ CREATE TABLE habits (
   duration_minutes INTEGER NOT NULL,
   days_of_week    TEXT NOT NULL,       -- CSV "1,2,3,4,5" (0=Sun..6=Sat)
   start_time      TEXT NOT NULL,       -- "07:00"
-  timezone        TEXT DEFAULT 'America/Chicago',
+  timezone        TEXT DEFAULT 'UTC',
   active          INTEGER DEFAULT 1,
   created_at      TEXT DEFAULT (datetime('now'))
 );
@@ -252,7 +252,7 @@ Calendrome adds:
 2. **Week layout** — tasks + habit instances + existing calendar events for
    a date range, grouped by day, so the skill can present "here's your week".
 3. **Budget status** — allocated / spent / scheduled / remaining per project
-   so the skill can warn "SAN is at 22h/20h this week".
+   so the skill can warn "ACME is at 22h/20h this week".
 4. **Manual placement** — `place_task` creates the calendar event when the
    user agrees with a suggestion. No auto-write.
 5. **Habit materialization** — `generate_habit_instances` converts habit
@@ -398,6 +398,6 @@ From `~/dev/tools/reclaim_claude_connector/`:
 
 3. **Migration**: Import existing 600+ Reclaim tasks? Probably filter to just active (NEW/SCHEDULED/IN_PROGRESS) and map to projects by prefix.
 
-4. **Multi-calendar complexity**: If SAN and ATN both map to the same "primary" calendar, budget queries need to coordinate across projects. If they're separate calendars, simpler but user needs to set up those calendars first.
+4. **Multi-calendar complexity**: If ACME and GLBX both map to the same "primary" calendar, budget queries need to coordinate across projects. If they're separate calendars, simpler but user needs to set up those calendars first.
 
 5. **Remote agent**: What does the Claude Code hosted agent need? Just a GitHub repo with the MCP server? Or does it need to be deployed somewhere?

@@ -34,16 +34,16 @@ describe('budgets', () => {
   it('returns allocated/spent/scheduled/remaining/over_budget per project', () => {
     const db = freshDb();
     createProject(db, {
-      id: 'san',
-      name: 'SAN',
-      prefix: 'SAN',
+      id: 'acme',
+      name: 'Acme Corp',
+      prefix: 'ACME',
       weekly_budget_minutes: 600, // 10 hours
     });
 
-    const t = createTask(db, { project_id: 'san', title: 'X' });
+    const t = createTask(db, { project_id: 'acme', title: 'X' });
     insertTimeLog(db, t.id, '2026-04-14T10:00:00Z', 120); // 2h spent in week
 
-    const budget = getProjectBudget(db, 'san', WEEK_START);
+    const budget = getProjectBudget(db, 'acme', WEEK_START);
     expect(budget.allocated_minutes).toBe(600);
     expect(budget.spent_minutes).toBe(120);
     expect(budget.scheduled_minutes).toBe(0);
@@ -78,13 +78,13 @@ describe('budgets', () => {
   it('counts placed tasks (with calendar_event_id) as scheduled time', () => {
     const db = freshDb();
     createProject(db, {
-      id: 'san',
-      name: 'SAN',
-      prefix: 'SAN',
+      id: 'acme',
+      name: 'Acme Corp',
+      prefix: 'ACME',
       weekly_budget_minutes: 600,
     });
     const t = createTask(db, {
-      project_id: 'san',
+      project_id: 'acme',
       title: 'X',
       duration_minutes: 90,
     });
@@ -93,22 +93,22 @@ describe('budgets', () => {
       due: '2026-04-15T14:00:00Z',
     });
 
-    const budget = getProjectBudget(db, 'san', WEEK_START);
+    const budget = getProjectBudget(db, 'acme', WEEK_START);
     expect(budget.scheduled_minutes).toBe(90);
   });
 
   it('over_budget=true when spent + scheduled exceeds allocation', () => {
     const db = freshDb();
     createProject(db, {
-      id: 'san',
-      name: 'SAN',
-      prefix: 'SAN',
+      id: 'acme',
+      name: 'Acme Corp',
+      prefix: 'ACME',
       weekly_budget_minutes: 60,
     });
-    const t = createTask(db, { project_id: 'san', title: 'X' });
+    const t = createTask(db, { project_id: 'acme', title: 'X' });
     insertTimeLog(db, t.id, '2026-04-14T10:00:00Z', 90);
 
-    const budget = getProjectBudget(db, 'san', WEEK_START);
+    const budget = getProjectBudget(db, 'acme', WEEK_START);
     expect(budget.over_budget).toBe(true);
   });
 

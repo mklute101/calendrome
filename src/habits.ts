@@ -83,7 +83,7 @@ export function createHabit(db: DB, input: CreateHabitInput): Habit {
       input.duration_minutes,
       input.days_of_week,
       input.start_time,
-      input.timezone ?? 'America/Chicago',
+      input.timezone ?? 'UTC',
     );
   return getHabit(db, Number(result.lastInsertRowid)) as Habit;
 }

@@ -68,32 +68,32 @@ describe('MCP tools layer', () => {
     const tools = buildTools(db);
     const create = getTool(tools, 'create_project');
     const result = await create.handler({
-      id: 'san',
-      name: 'SAN',
-      prefix: 'SAN',
+      id: 'acme',
+      name: 'Acme Corp',
+      prefix: 'ACME',
       weekly_budget_minutes: 1200,
     });
-    expect(result.project.id).toBe('san');
+    expect(result.project.id).toBe('acme');
     expect(result.project.weekly_budget_minutes).toBe(1200);
   });
 
   it('create_task handler creates a task within a project', async () => {
     const db = freshDb();
-    createProject(db, { id: 'san', name: 'SAN', prefix: 'SAN' });
+    createProject(db, { id: 'acme', name: 'Acme Corp', prefix: 'ACME' });
     const tools = buildTools(db);
     const create = getTool(tools, 'create_task');
-    const result = await create.handler({ project_id: 'san', title: 'X' });
+    const result = await create.handler({ project_id: 'acme', title: 'X' });
     expect(result.task.title).toBe('X');
-    expect(result.task.project_id).toBe('san');
+    expect(result.task.project_id).toBe('acme');
   });
 
   it('start_task / stop_task / complete_task handlers work end-to-end', async () => {
     const db = freshDb();
-    createProject(db, { id: 'san', name: 'SAN', prefix: 'SAN' });
+    createProject(db, { id: 'acme', name: 'Acme Corp', prefix: 'ACME' });
     const tools = buildTools(db);
 
     const created = await getTool(tools, 'create_task').handler({
-      project_id: 'san',
+      project_id: 'acme',
       title: 'X',
     });
     const id = created.task.id;
@@ -107,10 +107,10 @@ describe('MCP tools layer', () => {
   it('place_task uses the calendar client adapter (mocked)', async () => {
     const db = freshDb();
     createProject(db, {
-      id: 'san',
-      name: 'SAN',
-      prefix: 'SAN',
-      calendar_id: 'cal-san',
+      id: 'acme',
+      name: 'Acme Corp',
+      prefix: 'ACME',
+      calendar_id: 'cal-acme',
     });
 
     let captured: any = null;
@@ -125,8 +125,8 @@ describe('MCP tools layer', () => {
     const tools = buildTools(db, { calendar: fakeCal });
     const create = getTool(tools, 'create_task');
     const t = await create.handler({
-      project_id: 'san',
-      title: 'Op-ed',
+      project_id: 'acme',
+      title: 'Report',
       duration_minutes: 60,
     });
 
@@ -135,15 +135,15 @@ describe('MCP tools layer', () => {
       task_id: t.task.id,
       start: '2026-04-14T10:00:00Z',
     });
-    expect(captured.calendar_id).toBe('cal-san');
-    expect(captured.summary).toContain('Op-ed');
+    expect(captured.calendar_id).toBe('cal-acme');
+    expect(captured.summary).toContain('Report');
     expect(placed.task.calendar_event_id).toBe('evt-123');
     expect(placed.task.status).toBe('SCHEDULED');
   });
 
   it('export_timesheet handler returns CSV string', async () => {
     const db = freshDb();
-    createProject(db, { id: 'san', name: 'SAN', prefix: 'SAN' });
+    createProject(db, { id: 'acme', name: 'Acme Corp', prefix: 'ACME' });
     const tools = buildTools(db);
     const result = await getTool(tools, 'export_timesheet').handler({
       from: '2026-04-13',
@@ -158,7 +158,7 @@ describe('MCP tools layer', () => {
     const tools = buildTools(db);
     const create = getTool(tools, 'create_project');
     await expect(
-      create.handler({ id: 'san' /* missing name + prefix */ }),
+      create.handler({ id: 'acme' /* missing name + prefix */ }),
     ).rejects.toThrow();
   });
 });

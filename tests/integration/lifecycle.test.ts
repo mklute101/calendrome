@@ -38,20 +38,20 @@ describe('integration: full lifecycle', () => {
   it('project + tasks + time log + budget + CSV export work together', () => {
     const db = freshDb();
     createProject(db, {
-      id: 'san',
-      name: 'SAN',
-      prefix: 'SAN',
+      id: 'acme',
+      name: 'Acme Corp',
+      prefix: 'ACME',
       weekly_budget_minutes: 300, // 5h
     });
 
-    const a = createTask(db, { project_id: 'san', title: 'Op-ed' });
-    const b = createTask(db, { project_id: 'san', title: 'Newsletter' });
-    createTask(db, { project_id: 'san', title: 'Pitch deck' });
+    const a = createTask(db, { project_id: 'acme', title: 'Report' });
+    const b = createTask(db, { project_id: 'acme', title: 'Memo' });
+    createTask(db, { project_id: 'acme', title: 'Pitch deck' });
 
     insertTimeLog(db, a.id, '2026-04-14T09:00:00Z', 90); // 1.5h
     insertTimeLog(db, b.id, '2026-04-15T11:00:00Z', 30); // 0.5h
 
-    const budget = getProjectBudget(db, 'san', WEEK_START);
+    const budget = getProjectBudget(db, 'acme', WEEK_START);
     expect(budget.allocated_minutes).toBe(300);
     expect(budget.spent_minutes).toBe(120);
     expect(budget.remaining_minutes).toBe(180);
@@ -60,8 +60,8 @@ describe('integration: full lifecycle', () => {
     const csv = exportTimesheet(db, '2026-04-13', '2026-04-19');
     const lines = csv.trim().split('\n');
     expect(lines[0]).toBe('date,project,hours,task,notes');
-    expect(lines).toContain('2026-04-14,SAN,1.5,Op-ed,');
-    expect(lines).toContain('2026-04-15,SAN,0.5,Newsletter,');
+    expect(lines).toContain('2026-04-14,ACME,1.5,Report,');
+    expect(lines).toContain('2026-04-15,ACME,0.5,Memo,');
   });
 
   it('habit lifecycle: create, generate, complete, skip, budget reflects scheduled time', () => {
@@ -102,8 +102,8 @@ describe('integration: full lifecycle', () => {
 
   it('using the real task lifecycle helpers end-to-end', async () => {
     const db = freshDb();
-    createProject(db, { id: 'san', name: 'SAN', prefix: 'SAN' });
-    const t = createTask(db, { project_id: 'san', title: 'X' });
+    createProject(db, { id: 'acme', name: 'Acme Corp', prefix: 'ACME' });
+    const t = createTask(db, { project_id: 'acme', title: 'X' });
 
     startTask(db, t.id);
     await new Promise((r) => setTimeout(r, 1100));

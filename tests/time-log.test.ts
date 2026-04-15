@@ -6,14 +6,14 @@ import { startTask, stopTask, completeTask } from '../src/time-log.js';
 
 function setup() {
   const db = freshDb();
-  createProject(db, { id: 'san', name: 'SAN', prefix: 'SAN' });
+  createProject(db, { id: 'acme', name: 'Acme Corp', prefix: 'ACME' });
   return db;
 }
 
 describe('time log', () => {
   it('startTask creates an open log row and sets status IN_PROGRESS', () => {
     const db = setup();
-    const t = createTask(db, { project_id: 'san', title: 'X' });
+    const t = createTask(db, { project_id: 'acme', title: 'X' });
     const entry = startTask(db, t.id);
     expect(entry.task_id).toBe(t.id);
     expect(entry.started_at).toBeTruthy();
@@ -25,14 +25,14 @@ describe('time log', () => {
 
   it('throws when starting an already-running task', () => {
     const db = setup();
-    const t = createTask(db, { project_id: 'san', title: 'X' });
+    const t = createTask(db, { project_id: 'acme', title: 'X' });
     startTask(db, t.id);
     expect(() => startTask(db, t.id)).toThrow();
   });
 
   it('stopTask closes the row, computes duration, and increments time_spent', async () => {
     const db = setup();
-    const t = createTask(db, { project_id: 'san', title: 'X' });
+    const t = createTask(db, { project_id: 'acme', title: 'X' });
     startTask(db, t.id);
     await new Promise((r) => setTimeout(r, 1100));
     const entry = stopTask(db, t.id);
@@ -45,7 +45,7 @@ describe('time log', () => {
 
   it('completeTask stops the timer if running and marks COMPLETE', () => {
     const db = setup();
-    const t = createTask(db, { project_id: 'san', title: 'X' });
+    const t = createTask(db, { project_id: 'acme', title: 'X' });
     startTask(db, t.id);
     const done = completeTask(db, t.id);
     expect(done.status).toBe('COMPLETE');
@@ -53,7 +53,7 @@ describe('time log', () => {
 
   it('multiple start/stop cycles accumulate time_spent_minutes', async () => {
     const db = setup();
-    const t = createTask(db, { project_id: 'san', title: 'X' });
+    const t = createTask(db, { project_id: 'acme', title: 'X' });
     startTask(db, t.id);
     await new Promise((r) => setTimeout(r, 1100));
     const first = stopTask(db, t.id);
