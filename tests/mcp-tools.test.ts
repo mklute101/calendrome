@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { freshDb } from './helpers/db.js';
 import { createProject } from '../src/projects.js';
+import { listTasks } from '../src/tasks.js';
 import { buildTools } from '../src/mcp/tools/index.js';
 
 /**
@@ -47,6 +48,7 @@ describe('MCP tools layer', () => {
       'export_timesheet',
       'place_task',
       'unplace_task',
+      'import_reclaim_tasks',
     ]) {
       expect(names).toContain(expected);
     }
@@ -151,6 +153,54 @@ describe('MCP tools layer', () => {
     });
     expect(typeof result.csv).toBe('string');
     expect(result.csv).toContain('date,project,hours,task,notes');
+  });
+
+  it('import_reclaim_tasks (dry-run via inline tasks) returns a plan summary', async () => {
+    const db = freshDb();
+    createProject(db, { id: 'acme', name: 'Acme Corp', prefix: 'ACME' });
+    const tools = buildTools(db);
+    const result = await getTool(tools, 'import_reclaim_tasks').handler({
+      tasks: [
+        {
+          id: 1,
+          title: 'ACME: thing',
+          status: 'NEW',
+          priority: 'P2',
+          timeChunksRequired: 4,
+        },
+      ],
+    });
+    expect(result.plan.planned_inserts).toBe(1);
+    expect(result.plan.by_project.acme).toBe(1);
+    // Dry-run by default
+    expect(listTasks(db).length).toBe(0);
+  });
+
+  it('import_reclaim_tasks with commit=true actually inserts', async () => {
+    const db = freshDb();
+    createProject(db, { id: 'acme', name: 'Acme Corp', prefix: 'ACME' });
+    const tools = buildTools(db);
+    await getTool(tools, 'import_reclaim_tasks').handler({
+      commit: true,
+      tasks: [
+        {
+          id: 1,
+          title: 'ACME: thing',
+          status: 'NEW',
+          priority: 'P2',
+          timeChunksRequired: 4,
+        },
+      ],
+    });
+    expect(listTasks(db).length).toBe(1);
+  });
+
+  it('import_reclaim_tasks throws when neither path nor tasks is given', async () => {
+    const db = freshDb();
+    const tools = buildTools(db);
+    await expect(
+      getTool(tools, 'import_reclaim_tasks').handler({}),
+    ).rejects.toThrow(/path.*tasks/);
   });
 
   it('rejects bad input on create_project (missing required field)', async () => {

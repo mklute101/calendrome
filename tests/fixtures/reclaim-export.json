@@ -1,0 +1,65 @@
+[
+  {
+    "id": 1001,
+    "title": "ACME: Write quarterly report",
+    "notes": "Focus on revenue split",
+    "status": "NEW",
+    "priority": "P2",
+    "timeChunksRequired": 8,
+    "due": "2026-04-30T17:00:00Z",
+    "snoozeUntil": null,
+    "eventCategory": "WORK"
+  },
+  {
+    "id": 1002,
+    "title": "ACME: Email customer about renewal",
+    "notes": null,
+    "status": "SCHEDULED",
+    "priority": "P1",
+    "timeChunksRequired": 1,
+    "due": "2026-04-16T15:00:00Z"
+  },
+  {
+    "id": 1003,
+    "title": "GLBX: Pitch deck draft",
+    "notes": "Slides 1-12",
+    "status": "IN_PROGRESS",
+    "priority": "P2",
+    "timeChunksRequired": 6
+  },
+  {
+    "id": 1004,
+    "title": "ACME: Old finished thing",
+    "status": "COMPLETE",
+    "priority": "P3",
+    "timeChunksRequired": 4
+  },
+  {
+    "id": 1005,
+    "title": "ACME: Archived stale task",
+    "status": "ARCHIVED",
+    "priority": "P4",
+    "timeChunksRequired": 2
+  },
+  {
+    "id": 1006,
+    "title": "WAT: Some thing in an unknown project",
+    "status": "NEW",
+    "priority": "P3",
+    "timeChunksRequired": 2
+  },
+  {
+    "id": 1007,
+    "title": "Personal todo with no prefix",
+    "status": "NEW",
+    "priority": "P4",
+    "timeChunksRequired": 2
+  },
+  {
+    "id": 1008,
+    "title": "HOBBY - Bike tune-up",
+    "status": "NEW",
+    "priority": "P3",
+    "timeChunksRequired": 4
+  }
+]

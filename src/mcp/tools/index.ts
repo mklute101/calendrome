@@ -31,6 +31,12 @@ import {
 import { getProjectBudget, getAllBudgets } from '../../budgets.js';
 import { exportTimesheet } from '../../timesheet.js';
 import { stubCalendar, type CalendarClient } from '../calendar.js';
+import {
+  planReclaimImport,
+  importReclaimTasks,
+  type ReclaimTask,
+} from '../../migrate/reclaim.js';
+import { readFileSync } from 'node:fs';
 
 export interface ToolDescriptor {
   name: string;
@@ -543,6 +549,54 @@ export function buildTools(
         updateTask(db, taskId, { calendar_event_id: null });
         setTaskStatus(db, taskId, 'NEW');
         return { task: getTask(db, taskId) };
+      },
+    },
+
+    // -------- migration --------
+    {
+      name: 'import_reclaim_tasks',
+      description:
+        'Import tasks from a Reclaim.ai JSON export. Pass a file path OR ' +
+        'an inline `tasks` array. Defaults to dry-run; pass commit=true to ' +
+        'actually insert. Returns a plan with by_project / by_priority ' +
+        'counts and any unmapped prefixes.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          path: { type: 'string' },
+          tasks: { type: 'array' },
+          commit: { type: 'boolean' },
+          default_project_id: { type: ['string', 'null'] },
+          auto_create_projects: { type: 'boolean' },
+          skip_statuses: { type: 'array', items: { type: 'string' } },
+        },
+      },
+      async handler(args) {
+        let tasks: ReclaimTask[];
+        if (Array.isArray(args?.tasks)) {
+          tasks = args.tasks;
+        } else if (typeof args?.path === 'string' && args.path.length > 0) {
+          tasks = JSON.parse(readFileSync(args.path, 'utf8'));
+        } else {
+          throw new Error('import_reclaim_tasks requires either `path` or `tasks`');
+        }
+
+        const options = {
+          commit: args?.commit === true,
+          defaultProjectId: args?.default_project_id ?? null,
+          autoCreateProjects: args?.auto_create_projects === true,
+          skipStatuses: args?.skip_statuses,
+        };
+
+        const plan = options.commit
+          ? importReclaimTasks(db, tasks, options)
+          : planReclaimImport(db, tasks, options);
+
+        // Don't echo the full rows array in the MCP response — it can be
+        // huge for 600+ task migrations. Callers that need the rows can
+        // call planReclaimImport directly.
+        const { rows: _rows, ...summary } = plan;
+        return { plan: summary };
       },
     },
 
