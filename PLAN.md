@@ -46,7 +46,8 @@ A local, project-based task scheduling engine that replaces Reclaim.ai. Instead 
 | **GitHub-hosted** | Enable Claude Code remote agent usage |
 | **Prefix convention built-in** | SAN:, ATN:, etc. are first-class, not just naming convention |
 | **Task dependencies** | Optional: "do X before Y" |
-| **Actual time tracking** | Track time spent vs estimated (start/stop timestamps) |
+| **Estimated vs actual time** | `duration_minutes` is the estimate ("this'll take 10h"), `time_spent_minutes` is summed from start/stop timestamps. Both feed budgets and CSV export. |
+| **Due dates** | `tasks.due` (ISO 8601). Listed by `listTasks({ due_before })` so the planner can prioritize. |
 
 ---
 
