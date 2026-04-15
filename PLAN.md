@@ -9,22 +9,22 @@ A local, project-based task scheduling engine that replaces Reclaim.ai. Instead 
 | Reclaim Feature | Keep? | Notes |
 |---|---|---|
 | Task CRUD (create, update, delete, list, search) | Yes | Core functionality |
-| Smart scheduling (auto-place tasks on calendar) | Yes | This is the killer feature |
-| Priority-based scheduling (P1 > P2 > P3 > P4) | Yes | Higher priority = scheduled sooner |
+| Priority-based ordering (P1 > P2 > P3 > P4) | Yes | Used by the planner skills, not an auto-scheduler |
 | Duration in 15-min chunks | Yes | Works well with calendar blocks |
 | Due dates + snooze/schedule-after | Yes | Essential for planning |
 | Start/stop/complete task lifecycle | Yes | Workflow tracking |
-| Calendar event creation | Yes | But via Google Calendar API directly |
-| Time policies (work hours, personal hours) | Yes | But per-project, not global work/personal |
-| Rescheduling on conflict | Yes | When a meeting appears, move task blocks |
+| Calendar event creation | Yes | But via Google Calendar API directly, manually placed |
+| Time policies (per-project hour budgets) | Yes | Weekly hour budgets per project — soft caps with warnings |
 | GTD Inbox (quick capture) | Yes | Already built in the connector |
+| Habits | Yes | Recurring time blocks that auto-generate calendar events |
 
 ## What We're Dropping
 
 | Reclaim Feature | Why |
 |---|---|
 | WORK/PERSONAL category split | Replaced by projects |
-| Habits | Low usage, can add later if needed |
+| Smart auto-scheduling | Replaced by collaborative `daily-planner` / `weekly-planner` Claude skills that read from calendrome |
+| Rescheduling on conflict | The planner skills handle re-layout interactively |
 | Scheduling links | Not relevant |
 | Otter meeting integration | Separate concern, can keep in its own tool |
 | NLP interpreter endpoint | Claude *is* the NLP layer |
@@ -35,15 +35,19 @@ A local, project-based task scheduling engine that replaces Reclaim.ai. Instead 
 
 | New Feature | Why |
 |---|---|
-| **Project-based organization** | Tasks belong to projects (SAN, ATN, AP, M, MTB, etc.) |
+| **Project-based organization** | Tasks belong to projects (ACME, GLBX, INIT, HOOLI, HOBBY, etc.) |
 | **Project ↔ Calendar mapping** | Each project can have its own Google Calendar; sharing is per-calendar |
-| **Project-level time policies** | "SAN gets 4h/day Mon-Fri", "MTB gets 2h weekends" |
+| **Weekly hour budgets per project** | "ACME = 20h/week, HOBBY = 5h/week" — soft cap, warns when exceeded |
+| **Habits as recurring time blocks** | Schedule + duration that generates calendar events and counts toward budget |
+| **Timesheet CSV export** | Date range → date, project, hours, task, notes — paste into anything |
+| **Read APIs for planner skills** | Free slots, this-week tasks, budget status, today's habits — fuel the daily/weekly planner |
 | **Local-first storage** | SQLite — fast, portable, no AWS dependency |
 | **MCP server (stdio)** | Direct Claude Code integration, no network hop |
 | **GitHub-hosted** | Enable Claude Code remote agent usage |
-| **Prefix convention built-in** | SAN:, ATN:, etc. are first-class, not just naming convention |
+| **Prefix convention built-in** | ACME:, GLBX:, etc. are first-class, not just naming convention |
 | **Task dependencies** | Optional: "do X before Y" |
-| **Actual time tracking** | Track time spent vs estimated (start/stop timestamps) |
+| **Estimated vs actual time** | `duration_minutes` is the estimate ("this'll take 10h"), `time_spent_minutes` is summed from start/stop timestamps. Both feed budgets and CSV export. |
+| **Due dates** | `tasks.due` (ISO 8601). Listed by `listTasks({ due_before })` so the planner can prioritize. |
 
 ---
 
@@ -77,12 +81,12 @@ A local, project-based task scheduling engine that replaces Reclaim.ai. Instead 
 
 ```sql
 CREATE TABLE projects (
-  id          TEXT PRIMARY KEY,        -- e.g. "san", "atn", "mtb"
-  name        TEXT NOT NULL,           -- e.g. "Straight Arrow News"
-  prefix      TEXT NOT NULL UNIQUE,    -- e.g. "SAN"
+  id          TEXT PRIMARY KEY,        -- e.g. "acme", "glbx", "hobby"
+  name        TEXT NOT NULL,           -- e.g. "Acme Corp"
+  prefix      TEXT NOT NULL UNIQUE,    -- e.g. "ACME"
   calendar_id TEXT,                    -- Google Calendar ID (null = primary)
   color       TEXT,                    -- hex color for UI
-  time_budget_minutes INTEGER,         -- optional weekly budget
+  weekly_budget_minutes INTEGER,       -- soft weekly hour budget (null = no budget)
   active      INTEGER DEFAULT 1,
   created_at  TEXT DEFAULT (datetime('now')),
   updated_at  TEXT DEFAULT (datetime('now'))
@@ -98,7 +102,7 @@ CREATE TABLE time_policies (
   day_of_week INTEGER NOT NULL,        -- 0=Sun, 1=Mon, ... 6=Sat
   start_time  TEXT NOT NULL,           -- "09:00"
   end_time    TEXT NOT NULL,           -- "17:00"
-  timezone    TEXT DEFAULT 'America/Chicago'
+  timezone    TEXT DEFAULT 'UTC'
 );
 ```
 
@@ -147,6 +151,34 @@ CREATE TABLE time_log (
 );
 ```
 
+### Habits (recurring time blocks)
+
+```sql
+CREATE TABLE habits (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id      TEXT NOT NULL REFERENCES projects(id),
+  title           TEXT NOT NULL,
+  notes           TEXT,
+  duration_minutes INTEGER NOT NULL,
+  days_of_week    TEXT NOT NULL,       -- CSV "1,2,3,4,5" (0=Sun..6=Sat)
+  start_time      TEXT NOT NULL,       -- "07:00"
+  timezone        TEXT DEFAULT 'UTC',
+  active          INTEGER DEFAULT 1,
+  created_at      TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE habit_instances (
+  id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+  habit_id           INTEGER NOT NULL REFERENCES habits(id),
+  scheduled_start    TEXT NOT NULL,    -- ISO 8601
+  scheduled_end      TEXT NOT NULL,
+  status             TEXT NOT NULL DEFAULT 'PLANNED', -- PLANNED, COMPLETE, SKIPPED
+  calendar_event_id  TEXT,
+  completed_at       TEXT,
+  UNIQUE(habit_id, scheduled_start)    -- idempotent generation
+);
+```
+
 ---
 
 ## MCP Tools
@@ -163,20 +195,34 @@ CREATE TABLE time_log (
 | `stop_task` | Pause working (stop timer) | `planner/stop/task` |
 | `complete_task` | Mark done | `planner/done/task` |
 
-### Scheduling
-| Tool | Description | Maps to Reclaim |
-|---|---|---|
-| `schedule_tasks` | Run the scheduler — place tasks on calendar | Core Reclaim magic |
-| `get_schedule` | View scheduled tasks for a date range | `get_scheduled_tasks` |
-| `reschedule` | Force re-evaluation of schedule | Reclaim auto-does this |
+### Layout & Manual Placement
+| Tool | Description |
+|---|---|
+| `get_free_slots` | Given range + optional project, return free windows from Google Calendar |
+| `get_week_layout` | Tasks + habit instances + calendar events for a date range, grouped by day |
+| `place_task` | Create a calendar event for a task at a specific time (manual placement) |
+| `unplace_task` | Remove the calendar event, set task back to NEW |
 
-### Projects
-| Tool | Description | New |
-|---|---|---|
-| `list_projects` | List all projects | New |
-| `create_project` | Create a project with calendar mapping | New |
-| `update_project` | Update project settings | New |
-| `get_project_summary` | Tasks, time spent, budget usage for a project | New |
+### Projects & Budgets
+| Tool | Description |
+|---|---|
+| `list_projects` | List all projects |
+| `create_project` | Create a project with calendar mapping and weekly budget |
+| `update_project` | Update project settings (including budget) |
+| `get_project_budget` | For project + week, return allocated/spent/scheduled/remaining/over_budget |
+| `get_all_budgets` | Same, for every active project — used by the weekly planner |
+
+### Habits
+| Tool | Description |
+|---|---|
+| `create_habit` / `update_habit` / `list_habits` / `deactivate_habit` | CRUD on habit templates |
+| `generate_habit_instances` | Materialize habit_instances rows for a date range (idempotent) |
+| `complete_habit_instance` / `skip_habit_instance` | Mark instances done or skipped |
+
+### Timesheets
+| Tool | Description |
+|---|---|
+| `export_timesheet` | Date range → CSV (date, project, hours, task, notes) |
 
 ### Inbox
 | Tool | Description | Maps to Reclaim |
@@ -194,80 +240,94 @@ CREATE TABLE time_log (
 
 ---
 
-## Scheduling Algorithm (The Hard Part)
+## Planner Integration Model
 
-This is what makes Reclaim valuable. Our version:
+Calendrome is a **data source** for the existing `daily-planner` and
+`weekly-planner` Claude skills, not an auto-scheduler. The skills already
+walk through layout collaboratively, pulling from Jira and Google Calendar.
+Calendrome adds:
 
-### Input
-1. All tasks with status NEW or SCHEDULED (not complete/archived)
-2. Google Calendar events for the scheduling window (existing meetings, etc.)
-3. Time policies per project (when tasks can be scheduled)
-4. Task priorities, durations, due dates, snooze dates
+1. **Free slots** — query GCal for busy times, return available windows so
+   the planner skill can suggest where to put tasks.
+2. **Week layout** — tasks + habit instances + existing calendar events for
+   a date range, grouped by day, so the skill can present "here's your week".
+3. **Budget status** — allocated / spent / scheduled / remaining per project
+   so the skill can warn "ACME is at 22h/20h this week".
+4. **Manual placement** — `place_task` creates the calendar event when the
+   user agrees with a suggestion. No auto-write.
+5. **Habit materialization** — `generate_habit_instances` converts habit
+   templates into concrete instances for a week, which the planner then
+   places (or which a future job auto-places).
 
-### Algorithm
-1. **Collect free slots**: Query Google Calendar for busy times, subtract from time policy windows to get available slots per project
-2. **Sort tasks**: By priority (CRITICAL first), then by due date (soonest first), then by creation date (FIFO)
-3. **Place tasks**: For each task, find the earliest available slot in its project's calendar that fits the duration. If no single slot fits, consider chunking (split across multiple blocks if min_chunk_size allows)
-4. **Create calendar events**: For each placed task, create a Google Calendar event on the project's calendar with the task title prefixed by project prefix
-5. **Update task status**: Mark as SCHEDULED with the calendar event ID
+### Budget semantics
 
-### Rescheduling Triggers
-- New task created with higher priority than existing scheduled tasks
-- Calendar event added/removed (meeting scheduled/cancelled)
-- Manual `reschedule` command
-- Task completed (frees up the slot)
-
-### Constraints
-- Respect time policies (don't schedule SAN work on weekends unless policy says so)
-- Respect snooze_until dates
-- Respect task dependencies (don't schedule child before parent)
-- Don't double-book across project calendars if they share the same underlying calendar
+- **Soft cap.** Going over budget never blocks an operation.
+- **Spent** = sum of `time_log.duration_minutes` within the week.
+- **Scheduled** = sum of habit instance durations + tasks with
+  `calendar_event_id` set, whose start falls within the week.
+- **Over budget** when `spent + scheduled > weekly_budget_minutes`.
+- Projects with `weekly_budget_minutes = NULL` never warn.
 
 ---
 
 ## Implementation Phases
 
-### Phase 1: Foundation (MVP)
-- [ ] Project scaffolding (TypeScript, SQLite, MCP SDK)
-- [ ] Database schema + migrations
-- [ ] Project CRUD
-- [ ] Task CRUD (create, update, delete, list, search)
-- [ ] Task lifecycle (start, stop, complete)
-- [ ] Inbox (add, list, next, process)
-- [ ] MCP server with stdio transport
-- [ ] GitHub repo setup
+### Phase 1: Foundation (TDD)
 
-**Goal**: Can create/manage tasks and projects via Claude. No scheduling yet — just a better-organized task database.
+**Part A — Red: write all tests first.**
+- [ ] Project scaffolding (TypeScript, Vitest, better-sqlite3, MCP SDK)
+- [ ] `tests/db/migrations.test.ts`
+- [ ] `tests/projects.test.ts`
+- [ ] `tests/tasks.test.ts`
+- [ ] `tests/inbox.test.ts`
+- [ ] `tests/habits.test.ts`
+- [ ] `tests/time-log.test.ts`
+- [ ] `tests/budgets.test.ts`
+- [ ] `tests/timesheet.test.ts`
+- [ ] `tests/mcp-tools.test.ts`
+- [ ] `tests/integration/lifecycle.test.ts`
+- [ ] Confirm `npm test` runs and every test fails
+
+**Part B — Green: implement until all tests pass.**
+- [ ] `src/db/schema.sql`, `src/db/migrate.ts`, `src/db/connection.ts`
+- [ ] `src/projects.ts`
+- [ ] `src/tasks.ts` (CRUD + status machine)
+- [ ] `src/inbox.ts`
+- [ ] `src/time-log.ts`
+- [ ] `src/habits.ts` (CRUD + instance generation)
+- [ ] `src/budgets.ts`
+- [ ] `src/timesheet.ts`
+- [ ] `src/mcp/server.ts` + per-tool handlers (mock GCal)
+- [ ] All tests green
+
+**Goal**: Can create/manage projects, tasks, habits, time logs, budgets,
+and CSV exports via the MCP server. No real Google Calendar yet — GCal
+calls mocked.
 
 ### Phase 2: Google Calendar Integration
-- [ ] Google Calendar auth (OAuth, store refresh token locally)
-- [ ] Read calendar events (free/busy)
-- [ ] Create/update/delete calendar events for tasks
-- [ ] Time policies per project
+- [ ] Google Calendar OAuth, refresh token stored locally
+- [ ] `get_free_slots` reads busy times
+- [ ] `place_task` / habit instance writes real events
+- [ ] Replace GCal mocks with the real client; tests use a recorded
+      fixture or a dedicated test calendar
 
-**Goal**: Tasks can be manually placed on calendars, calendar is readable.
+**Goal**: Manual placement and free-slot queries work end-to-end against
+a real calendar.
 
-### Phase 3: Smart Scheduling
-- [ ] Scheduling algorithm (slot finding, priority ordering, placement)
-- [ ] Auto-schedule on task create/update
-- [ ] Reschedule on conflict detection
-- [ ] Chunked scheduling (split large tasks across blocks)
-
-**Goal**: The core Reclaim replacement — tasks auto-appear on your calendar.
-
-### Phase 4: Planner Integration
-- [ ] Update planner skills (today, week) to use TaskEngine instead of Reclaim MCP
-- [ ] Project-aware daily/weekly views
-- [ ] Time tracking summaries per project
-- [ ] Budget tracking (hours spent vs allocated per project per week)
+### Phase 3: Planner Skill Integration
+- [ ] Update `daily-planner` skill to call calendrome MCP tools alongside
+      Jira and Google Calendar
+- [ ] Update `weekly-planner` skill to use `get_all_budgets` and
+      `get_week_layout`
+- [ ] Verify the collaborative planning flow works end-to-end
 
 **Goal**: Full replacement of Reclaim in daily workflow.
 
-### Phase 5: Polish
-- [ ] Task templates (recurring task patterns)
+### Phase 4: Polish
+- [ ] Timesheet export refinements (per-project breakdown, totals row)
+- [ ] Migration importer for active Reclaim tasks
+- [ ] Analytics (hours per project over time)
 - [ ] Bulk operations
-- [ ] Export/import (migrate existing Reclaim tasks)
-- [ ] Analytics (time spent per project over time)
 
 ---
 
@@ -334,10 +394,10 @@ From `~/dev/tools/reclaim_claude_connector/`:
 
 1. **Google Calendar auth**: Use a service account or OAuth with stored refresh token? Service account is simpler for personal use but can't access personal calendars easily. OAuth needs one-time browser auth.
 
-2. **Scheduling frequency**: Run scheduler on-demand only? Or watch for calendar changes? (Reclaim polls/webhooks.) Start with on-demand, add watch later.
+2. **Habit instance generation cadence**: On demand by the planner skills, or a nightly cron that materializes the next 7 days? Start with on-demand, revisit if it gets annoying.
 
 3. **Migration**: Import existing 600+ Reclaim tasks? Probably filter to just active (NEW/SCHEDULED/IN_PROGRESS) and map to projects by prefix.
 
-4. **Multi-calendar complexity**: If SAN and ATN both map to the same "primary" calendar, the scheduler needs to coordinate across projects. If they're separate calendars, simpler but user needs to set up those calendars first.
+4. **Multi-calendar complexity**: If ACME and GLBX both map to the same "primary" calendar, budget queries need to coordinate across projects. If they're separate calendars, simpler but user needs to set up those calendars first.
 
 5. **Remote agent**: What does the Claude Code hosted agent need? Just a GitHub repo with the MCP server? Or does it need to be deployed somewhere?
