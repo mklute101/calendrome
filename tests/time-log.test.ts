@@ -62,9 +62,11 @@ describe('time log', () => {
     await new Promise((r) => setTimeout(r, 1100));
     const second = stopTask(db, t.id);
 
+    expect(first.duration_minutes).not.toBeNull();
+    expect(second.duration_minutes).not.toBeNull();
     const reread = getTask(db, t.id);
     expect(reread!.time_spent_minutes).toBe(
-      first.duration_minutes + second.duration_minutes,
+      first.duration_minutes! + second.duration_minutes!,
     );
   });
 });

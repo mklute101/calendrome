@@ -30,7 +30,7 @@ import {
 } from '../../habits.js';
 import { getProjectBudget, getAllBudgets } from '../../budgets.js';
 import { exportTimesheet } from '../../timesheet.js';
-import { stubCalendar, type CalendarClient } from '../calendar.js';
+import { stubCalendar, type CalendarClient } from '../../calendar/index.js';
 
 export interface ToolDescriptor {
   name: string;
@@ -541,7 +541,13 @@ export function buildTools(
           });
         }
         updateTask(db, taskId, { calendar_event_id: null });
-        setTaskStatus(db, taskId, 'NEW');
+        // Only flip status when the task was actually SCHEDULED. For NEW
+        // (never placed), IN_PROGRESS, or COMPLETE we leave the status
+        // alone — unplacing the calendar event shouldn't yank a task out
+        // of in-progress or completed state.
+        if (task.status === 'SCHEDULED') {
+          setTaskStatus(db, taskId, 'NEW');
+        }
         return { task: getTask(db, taskId) };
       },
     },

@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { freshDb } from './helpers/db.js';
 import { createProject } from '../src/projects.js';
 import { buildTools } from '../src/mcp/tools/index.js';
+import { FakeCalendarClient } from '../src/calendar/fake.js';
 
 /**
  * MCP tools layer tests.
@@ -104,7 +105,7 @@ describe('MCP tools layer', () => {
     expect(done.task.status).toBe('COMPLETE');
   });
 
-  it('place_task uses the calendar client adapter (mocked)', async () => {
+  it('place_task creates an event on the project calendar via FakeCalendarClient', async () => {
     const db = freshDb();
     createProject(db, {
       id: 'acme',
@@ -113,32 +114,79 @@ describe('MCP tools layer', () => {
       calendar_id: 'cal-acme',
     });
 
-    let captured: any = null;
-    const fakeCal = {
-      createEvent: async (args: any) => {
-        captured = args;
-        return { id: 'evt-123' };
-      },
-      deleteEvent: async () => {},
-    };
+    const calendar = new FakeCalendarClient();
+    const tools = buildTools(db, { calendar });
 
-    const tools = buildTools(db, { calendar: fakeCal });
-    const create = getTool(tools, 'create_task');
-    const t = await create.handler({
+    const t = await getTool(tools, 'create_task').handler({
       project_id: 'acme',
       title: 'Report',
       duration_minutes: 60,
     });
 
-    const place = getTool(tools, 'place_task');
-    const placed = await place.handler({
+    const placed = await getTool(tools, 'place_task').handler({
       task_id: t.task.id,
       start: '2026-04-14T10:00:00Z',
     });
-    expect(captured.calendar_id).toBe('cal-acme');
-    expect(captured.summary).toContain('Report');
-    expect(placed.task.calendar_event_id).toBe('evt-123');
+
+    // Event was recorded on the project's calendar
+    expect(calendar.events).toHaveLength(1);
+    const event = calendar.events[0];
+    expect(event.calendar_id).toBe('cal-acme');
+    expect(event.summary).toContain('Report');
+    expect(event.start).toBe('2026-04-14T10:00:00Z');
+    expect(event.end).toBe('2026-04-14T11:00:00.000Z');
+
+    // Task got linked to the event
+    expect(placed.task.calendar_event_id).toBe(event.id);
     expect(placed.task.status).toBe('SCHEDULED');
+  });
+
+  it('unplace_task deletes the calendar event and resets task status', async () => {
+    const db = freshDb();
+    createProject(db, {
+      id: 'acme',
+      name: 'Acme Corp',
+      prefix: 'ACME',
+      calendar_id: 'cal-acme',
+    });
+
+    const calendar = new FakeCalendarClient();
+    const tools = buildTools(db, { calendar });
+
+    const t = await getTool(tools, 'create_task').handler({
+      project_id: 'acme',
+      title: 'Report',
+      duration_minutes: 60,
+    });
+    await getTool(tools, 'place_task').handler({
+      task_id: t.task.id,
+      start: '2026-04-14T10:00:00Z',
+    });
+    expect(calendar.events).toHaveLength(1);
+
+    const result = await getTool(tools, 'unplace_task').handler({
+      task_id: t.task.id,
+    });
+
+    expect(calendar.events).toHaveLength(0);
+    expect(result.task.calendar_event_id).toBeNull();
+    expect(result.task.status).toBe('NEW');
+  });
+
+  it('unplace_task is a no-op (no calendar call) when task was never placed', async () => {
+    const db = freshDb();
+    createProject(db, { id: 'acme', name: 'Acme Corp', prefix: 'ACME' });
+    const calendar = new FakeCalendarClient();
+    const tools = buildTools(db, { calendar });
+
+    const t = await getTool(tools, 'create_task').handler({
+      project_id: 'acme',
+      title: 'X',
+    });
+
+    // Should not throw, should not call deleteEvent
+    await getTool(tools, 'unplace_task').handler({ task_id: t.task.id });
+    expect(calendar.events).toHaveLength(0);
   });
 
   it('export_timesheet handler returns CSV string', async () => {
