@@ -46,6 +46,7 @@ describe('MCP tools layer', () => {
       'get_all_budgets',
       'get_week_layout',
       'export_timesheet',
+      'get_timesheet_summary',
       'place_task',
       'unplace_task',
     ]) {
@@ -197,8 +198,49 @@ describe('MCP tools layer', () => {
       from: '2026-04-13',
       to: '2026-04-19',
     });
+    expect(result.format).toBe('csv');
     expect(typeof result.csv).toBe('string');
     expect(result.csv).toContain('date,project,hours,task,notes');
+  });
+
+  it('export_timesheet with format=markdown returns markdown table', async () => {
+    const db = freshDb();
+    createProject(db, { id: 'acme', name: 'Acme Corp', prefix: 'ACME' });
+    const tools = buildTools(db);
+    const result = await getTool(tools, 'export_timesheet').handler({
+      from: '2026-04-13',
+      to: '2026-04-19',
+      format: 'markdown',
+    });
+    expect(result.format).toBe('markdown');
+    expect(typeof result.markdown).toBe('string');
+    expect(result.markdown).toContain('| date | project | hours | task | notes |');
+  });
+
+  it('export_timesheet with include_totals appends TOTAL row', async () => {
+    const db = freshDb();
+    createProject(db, { id: 'acme', name: 'Acme Corp', prefix: 'ACME' });
+    const tools = buildTools(db);
+    const result = await getTool(tools, 'export_timesheet').handler({
+      from: '2026-04-13',
+      to: '2026-04-19',
+      include_totals: true,
+    });
+    expect(result.csv).toContain(',TOTAL,0,,');
+  });
+
+  it('get_timesheet_summary returns structured data', async () => {
+    const db = freshDb();
+    createProject(db, { id: 'acme', name: 'Acme Corp', prefix: 'ACME' });
+    const tools = buildTools(db);
+    const result = await getTool(tools, 'get_timesheet_summary').handler({
+      from: '2026-04-13',
+      to: '2026-04-19',
+    });
+    expect(result.summary).toBeDefined();
+    expect(result.summary.rows).toEqual([]);
+    expect(result.summary.by_project).toEqual([]);
+    expect(result.summary.grand_total_hours).toBe(0);
   });
 
   it('rejects bad input on create_project (missing required field)', async () => {

@@ -29,7 +29,10 @@ import {
   skipHabitInstance,
 } from '../../habits.js';
 import { getProjectBudget, getAllBudgets } from '../../budgets.js';
-import { exportTimesheet } from '../../timesheet.js';
+import {
+  exportTimesheet,
+  getTimesheetSummary,
+} from '../../timesheet.js';
 import { stubCalendar, type CalendarClient } from '../../calendar/index.js';
 
 export interface ToolDescriptor {
@@ -555,7 +558,44 @@ export function buildTools(
     // -------- timesheet --------
     {
       name: 'export_timesheet',
-      description: 'Export time logs as CSV for a date range',
+      description:
+        'Render a timesheet for a date range. `format` is "csv" (default) ' +
+        'or "markdown". `include_totals` appends per-project subtotals and ' +
+        'a grand total row (markdown always includes totals).',
+      inputSchema: {
+        type: 'object',
+        required: ['from', 'to'],
+        properties: {
+          from: { type: 'string' },
+          to: { type: 'string' },
+          format: { type: 'string', enum: ['csv', 'markdown'] },
+          include_totals: { type: 'boolean' },
+        },
+      },
+      async handler(args) {
+        const format =
+          args?.format === 'markdown' ? 'markdown' : 'csv';
+        const rendered = exportTimesheet(
+          db,
+          requireString(args, 'from'),
+          requireString(args, 'to'),
+          {
+            format,
+            includeTotals: args?.include_totals === true,
+          },
+        );
+        // Keep the legacy `csv` key on the response for backwards
+        // compatibility with any caller that already reads it.
+        return { format, [format === 'markdown' ? 'markdown' : 'csv']: rendered };
+      },
+    },
+    {
+      name: 'get_timesheet_summary',
+      description:
+        'Structured timesheet data for a date range: rows plus ' +
+        'per-project totals plus grand total (in hours). Prefer this ' +
+        'over export_timesheet when a planner skill needs to reason ' +
+        'about the numbers instead of just display them.',
       inputSchema: {
         type: 'object',
         required: ['from', 'to'],
@@ -566,7 +606,7 @@ export function buildTools(
       },
       async handler(args) {
         return {
-          csv: exportTimesheet(
+          summary: getTimesheetSummary(
             db,
             requireString(args, 'from'),
             requireString(args, 'to'),
