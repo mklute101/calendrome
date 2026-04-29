@@ -7,7 +7,7 @@
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && cp src/db/schema.sql dist/src/db/schema.sql",
     "start": "node dist/src/mcp/server.js"
   },
   "dependencies": {
