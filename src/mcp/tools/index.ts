@@ -117,6 +117,7 @@ export function buildTools(
         properties: {
           id: { type: 'string' },
           name: { type: 'string' },
+          prefix: { type: 'string' },
           weekly_budget_minutes: { type: ['integer', 'null'] },
           calendar_id: { type: ['string', 'null'] },
           color: { type: ['string', 'null'] },
