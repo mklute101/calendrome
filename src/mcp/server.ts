@@ -1,33 +1,56 @@
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import {
+  CallToolRequestSchema,
+  ListToolsRequestSchema,
+} from '@modelcontextprotocol/sdk/types.js';
 import { openDatabase } from '../db/connection.js';
 import { migrate } from '../db/migrate.js';
 import { buildTools } from './tools/index.js';
 
 const DB_PATH = process.env.CALENDROME_DB ?? 'calendrome.db';
 
-const server = new McpServer({
-  name: 'calendrome',
-  version: '0.1.0',
-});
+const server = new Server(
+  { name: 'calendrome', version: '0.1.0' },
+  { capabilities: { tools: {} } },
+);
 
 const db = openDatabase(DB_PATH);
 migrate(db);
 
 const tools = buildTools(db);
-for (const t of tools) {
-  server.tool(
-    t.name,
-    t.description,
-    t.inputSchema,
-    async (args: Record<string, unknown>) => {
-      const result = await t.handler(args);
-      return {
-        content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
-      };
-    },
-  );
-}
+const toolsByName = new Map(tools.map((t) => [t.name, t]));
+
+server.setRequestHandler(ListToolsRequestSchema, async () => ({
+  tools: tools.map((t) => ({
+    name: t.name,
+    description: t.description,
+    inputSchema: t.inputSchema,
+  })),
+}));
+
+server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  const { name, arguments: args } = request.params;
+  const tool = toolsByName.get(name);
+  if (!tool) {
+    return {
+      isError: true,
+      content: [{ type: 'text', text: `unknown tool: ${name}` }],
+    };
+  }
+  try {
+    const result = await tool.handler(args ?? {});
+    return {
+      content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      isError: true,
+      content: [{ type: 'text', text: message }],
+    };
+  }
+});
 
 const transport = new StdioServerTransport();
 await server.connect(transport);
