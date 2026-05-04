@@ -7,15 +7,18 @@
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
-    "build": "tsc -p tsconfig.json && cp src/db/schema.sql dist/src/db/schema.sql",
-    "start": "node dist/src/mcp/server.js"
+    "build": "tsc -p tsconfig.json && cp src/db/schema.sql dist/src/db/schema.sql && cp -r src/gui/public dist/src/gui/public",
+    "start": "node dist/src/mcp/server.js",
+    "gui": "node dist/src/gui/server.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
-    "better-sqlite3": "^11.3.0"
+    "better-sqlite3": "^11.3.0",
+    "express": "^5.2.1"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.11",
+    "@types/express": "^5.0.6",
     "@types/node": "^22.7.0",
     "typescript": "^5.6.0",
     "vitest": "^2.1.0"
