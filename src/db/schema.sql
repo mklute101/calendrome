@@ -5,6 +5,8 @@ CREATE TABLE IF NOT EXISTS projects (
   calendar_id TEXT,
   color       TEXT,
   weekly_budget_minutes INTEGER,
+  harvest_project_id INTEGER,
+  harvest_task_id INTEGER,
   active      INTEGER NOT NULL DEFAULT 1,
   created_at  TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
@@ -49,7 +51,8 @@ CREATE TABLE IF NOT EXISTS time_log (
   task_id          INTEGER NOT NULL REFERENCES tasks(id),
   started_at       TEXT NOT NULL,
   stopped_at       TEXT,
-  duration_minutes INTEGER
+  duration_minutes INTEGER,
+  harvest_entry_id INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS habits (

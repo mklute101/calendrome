@@ -7,6 +7,8 @@ export interface Project {
   calendar_id: string | null;
   color: string | null;
   weekly_budget_minutes: number | null;
+  harvest_project_id: number | null;
+  harvest_task_id: number | null;
   active: number;
   created_at: string;
   updated_at: string;
@@ -19,6 +21,8 @@ export interface CreateProjectInput {
   calendar_id?: string | null;
   color?: string | null;
   weekly_budget_minutes?: number | null;
+  harvest_project_id?: number | null;
+  harvest_task_id?: number | null;
 }
 
 export interface UpdateProjectInput {
@@ -27,13 +31,15 @@ export interface UpdateProjectInput {
   calendar_id?: string | null;
   color?: string | null;
   weekly_budget_minutes?: number | null;
+  harvest_project_id?: number | null;
+  harvest_task_id?: number | null;
   active?: number;
 }
 
 export function createProject(db: DB, input: CreateProjectInput): Project {
   db.prepare(
-    `INSERT INTO projects (id, name, prefix, calendar_id, color, weekly_budget_minutes)
-     VALUES (?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO projects (id, name, prefix, calendar_id, color, weekly_budget_minutes, harvest_project_id, harvest_task_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     input.id,
     input.name,
@@ -41,6 +47,8 @@ export function createProject(db: DB, input: CreateProjectInput): Project {
     input.calendar_id ?? null,
     input.color ?? null,
     input.weekly_budget_minutes ?? null,
+    input.harvest_project_id ?? null,
+    input.harvest_task_id ?? null,
   );
   return getProject(db, input.id) as Project;
 }
