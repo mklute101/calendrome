@@ -36,6 +36,11 @@ import {
   getTimesheetSummary,
 } from '../../timesheet.js';
 import { stubCalendar, type CalendarClient } from '../../calendar/index.js';
+import {
+  syncCalendarEvents,
+  deleteCalendarEventsInRange,
+  type CalendarEventInput,
+} from '../../calendar-sync.js';
 
 export interface ToolDescriptor {
   name: string;
@@ -675,6 +680,57 @@ export function buildTools(
         const client = new HarvestClient({ token, accountId });
         const projects = await client.listProjects();
         return { projects };
+      },
+    },
+
+    // -------- calendar sync --------
+    {
+      name: 'sync_calendar_events',
+      description:
+        'Import external calendar events into Calendrome. ' +
+        'If clear_range is provided, existing events in that range are deleted first.',
+      inputSchema: {
+        type: 'object',
+        required: ['events'],
+        properties: {
+          events: {
+            type: 'array',
+            items: {
+              type: 'object',
+              required: ['id', 'calendar_id', 'summary', 'start', 'end'],
+              properties: {
+                id: { type: 'string' },
+                calendar_id: { type: 'string' },
+                project_id: { type: ['string', 'null'] },
+                summary: { type: 'string' },
+                start: { type: 'string' },
+                end: { type: 'string' },
+                is_meeting: { type: 'boolean' },
+              },
+            },
+          },
+          clear_range: {
+            type: 'object',
+            properties: {
+              from: { type: 'string' },
+              to: { type: 'string' },
+            },
+            required: ['from', 'to'],
+          },
+        },
+      },
+      async handler(args) {
+        let deleted = 0;
+        if (args.clear_range) {
+          deleted = deleteCalendarEventsInRange(
+            db,
+            args.clear_range.from,
+            args.clear_range.to,
+          );
+        }
+        const events: CalendarEventInput[] = args.events ?? [];
+        const result = syncCalendarEvents(db, events);
+        return { upserted: result.upserted, deleted };
       },
     },
   ];

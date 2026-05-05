@@ -102,6 +102,10 @@
   .block .title { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .block .meta { color: var(--text-muted); font-size: 0.65rem; margin-top: 2px; letter-spacing: 0.02em; }
   .block.habit { opacity: 0.7; font-style: italic; }
+  .block.meeting {
+    background: color-mix(in srgb, var(--c) 30%, transparent);
+    border-left: 3px solid var(--c, var(--accent));
+  }
   .block.logged {
     background: color-mix(in srgb, var(--c) 22%, transparent);
   }
@@ -329,7 +333,7 @@ function buildDays(data) {
   const days = [];
   for (let i = 0; i < 7; i++) {
     const date = addDays(weekStart, i);
-    days.push({ date, tasks: [], habits: [], logs: [], totalMin: 0 });
+    days.push({ date, tasks: [], habits: [], logs: [], meetings: [], totalMin: 0 });
   }
   for (const t of data.tasks) {
     if (!t.due || t.status === 'ARCHIVED') continue;
@@ -349,6 +353,13 @@ function buildDays(data) {
   for (const tl of data.time_logs) {
     const day = days.find(d => d.date === tl.started_at.slice(0,10));
     if (day && tl.duration_minutes) day.logs.push(tl);
+  }
+  for (const ce of (data.calendar_events || [])) {
+    const day = days.find(d => d.date === ce.start.slice(0,10));
+    if (day) {
+      day.meetings.push(ce);
+      day.totalMin += ce.duration_minutes || 0;
+    }
   }
   return days;
 }
@@ -395,6 +406,10 @@ function renderCompact(days) {
     grid.appendChild(col);
     const body = col.querySelector('.day-body');
 
+    for (const ce of d.meetings) {
+      const c = ce.project_id ? getColor(ce.project_id) : '#8b949e';
+      body.innerHTML += `<div class="block meeting" style="--c:${c}"><div class="title">${ce.summary}</div><div class="meta">${fmtTime(ce.start)} – ${fmtTime(ce.end)}</div></div>`;
+    }
     for (const hi of d.habits) {
       const c = getColor(hi.project_id);
       body.innerHTML += `<div class="block habit" style="--c:${c}"><div class="title">${hi.habit_title}</div><div class="meta">${fmtHours(hi.habit_duration)}</div></div>`;
@@ -407,7 +422,7 @@ function renderCompact(days) {
       const c = getColor(tl.project_id);
       body.innerHTML += `<div class="block logged" style="--c:${c}"><div class="title">${tl.task_title}</div><div class="meta">${fmtHours(tl.duration_minutes)} logged at ${fmtTime(tl.started_at)}</div></div>`;
     }
-    if (!d.habits.length && !d.tasks.length && !d.logs.length) {
+    if (!d.meetings.length && !d.habits.length && !d.tasks.length && !d.logs.length) {
       body.innerHTML += '<div class="empty">No items</div>';
     }
   }

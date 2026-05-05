@@ -7,6 +7,7 @@ import { listProjects } from '../projects.js';
 import { listTasks } from '../tasks.js';
 import { listHabits, generateHabitInstances } from '../habits.js';
 import { getAllBudgets } from '../budgets.js';
+import { listCalendarEvents } from '../calendar-sync.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DB_PATH = process.env.CALENDROME_DB ?? 'calendrome.db';
@@ -72,6 +73,12 @@ app.get('/api/week', (req, res) => {
 
   const budgets = getAllBudgets(db, start);
 
+  const calendarEvents = listCalendarEvents(
+    db,
+    start + 'T00:00:00',
+    end + 'T23:59:59',
+  );
+
   res.json({
     start,
     end,
@@ -79,6 +86,7 @@ app.get('/api/week', (req, res) => {
     habit_instances: existingInstances,
     time_logs: timeLogs,
     budgets,
+    calendar_events: calendarEvents,
   });
 });
 
