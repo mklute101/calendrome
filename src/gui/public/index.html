@@ -12,6 +12,7 @@
     --text: #e6edf3;
     --text-muted: #8b949e;
     --accent: #58a6ff;
+    --hour-height: 60px;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
@@ -37,17 +38,12 @@
     font-size: 0.85rem;
   }
   .nav-btn:hover { border-color: var(--accent); }
+  .nav-btn.active { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 15%, var(--surface)); }
   .week-label { font-size: 0.85rem; color: var(--text-muted); min-width: 130px; text-align: center; }
   .nav-group { display: flex; align-items: center; gap: 6px; }
-  .nav-group #today-btn { margin-left: 8px; }
 
   /* Budget bar */
-  .budgets {
-    display: flex;
-    gap: 12px;
-    flex-wrap: wrap;
-    margin-bottom: 20px;
-  }
+  .budgets { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 20px; }
   .budget-card {
     background: var(--surface);
     border: 1px solid var(--border);
@@ -57,26 +53,18 @@
     flex: 1;
   }
   .budget-card h3 { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px; }
-  .budget-bar {
-    height: 4px;
-    background: var(--border);
-    border-radius: 3px;
-    overflow: hidden;
-    margin-bottom: 4px;
-  }
+  .budget-bar { height: 4px; background: var(--border); border-radius: 3px; overflow: hidden; margin-bottom: 4px; }
   .budget-fill { height: 100%; border-radius: 3px; transition: width 0.3s; }
   .budget-label { font-size: 0.75rem; color: var(--text-muted); }
   .over-budget { color: #f85149; }
 
-  /* Day grid */
+  /* ===== COMPACT VIEW ===== */
   .week-grid {
     display: grid;
     grid-template-columns: repeat(7, 1fr);
     gap: 8px;
   }
-  @media (max-width: 900px) {
-    .week-grid { grid-template-columns: repeat(2, 1fr); }
-  }
+  @media (max-width: 900px) { .week-grid { grid-template-columns: repeat(2, 1fr); } }
   .day-col {
     background: var(--surface);
     border: 1px solid var(--border);
@@ -97,30 +85,140 @@
   .day-body { padding: 6px; flex: 1; display: flex; flex-direction: column; gap: 4px; }
   .today { border-color: var(--accent); }
 
-  /* Blocks */
+  /* Blocks (shared between views) */
   .block {
     border-radius: 3px;
     padding: 6px 8px;
     font-size: 0.72rem;
     line-height: 1.35;
     border-left: 3px solid var(--c, var(--accent));
-    /* Planned: diagonal hatch — projected/scheduled */
     background: repeating-linear-gradient(
       45deg,
       color-mix(in srgb, var(--c) 18%, transparent) 0 5px,
       color-mix(in srgb, var(--c) 6%, transparent) 5px 10px
     );
+    overflow: hidden;
   }
-  .block .title { font-weight: 500; }
+  .block .title { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .block .meta { color: var(--text-muted); font-size: 0.65rem; margin-top: 2px; letter-spacing: 0.02em; }
   .block.habit { opacity: 0.7; font-style: italic; }
-  /* Logged: solid fill — measurement/telemetry */
   .block.logged {
     background: color-mix(in srgb, var(--c) 22%, transparent);
   }
-
-  /* Empty state */
   .empty { color: var(--text-muted); font-size: 0.75rem; padding: 20px 12px; text-align: center; }
+
+  /* ===== TIMELINE VIEW ===== */
+  .timeline-container { display: none; }
+  .timeline-container.visible { display: grid; grid-template-columns: 50px repeat(7, 1fr); gap: 0; }
+
+  .timeline-hours {
+    padding-top: 38px; /* align with day headers */
+  }
+  .timeline-hour-label {
+    height: var(--hour-height);
+    font-size: 0.65rem;
+    color: var(--text-muted);
+    text-align: right;
+    padding-right: 8px;
+    position: relative;
+  }
+  .timeline-hour-label::after {
+    content: '';
+    position: absolute;
+    right: 0;
+    top: 0;
+    width: 4px;
+    height: 1px;
+    background: var(--border);
+  }
+
+  .timeline-day {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-right: none;
+    position: relative;
+  }
+  .timeline-day:last-child { border-right: 1px solid var(--border); }
+  .timeline-day.today { border-color: var(--accent); }
+
+  .timeline-day-header {
+    padding: 10px 8px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    text-align: center;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+  }
+  .timeline-day-header .hours { font-weight: 400; color: var(--text-muted); }
+
+  .timeline-body {
+    position: relative;
+  }
+
+  .timeline-hour-line {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: var(--border);
+  }
+
+  .timeline-block {
+    position: absolute;
+    left: 4px;
+    right: 4px;
+    border-radius: 3px;
+    padding: 3px 6px;
+    font-size: 0.65rem;
+    line-height: 1.3;
+    border-left: 3px solid var(--c, var(--accent));
+    background: repeating-linear-gradient(
+      45deg,
+      color-mix(in srgb, var(--c) 18%, transparent) 0 5px,
+      color-mix(in srgb, var(--c) 6%, transparent) 5px 10px
+    );
+    overflow: hidden;
+    z-index: 2;
+    min-height: 20px;
+  }
+  .timeline-block .title { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .timeline-block .meta { color: var(--text-muted); font-size: 0.6rem; }
+  .timeline-block.habit { opacity: 0.7; font-style: italic; }
+  .timeline-block.logged {
+    background: color-mix(in srgb, var(--c) 22%, transparent);
+  }
+
+  .now-line {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: #f85149;
+    z-index: 10;
+  }
+  .now-line::before {
+    content: '';
+    position: absolute;
+    left: -4px;
+    top: -3px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #f85149;
+  }
+
+  /* Floating tasks (no time) above timeline */
+  .floating-tasks {
+    margin-bottom: 8px;
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .floating-tasks .block { flex: 0 0 auto; max-width: 200px; }
+  .floating-tasks:empty { display: none; }
 </style>
 </head>
 <body>
@@ -132,11 +230,16 @@
     <span class="week-label" id="week-label"></span>
     <button class="nav-btn" id="next" aria-label="Next week">→</button>
     <button class="nav-btn" id="today-btn">Today</button>
+    <span style="width:1px;height:20px;background:var(--border);margin:0 4px"></span>
+    <button class="nav-btn active" id="btn-compact">Compact</button>
+    <button class="nav-btn" id="btn-timeline">Timeline</button>
   </div>
 </header>
 
 <div class="budgets" id="budgets"></div>
+<div class="floating-tasks" id="floating"></div>
 <div class="week-grid" id="grid"></div>
+<div class="timeline-container" id="timeline"></div>
 
 <script>
 const DAYS = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
@@ -144,8 +247,15 @@ const PALETTE = [
   '#58a6ff','#3fb950','#d29922','#f85149','#bc8cff',
   '#79c0ff','#56d364','#e3b341','#ff7b72','#d2a8ff',
 ];
+const HOUR_START = 7;  // 7 AM
+const HOUR_END = 22;   // 10 PM
+const HOUR_COUNT = HOUR_END - HOUR_START;
+const HOUR_PX = 60;
+
 let projectColors = {};
 let weekStart = getMonday(new Date());
+let viewMode = localStorage.getItem('calendrome-view') || 'compact';
+let weekData = null;
 
 function getMonday(d) {
   const dt = new Date(d);
@@ -180,6 +290,31 @@ function fmtHours(min) {
   return Number(h.toFixed(1)) + 'h';
 }
 
+function fmtTime(isoStr) {
+  return new Date(isoStr).toLocaleTimeString('en-US', {hour:'numeric',minute:'2-digit'});
+}
+
+function timeToOffset(isoStr) {
+  const d = new Date(isoStr);
+  const hours = d.getHours() + d.getMinutes() / 60;
+  return (hours - HOUR_START) * HOUR_PX;
+}
+
+function durationToPx(minutes) {
+  return (minutes / 60) * HOUR_PX;
+}
+
+function setView(mode) {
+  viewMode = mode;
+  localStorage.setItem('calendrome-view', mode);
+  document.getElementById('btn-compact').classList.toggle('active', mode === 'compact');
+  document.getElementById('btn-timeline').classList.toggle('active', mode === 'timeline');
+  document.getElementById('grid').style.display = mode === 'compact' ? 'grid' : 'none';
+  document.getElementById('timeline').classList.toggle('visible', mode === 'timeline');
+  document.getElementById('floating').style.display = mode === 'timeline' ? 'flex' : 'none';
+  if (weekData) renderView(weekData);
+}
+
 async function loadProjects() {
   const res = await fetch('/api/projects');
   const projects = await res.json();
@@ -190,21 +325,35 @@ async function loadProjects() {
   }
 }
 
-async function render() {
-  await loadProjects();
-  const res = await fetch(`/api/week?start=${weekStart}`);
-  const data = await res.json();
-  const todayStr = new Date().toISOString().slice(0,10);
+function buildDays(data) {
+  const days = [];
+  for (let i = 0; i < 7; i++) {
+    const date = addDays(weekStart, i);
+    days.push({ date, tasks: [], habits: [], logs: [], totalMin: 0 });
+  }
+  for (const t of data.tasks) {
+    if (!t.due || t.status === 'ARCHIVED') continue;
+    const day = days.find(d => d.date === t.due.slice(0,10));
+    if (day) {
+      day.tasks.push(t);
+      if (t.status === 'SCHEDULED') day.totalMin += t.duration_minutes;
+    }
+  }
+  for (const hi of data.habit_instances) {
+    const day = days.find(d => d.date === hi.scheduled_start.slice(0,10));
+    if (day) {
+      day.habits.push(hi);
+      day.totalMin += hi.habit_duration || 0;
+    }
+  }
+  for (const tl of data.time_logs) {
+    const day = days.find(d => d.date === tl.started_at.slice(0,10));
+    if (day && tl.duration_minutes) day.logs.push(tl);
+  }
+  return days;
+}
 
-  // Week label
-  document.getElementById('week-label').textContent =
-    `${fmtDate(data.start)} – ${fmtDate(data.end)}`;
-
-  // Budgets — graduated tiers, comfortable margin in both directions
-  // <40%   under-target — muted color (haven't started / way light)
-  //  40–110%  on-target — project color
-  // 110–130%  approaching limit — amber
-  // >130%   significantly over — red
+function renderBudgets(data) {
   const budgetsEl = document.getElementById('budgets');
   budgetsEl.innerHTML = '';
   for (const b of data.budgets) {
@@ -213,74 +362,23 @@ async function render() {
     const ratio = alloc ? used / alloc : 0;
     const pct = alloc ? Math.min(100, ratio * 100) : 0;
     const color = getColor(b.project_id);
-
-    let fillColor = color;
-    let label = '';
-    let labelClass = '';
+    let fillColor = color, label = '', labelClass = '';
     if (alloc) {
-      if (ratio > 1.30) {
-        fillColor = '#f85149';
-        labelClass = 'over-budget';
-        label = ` (+${Math.round((ratio - 1) * 100)}%)`;
-      } else if (ratio > 1.10) {
-        fillColor = '#d29922';
-        label = ` (+${Math.round((ratio - 1) * 100)}%)`;
-      } else if (ratio < 0.40) {
-        fillColor = `color-mix(in srgb, ${color} 40%, transparent)`;
-        label = ` (-${Math.round((1 - ratio) * 100)}%)`;
-      }
+      if (ratio > 1.30) { fillColor = '#f85149'; labelClass = 'over-budget'; label = ` (+${Math.round((ratio-1)*100)}%)`; }
+      else if (ratio > 1.10) { fillColor = '#d29922'; label = ` (+${Math.round((ratio-1)*100)}%)`; }
+      else if (ratio < 0.40) { fillColor = `color-mix(in srgb, ${color} 40%, transparent)`; label = ` (-${Math.round((1-ratio)*100)}%)`; }
     }
-
     budgetsEl.innerHTML += `
       <div class="budget-card">
         <h3 style="color:${color}">${b.project_id}</h3>
-        <div class="budget-bar">
-          <div class="budget-fill" style="width:${pct}%;background:${fillColor}"></div>
-        </div>
-        <div class="budget-label ${labelClass}">
-          ${fmtHours(used)} / ${alloc ? fmtHours(alloc) : '∞'}${label}
-        </div>
+        <div class="budget-bar"><div class="budget-fill" style="width:${pct}%;background:${fillColor}"></div></div>
+        <div class="budget-label ${labelClass}">${fmtHours(used)} / ${alloc ? fmtHours(alloc) : '∞'}${label}</div>
       </div>`;
   }
+}
 
-  // Build day buckets
-  const days = [];
-  for (let i = 0; i < 7; i++) {
-    const date = addDays(weekStart, i);
-    days.push({ date, tasks: [], habits: [], logs: [], totalMin: 0 });
-  }
-
-  // Place tasks (by due date or calendar_event_id presence)
-  for (const t of data.tasks) {
-    if (!t.due) continue;
-    const dueDate = t.due.slice(0,10);
-    const day = days.find(d => d.date === dueDate);
-    if (day) {
-      day.tasks.push(t);
-      if (t.status === 'SCHEDULED') day.totalMin += t.duration_minutes;
-    }
-  }
-
-  // Place habit instances
-  for (const hi of data.habit_instances) {
-    const date = hi.scheduled_start.slice(0,10);
-    const day = days.find(d => d.date === date);
-    if (day) {
-      day.habits.push(hi);
-      day.totalMin += hi.habit_duration || 0;
-    }
-  }
-
-  // Place time logs
-  for (const tl of data.time_logs) {
-    const date = tl.started_at.slice(0,10);
-    const day = days.find(d => d.date === date);
-    if (day && tl.duration_minutes) {
-      day.logs.push(tl);
-    }
-  }
-
-  // Render grid
+function renderCompact(days) {
+  const todayStr = new Date().toISOString().slice(0,10);
   const grid = document.getElementById('grid');
   grid.innerHTML = '';
   for (let i = 0; i < 7; i++) {
@@ -288,60 +386,156 @@ async function render() {
     const isToday = d.date === todayStr;
     const col = document.createElement('div');
     col.className = 'day-col' + (isToday ? ' today' : '');
-
-    const loggedMin = d.logs.reduce((s, l) => s + (l.duration_minutes || 0), 0);
-
     col.innerHTML = `
       <div class="day-header">
         <span class="name">${DAYS[i]} ${fmtDate(d.date)}</span>
         <span class="hours">${fmtHours(d.totalMin)}</span>
       </div>
-      <div class="day-body" id="day-${i}"></div>`;
+      <div class="day-body"></div>`;
     grid.appendChild(col);
-
     const body = col.querySelector('.day-body');
 
-    // Habits
     for (const hi of d.habits) {
-      const color = getColor(hi.project_id);
-      body.innerHTML += `
-        <div class="block habit" style="--c:${color}">
-          <div class="title">${hi.habit_title}</div>
-          <div class="meta">${fmtHours(hi.habit_duration)}</div>
-        </div>`;
+      const c = getColor(hi.project_id);
+      body.innerHTML += `<div class="block habit" style="--c:${c}"><div class="title">${hi.habit_title}</div><div class="meta">${fmtHours(hi.habit_duration)}</div></div>`;
     }
-
-    // Tasks (planned)
     for (const t of d.tasks) {
-      const color = getColor(t.project_id);
-      body.innerHTML += `
-        <div class="block" style="--c:${color}">
-          <div class="title">${t.title}</div>
-          <div class="meta">${fmtHours(t.duration_minutes)} · ${t.priority} · ${t.project_id}</div>
-        </div>`;
+      const c = getColor(t.project_id);
+      body.innerHTML += `<div class="block" style="--c:${c}"><div class="title">${t.title}</div><div class="meta">${fmtHours(t.duration_minutes)} · ${t.priority} · ${t.project_id}</div></div>`;
     }
-
-    // Time logs (actual work done)
     for (const tl of d.logs) {
-      const color = getColor(tl.project_id);
-      const startTime = new Date(tl.started_at).toLocaleTimeString('en-US', {hour:'numeric',minute:'2-digit'});
-      body.innerHTML += `
-        <div class="block logged" style="--c:${color}">
-          <div class="title">${tl.task_title}</div>
-          <div class="meta">${fmtHours(tl.duration_minutes)} logged at ${startTime}</div>
-        </div>`;
+      const c = getColor(tl.project_id);
+      body.innerHTML += `<div class="block logged" style="--c:${c}"><div class="title">${tl.task_title}</div><div class="meta">${fmtHours(tl.duration_minutes)} logged at ${fmtTime(tl.started_at)}</div></div>`;
     }
-
     if (!d.habits.length && !d.tasks.length && !d.logs.length) {
       body.innerHTML += '<div class="empty">No items</div>';
     }
   }
 }
 
+function renderTimeline(days) {
+  const todayStr = new Date().toISOString().slice(0,10);
+  const totalHeight = HOUR_COUNT * HOUR_PX;
+  const tl = document.getElementById('timeline');
+  const floating = document.getElementById('floating');
+  tl.innerHTML = '';
+  floating.innerHTML = '';
+
+  // Hour labels column
+  let hoursHtml = '<div class="timeline-hours">';
+  for (let h = HOUR_START; h < HOUR_END; h++) {
+    const label = h === 0 ? '12a' : h < 12 ? `${h}a` : h === 12 ? '12p' : `${h-12}p`;
+    hoursHtml += `<div class="timeline-hour-label">${label}</div>`;
+  }
+  hoursHtml += '</div>';
+  tl.innerHTML += hoursHtml;
+
+  // Collect floating tasks (tasks with no time/due)
+  for (const d of days) {
+    for (const t of d.tasks) {
+      if (!t.due || !t.due.includes('T')) {
+        const c = getColor(t.project_id);
+        floating.innerHTML += `<div class="block" style="--c:${c}"><div class="title">${t.title}</div><div class="meta">${fmtHours(t.duration_minutes)} · ${t.project_id}</div></div>`;
+      }
+    }
+  }
+
+  // Day columns
+  for (let i = 0; i < 7; i++) {
+    const d = days[i];
+    const isToday = d.date === todayStr;
+
+    let dayHtml = `<div class="timeline-day${isToday ? ' today' : ''}">`;
+    dayHtml += `<div class="timeline-day-header"><span>${DAYS[i]} ${fmtDate(d.date)}</span><span class="hours">${fmtHours(d.totalMin)}</span></div>`;
+    dayHtml += `<div class="timeline-body" style="height:${totalHeight}px">`;
+
+    // Hour gridlines
+    for (let h = 0; h < HOUR_COUNT; h++) {
+      dayHtml += `<div class="timeline-hour-line" style="top:${h * HOUR_PX}px"></div>`;
+    }
+
+    // Habit instances
+    for (const hi of d.habits) {
+      const c = getColor(hi.project_id);
+      const top = timeToOffset(hi.scheduled_start);
+      const height = durationToPx(hi.habit_duration || 30);
+      if (top < 0 || top >= totalHeight) continue;
+      dayHtml += `<div class="timeline-block habit" style="--c:${c};top:${top}px;height:${height}px">
+        <div class="title">${hi.habit_title}</div>
+        ${height > 30 ? `<div class="meta">${fmtHours(hi.habit_duration)}</div>` : ''}
+      </div>`;
+    }
+
+    // Tasks with a time in their due date
+    for (const t of d.tasks) {
+      if (!t.due || !t.due.includes('T')) continue;
+      const c = getColor(t.project_id);
+      const top = timeToOffset(t.due);
+      const height = durationToPx(t.duration_minutes);
+      if (top < 0 || top >= totalHeight) continue;
+      dayHtml += `<div class="timeline-block" style="--c:${c};top:${top}px;height:${height}px">
+        <div class="title">${t.title}</div>
+        ${height > 30 ? `<div class="meta">${fmtHours(t.duration_minutes)} · ${t.project_id}</div>` : ''}
+      </div>`;
+    }
+
+    // Time logs
+    for (const log of d.logs) {
+      const c = getColor(log.project_id);
+      const top = timeToOffset(log.started_at);
+      const height = durationToPx(log.duration_minutes);
+      if (top < 0 || top >= totalHeight) continue;
+      dayHtml += `<div class="timeline-block logged" style="--c:${c};top:${top}px;height:${height}px">
+        <div class="title">${log.task_title}</div>
+        ${height > 30 ? `<div class="meta">${fmtHours(log.duration_minutes)} logged</div>` : ''}
+      </div>`;
+    }
+
+    // Now line (today only)
+    if (isToday) {
+      const now = new Date();
+      const nowHours = now.getHours() + now.getMinutes() / 60;
+      if (nowHours >= HOUR_START && nowHours < HOUR_END) {
+        const top = (nowHours - HOUR_START) * HOUR_PX;
+        dayHtml += `<div class="now-line" style="top:${top}px"></div>`;
+      }
+    }
+
+    dayHtml += '</div></div>';
+    tl.innerHTML += dayHtml;
+  }
+}
+
+function renderView(data) {
+  const days = buildDays(data);
+  renderBudgets(data);
+  if (viewMode === 'compact') {
+    renderCompact(days);
+  } else {
+    renderTimeline(days);
+  }
+}
+
+async function render() {
+  await loadProjects();
+  const res = await fetch(`/api/week?start=${weekStart}`);
+  weekData = await res.json();
+  document.getElementById('week-label').textContent =
+    `${fmtDate(weekData.start)} – ${fmtDate(weekData.end)}`;
+  renderView(weekData);
+}
+
+// Navigation
 document.getElementById('prev').onclick = () => { weekStart = addDays(weekStart, -7); render(); };
 document.getElementById('next').onclick = () => { weekStart = addDays(weekStart, 7); render(); };
 document.getElementById('today-btn').onclick = () => { weekStart = getMonday(new Date()); render(); };
 
+// View toggle
+document.getElementById('btn-compact').onclick = () => setView('compact');
+document.getElementById('btn-timeline').onclick = () => setView('timeline');
+
+// Init
+setView(viewMode);
 render();
 </script>
 </body>
