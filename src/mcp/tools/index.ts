@@ -29,6 +29,8 @@ import {
   skipHabitInstance,
 } from '../../habits.js';
 import { getProjectBudget, getAllBudgets } from '../../budgets.js';
+import { HarvestClient } from '../../harvest/client.js';
+import { harvestPushTimesheet } from '../../harvest/push.js';
 import {
   exportTimesheet,
   getTimesheetSummary,
@@ -83,6 +85,8 @@ export function buildTools(
           calendar_id: { type: ['string', 'null'] },
           color: { type: ['string', 'null'] },
           weekly_budget_minutes: { type: ['integer', 'null'] },
+          harvest_project_id: { type: ['integer', 'null'] },
+          harvest_task_id: { type: ['integer', 'null'] },
         },
       },
       async handler(args) {
@@ -93,6 +97,8 @@ export function buildTools(
           calendar_id: args.calendar_id ?? null,
           color: args.color ?? null,
           weekly_budget_minutes: args.weekly_budget_minutes ?? null,
+          harvest_project_id: args.harvest_project_id ?? null,
+          harvest_task_id: args.harvest_task_id ?? null,
         });
         return { project };
       },
@@ -121,6 +127,8 @@ export function buildTools(
           weekly_budget_minutes: { type: ['integer', 'null'] },
           calendar_id: { type: ['string', 'null'] },
           color: { type: ['string', 'null'] },
+          harvest_project_id: { type: ['integer', 'null'] },
+          harvest_task_id: { type: ['integer', 'null'] },
           active: { type: 'integer' },
         },
       },
@@ -613,6 +621,60 @@ export function buildTools(
             requireString(args, 'to'),
           ),
         };
+      },
+    },
+
+    // -------- harvest --------
+    {
+      name: 'harvest_push_timesheet',
+      description:
+        'Push time_log entries to Harvest for a date range. Requires ' +
+        'HARVEST_TOKEN and HARVEST_ACCOUNT_ID env vars. Skips entries ' +
+        'already pushed (harvest_entry_id set). Projects must have ' +
+        'harvest_project_id and harvest_task_id mapped.',
+      inputSchema: {
+        type: 'object',
+        required: ['from', 'to'],
+        properties: {
+          from: { type: 'string' },
+          to: { type: 'string' },
+        },
+      },
+      async handler(args) {
+        const token = process.env.HARVEST_TOKEN;
+        const accountId = process.env.HARVEST_ACCOUNT_ID;
+        if (!token || !accountId) {
+          throw new Error(
+            'HARVEST_TOKEN and HARVEST_ACCOUNT_ID env vars must be set',
+          );
+        }
+        const client = new HarvestClient({ token, accountId });
+        return harvestPushTimesheet(
+          db,
+          client,
+          requireString(args, 'from'),
+          requireString(args, 'to'),
+        );
+      },
+    },
+    {
+      name: 'harvest_list_projects',
+      description:
+        'List active projects from Harvest. Use this to find ' +
+        'harvest_project_id values for mapping to calendrome projects. ' +
+        'Requires HARVEST_TOKEN and HARVEST_ACCOUNT_ID env vars.',
+      inputSchema: { type: 'object', properties: {} },
+      async handler() {
+        const token = process.env.HARVEST_TOKEN;
+        const accountId = process.env.HARVEST_ACCOUNT_ID;
+        if (!token || !accountId) {
+          throw new Error(
+            'HARVEST_TOKEN and HARVEST_ACCOUNT_ID env vars must be set',
+          );
+        }
+        const client = new HarvestClient({ token, accountId });
+        const projects = await client.listProjects();
+        return { projects };
       },
     },
   ];
