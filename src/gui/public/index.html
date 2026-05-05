@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Calendrome — Week View</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --surface: #161b22;
+    --border: #30363d;
+    --text: #e6edf3;
+    --text-muted: #8b949e;
+    --accent: #58a6ff;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    padding: 20px;
+  }
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 20px;
+  }
+  header h1 { font-size: 1rem; font-weight: 500; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-muted); }
+  .nav-btn {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 6px 14px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.85rem;
+  }
+  .nav-btn:hover { border-color: var(--accent); }
+  .week-label { font-size: 0.85rem; color: var(--text-muted); min-width: 130px; text-align: center; }
+  .nav-group { display: flex; align-items: center; gap: 6px; }
+  .nav-group #today-btn { margin-left: 8px; }
+
+  /* Budget bar */
+  .budgets {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 20px;
+  }
+  .budget-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 14px;
+    min-width: 160px;
+    flex: 1;
+  }
+  .budget-card h3 { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px; }
+  .budget-bar {
+    height: 4px;
+    background: var(--border);
+    border-radius: 3px;
+    overflow: hidden;
+    margin-bottom: 4px;
+  }
+  .budget-fill { height: 100%; border-radius: 3px; transition: width 0.3s; }
+  .budget-label { font-size: 0.75rem; color: var(--text-muted); }
+  .over-budget { color: #f85149; }
+
+  /* Day grid */
+  .week-grid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 8px;
+  }
+  @media (max-width: 900px) {
+    .week-grid { grid-template-columns: repeat(2, 1fr); }
+  }
+  .day-col {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    min-height: 300px;
+    display: flex;
+    flex-direction: column;
+  }
+  .day-header {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.75rem;
+    display: flex;
+    justify-content: space-between;
+  }
+  .day-header .name { font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
+  .day-header .hours { color: var(--text-muted); font-weight: 400; }
+  .day-body { padding: 6px; flex: 1; display: flex; flex-direction: column; gap: 4px; }
+  .today { border-color: var(--accent); }
+
+  /* Blocks */
+  .block {
+    border-radius: 3px;
+    padding: 6px 8px;
+    font-size: 0.72rem;
+    line-height: 1.35;
+    border-left: 3px solid var(--c, var(--accent));
+    /* Planned: diagonal hatch — projected/scheduled */
+    background: repeating-linear-gradient(
+      45deg,
+      color-mix(in srgb, var(--c) 18%, transparent) 0 5px,
+      color-mix(in srgb, var(--c) 6%, transparent) 5px 10px
+    );
+  }
+  .block .title { font-weight: 500; }
+  .block .meta { color: var(--text-muted); font-size: 0.65rem; margin-top: 2px; letter-spacing: 0.02em; }
+  .block.habit { opacity: 0.7; font-style: italic; }
+  /* Logged: solid fill — measurement/telemetry */
+  .block.logged {
+    background: color-mix(in srgb, var(--c) 22%, transparent);
+  }
+
+  /* Empty state */
+  .empty { color: var(--text-muted); font-size: 0.75rem; padding: 20px 12px; text-align: center; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Calendrome</h1>
+  <div class="nav-group">
+    <button class="nav-btn" id="prev" aria-label="Previous week">←</button>
+    <span class="week-label" id="week-label"></span>
+    <button class="nav-btn" id="next" aria-label="Next week">→</button>
+    <button class="nav-btn" id="today-btn">Today</button>
+  </div>
+</header>
+
+<div class="budgets" id="budgets"></div>
+<div class="week-grid" id="grid"></div>
+
+<script>
+const DAYS = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+const PALETTE = [
+  '#58a6ff','#3fb950','#d29922','#f85149','#bc8cff',
+  '#79c0ff','#56d364','#e3b341','#ff7b72','#d2a8ff',
+];
+let projectColors = {};
+let weekStart = getMonday(new Date());
+
+function getMonday(d) {
+  const dt = new Date(d);
+  const day = dt.getDay();
+  const diff = dt.getDate() - day + (day === 0 ? -6 : 1);
+  dt.setDate(diff);
+  return dt.toISOString().slice(0,10);
+}
+
+function addDays(dateStr, n) {
+  const d = new Date(dateStr + 'T00:00:00');
+  d.setDate(d.getDate() + n);
+  return d.toISOString().slice(0,10);
+}
+
+function fmtDate(dateStr) {
+  const d = new Date(dateStr + 'T12:00:00');
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+function getColor(projectId) {
+  if (!projectColors[projectId]) {
+    const idx = Object.keys(projectColors).length % PALETTE.length;
+    projectColors[projectId] = PALETTE[idx];
+  }
+  return projectColors[projectId];
+}
+
+function fmtHours(min) {
+  if (!min) return '0h';
+  const h = min / 60;
+  return Number(h.toFixed(1)) + 'h';
+}
+
+async function loadProjects() {
+  const res = await fetch('/api/projects');
+  const projects = await res.json();
+  projectColors = {};
+  for (let i = 0; i < projects.length; i++) {
+    const p = projects[i];
+    projectColors[p.id] = p.color || PALETTE[i % PALETTE.length];
+  }
+}
+
+async function render() {
+  await loadProjects();
+  const res = await fetch(`/api/week?start=${weekStart}`);
+  const data = await res.json();
+  const todayStr = new Date().toISOString().slice(0,10);
+
+  // Week label
+  document.getElementById('week-label').textContent =
+    `${fmtDate(data.start)} – ${fmtDate(data.end)}`;
+
+  // Budgets — graduated tiers, comfortable margin in both directions
+  // <40%   under-target — muted color (haven't started / way light)
+  //  40–110%  on-target — project color
+  // 110–130%  approaching limit — amber
+  // >130%   significantly over — red
+  const budgetsEl = document.getElementById('budgets');
+  budgetsEl.innerHTML = '';
+  for (const b of data.budgets) {
+    const alloc = b.allocated_minutes;
+    const used = b.spent_minutes + b.scheduled_minutes;
+    const ratio = alloc ? used / alloc : 0;
+    const pct = alloc ? Math.min(100, ratio * 100) : 0;
+    const color = getColor(b.project_id);
+
+    let fillColor = color;
+    let label = '';
+    let labelClass = '';
+    if (alloc) {
+      if (ratio > 1.30) {
+        fillColor = '#f85149';
+        labelClass = 'over-budget';
+        label = ` (+${Math.round((ratio - 1) * 100)}%)`;
+      } else if (ratio > 1.10) {
+        fillColor = '#d29922';
+        label = ` (+${Math.round((ratio - 1) * 100)}%)`;
+      } else if (ratio < 0.40) {
+        fillColor = `color-mix(in srgb, ${color} 40%, transparent)`;
+        label = ` (-${Math.round((1 - ratio) * 100)}%)`;
+      }
+    }
+
+    budgetsEl.innerHTML += `
+      <div class="budget-card">
+        <h3 style="color:${color}">${b.project_id}</h3>
+        <div class="budget-bar">
+          <div class="budget-fill" style="width:${pct}%;background:${fillColor}"></div>
+        </div>
+        <div class="budget-label ${labelClass}">
+          ${fmtHours(used)} / ${alloc ? fmtHours(alloc) : '∞'}${label}
+        </div>
+      </div>`;
+  }
+
+  // Build day buckets
+  const days = [];
+  for (let i = 0; i < 7; i++) {
+    const date = addDays(weekStart, i);
+    days.push({ date, tasks: [], habits: [], logs: [], totalMin: 0 });
+  }
+
+  // Place tasks (by due date or calendar_event_id presence)
+  for (const t of data.tasks) {
+    if (!t.due) continue;
+    const dueDate = t.due.slice(0,10);
+    const day = days.find(d => d.date === dueDate);
+    if (day) {
+      day.tasks.push(t);
+      if (t.status === 'SCHEDULED') day.totalMin += t.duration_minutes;
+    }
+  }
+
+  // Place habit instances
+  for (const hi of data.habit_instances) {
+    const date = hi.scheduled_start.slice(0,10);
+    const day = days.find(d => d.date === date);
+    if (day) {
+      day.habits.push(hi);
+      day.totalMin += hi.habit_duration || 0;
+    }
+  }
+
+  // Place time logs
+  for (const tl of data.time_logs) {
+    const date = tl.started_at.slice(0,10);
+    const day = days.find(d => d.date === date);
+    if (day && tl.duration_minutes) {
+      day.logs.push(tl);
+    }
+  }
+
+  // Render grid
+  const grid = document.getElementById('grid');
+  grid.innerHTML = '';
+  for (let i = 0; i < 7; i++) {
+    const d = days[i];
+    const isToday = d.date === todayStr;
+    const col = document.createElement('div');
+    col.className = 'day-col' + (isToday ? ' today' : '');
+
+    const loggedMin = d.logs.reduce((s, l) => s + (l.duration_minutes || 0), 0);
+
+    col.innerHTML = `
+      <div class="day-header">
+        <span class="name">${DAYS[i]} ${fmtDate(d.date)}</span>
+        <span class="hours">${fmtHours(d.totalMin)}</span>
+      </div>
+      <div class="day-body" id="day-${i}"></div>`;
+    grid.appendChild(col);
+
+    const body = col.querySelector('.day-body');
+
+    // Habits
+    for (const hi of d.habits) {
+      const color = getColor(hi.project_id);
+      body.innerHTML += `
+        <div class="block habit" style="--c:${color}">
+          <div class="title">${hi.habit_title}</div>
+          <div class="meta">${fmtHours(hi.habit_duration)}</div>
+        </div>`;
+    }
+
+    // Tasks (planned)
+    for (const t of d.tasks) {
+      const color = getColor(t.project_id);
+      body.innerHTML += `
+        <div class="block" style="--c:${color}">
+          <div class="title">${t.title}</div>
+          <div class="meta">${fmtHours(t.duration_minutes)} · ${t.priority} · ${t.project_id}</div>
+        </div>`;
+    }
+
+    // Time logs (actual work done)
+    for (const tl of d.logs) {
+      const color = getColor(tl.project_id);
+      const startTime = new Date(tl.started_at).toLocaleTimeString('en-US', {hour:'numeric',minute:'2-digit'});
+      body.innerHTML += `
+        <div class="block logged" style="--c:${color}">
+          <div class="title">${tl.task_title}</div>
+          <div class="meta">${fmtHours(tl.duration_minutes)} logged at ${startTime}</div>
+        </div>`;
+    }
+
+    if (!d.habits.length && !d.tasks.length && !d.logs.length) {
+      body.innerHTML += '<div class="empty">No items</div>';
+    }
+  }
+}
+
+document.getElementById('prev').onclick = () => { weekStart = addDays(weekStart, -7); render(); };
+document.getElementById('next').onclick = () => { weekStart = addDays(weekStart, 7); render(); };
+document.getElementById('today-btn').onclick = () => { weekStart = getMonday(new Date()); render(); };
+
+render();
+</script>
+</body>
+</html>
