@@ -10,7 +10,7 @@ budgets, habits, and time.
 ```bash
 npm install
 npm run build
-npm test          # 67+ tests, all should pass
+npm test          # 110+ tests, all should pass
 ```
 
 ## Run as an MCP server
@@ -92,9 +92,24 @@ plus a **Jira** MCP:
 ## Available MCP tools
 
 ### Projects
-- `create_project` — create a project with prefix and weekly budget
-- `list_projects` — list projects (filter by active)
-- `update_project` — update project settings
+- `create_project` — create a project with prefix and weekly budget. `category_id` defaults to `work`.
+- `list_projects` — list projects (filter by `active`, by `category_id` for the work/personal split)
+- `update_project` — update project settings (including `category_id`)
+
+### Categories & availability
+Every project belongs to a category (`work`, `personal`, …) that owns a default
+scheduling window. The GUI defaults to the work view so casual screen-shares
+never leak personal stuff. Availability overrides are the frictionless answer
+to "Tuesday night I'm not doing anything" — one MCP call from a single
+sentence to Claude.
+
+- `list_categories` — all categories with their default windows
+- `create_category` — define a new category with a window
+- `update_category` — change the window or rename
+- `block_time` — reserve a slot so the planner won't schedule into it
+- `open_time` — carve out an extra slot inside a normally-blocked window
+- `list_availability` — overrides intersecting a date range
+- `delete_availability` / `clear_availability` — remove individually or by range
 
 ### Tasks
 - `create_task` — create a task in a project

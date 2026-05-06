@@ -2,7 +2,7 @@
 
 ## Why this exists
 
-Two principles:
+Three principles:
 
 **If it's not on the calendar, it's not real.** You can talk about
 needing or wanting to do something, but until time is actually
@@ -16,6 +16,14 @@ deliberately. Without explicit hour caps per project, low-priority
 work absorbs every gap. Calendrome makes hour budgets visible so
 you can see the drift and push back.
 
+**Claiming and releasing time should be one sentence.** The thing
+Reclaim gets wrong is making "Tuesday night I'm doing nothing"
+into a settings exercise. In calendrome, that's one MCP call
+(`block_time`) the planner skill makes from a single conversational
+sentence. Same for "actually I'm free again" (`clear_availability`).
+The friction-floor for adjusting your own schedule is a complete
+sentence — never a click path.
+
 ## What we know
 
 - Weekly hour budgets per project, YNAB-style: soft caps that warn
@@ -27,6 +35,15 @@ you can see the drift and push back.
   planning that pulls from Jira, Google Calendar, and calendrome.
 - The GUI is a read-only dashboard. It shows the full picture but
   you plan via Claude conversations.
+- Every project belongs to a **category** (`work`, `personal`, …).
+  Categories own a default scheduling window — work is Mon-Fri 9-5,
+  personal is evenings/weekends — so the planner knows which slots
+  are eligible for which projects. The GUI defaults to the work view
+  so casual screen-shares never leak personal stuff.
+- **Availability overrides** carve exceptions into those windows.
+  `block_time` reserves a slot ("Tuesday night, nothing"); `open_time`
+  carves out an extra one ("Saturday morning is fair game"). Both
+  exist because Reclaim makes this a chore and we don't want to.
 - Integrations (Harvest, Google Calendar sync) are separate from core.
 
 ## What we're still figuring out
@@ -72,7 +89,7 @@ you can see the drift and push back.
 
 ## What Claude should know
 
-- `npm test` runs vitest (89+ tests)
+- `npm test` runs vitest (110+ tests)
 - `npm run build` compiles TS + copies schema.sql and GUI assets
 - `npm start` launches the MCP server, `npm run gui` the web dashboard
 - Planner skill: `.claude/skills/week.md`

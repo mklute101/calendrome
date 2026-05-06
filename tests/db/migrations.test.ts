@@ -25,9 +25,42 @@ describe('database migrations', () => {
       'time_policies',
       'habits',
       'habit_instances',
+      'categories',
+      'availability_overrides',
     ]) {
       expect(tableNames).toContain(t);
     }
+  });
+
+  it('seeds work and personal categories', () => {
+    const db = openDatabase(':memory:');
+    migrate(db);
+    const rows = db
+      .prepare("SELECT id FROM categories ORDER BY id")
+      .all() as { id: string }[];
+    const ids = rows.map((r) => r.id);
+    expect(ids).toContain('work');
+    expect(ids).toContain('personal');
+  });
+
+  it('adds category_id to projects and backfills to work', () => {
+    const db = openDatabase(':memory:');
+    migrate(db);
+    const cols = db
+      .prepare("PRAGMA table_info('projects')")
+      .all() as { name: string }[];
+    expect(cols.map((c) => c.name)).toContain('category_id');
+
+    db.prepare(
+      "INSERT INTO projects (id, name, prefix) VALUES ('legacy', 'L', 'L')",
+    ).run();
+    // Simulate an older row by clearing the column then re-running migrate
+    db.prepare("UPDATE projects SET category_id = NULL WHERE id = 'legacy'").run();
+    migrate(db);
+    const row = db
+      .prepare("SELECT category_id FROM projects WHERE id = 'legacy'")
+      .get() as { category_id: string };
+    expect(row.category_id).toBe('work');
   });
 
   it('creates expected columns on projects', () => {

@@ -90,3 +90,35 @@ CREATE TABLE IF NOT EXISTS calendar_events (
   is_meeting      INTEGER NOT NULL DEFAULT 0,
   synced_at       TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- Categories: top-level scheduling windows. Every project belongs to one.
+-- The screen-share filter and the "when can this be scheduled" decision
+-- are the same lookup.
+CREATE TABLE IF NOT EXISTS categories (
+  id             TEXT PRIMARY KEY,
+  name           TEXT NOT NULL,
+  display_order  INTEGER NOT NULL DEFAULT 0,
+  -- Default weekly window as JSON, e.g.
+  -- {"days":[1,2,3,4,5],"start":"09:00","end":"17:00"}
+  -- (days: 0=Sun..6=Sat, ISO-ish; null means "no default window")
+  default_window TEXT,
+  timezone       TEXT NOT NULL DEFAULT 'UTC',
+  created_at     TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Ad-hoc availability blocks/openings. The frictionless answer to
+-- "Tuesday night I'm not doing anything — don't schedule anything."
+-- available=0  → block this window (do not schedule)
+-- available=1  → open this window (allow scheduling outside the normal window)
+-- category_id  → null = applies to all categories, otherwise scoped
+CREATE TABLE IF NOT EXISTS availability_overrides (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  start       TEXT NOT NULL,
+  end         TEXT NOT NULL,
+  available   INTEGER NOT NULL,
+  category_id TEXT REFERENCES categories(id),
+  reason      TEXT,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_availability_overrides_range
+  ON availability_overrides(start, end);

@@ -44,6 +44,18 @@ import {
   skipHabitInstance,
 } from '../../habits.js';
 import { getProjectBudget, getAllBudgets } from '../../budgets.js';
+import {
+  createCategory,
+  listCategories,
+  updateCategory,
+  type CategoryWindow,
+} from '../../categories.js';
+import {
+  createAvailabilityOverride,
+  listAvailabilityOverrides,
+  deleteAvailabilityOverride,
+  clearAvailabilityOverrides,
+} from '../../availability.js';
 import { HarvestClient } from '../../harvest/client.js';
 import { harvestPushTimesheet } from '../../harvest/push.js';
 import {
@@ -94,7 +106,9 @@ export function buildTools(
     // -------- projects --------
     {
       name: 'create_project',
-      description: 'Create a project with calendar mapping and weekly budget',
+      description:
+        'Create a project with calendar mapping and weekly budget. ' +
+        "category_id defaults to 'work'.",
       inputSchema: {
         type: 'object',
         required: ['id', 'name', 'prefix'],
@@ -107,6 +121,7 @@ export function buildTools(
           weekly_budget_minutes: { type: ['integer', 'null'] },
           harvest_project_id: { type: ['integer', 'null'] },
           harvest_task_id: { type: ['integer', 'null'] },
+          category_id: { type: ['string', 'null'] },
         },
       },
       async handler(args) {
@@ -119,19 +134,35 @@ export function buildTools(
           weekly_budget_minutes: args.weekly_budget_minutes ?? null,
           harvest_project_id: args.harvest_project_id ?? null,
           harvest_task_id: args.harvest_task_id ?? null,
+          category_id: args.category_id ?? null,
         });
         return { project };
       },
     },
     {
       name: 'list_projects',
-      description: 'List all projects',
+      description:
+        'List projects. Pass category_id (string or array of strings) to ' +
+        'filter — e.g. category_id="work" for the screen-share view.',
       inputSchema: {
         type: 'object',
-        properties: { active: { type: 'boolean' } },
+        properties: {
+          active: { type: 'boolean' },
+          category_id: {
+            oneOf: [
+              { type: 'string' },
+              { type: 'array', items: { type: 'string' } },
+            ],
+          },
+        },
       },
       async handler(args) {
-        return { projects: listProjects(db, { active: args?.active }) };
+        return {
+          projects: listProjects(db, {
+            active: args?.active,
+            category_id: args?.category_id,
+          }),
+        };
       },
     },
     {
@@ -149,6 +180,7 @@ export function buildTools(
           color: { type: ['string', 'null'] },
           harvest_project_id: { type: ['integer', 'null'] },
           harvest_task_id: { type: ['integer', 'null'] },
+          category_id: { type: ['string', 'null'] },
           active: { type: 'integer' },
         },
       },
@@ -820,6 +852,217 @@ export function buildTools(
         const events: CalendarEventInput[] = args.events ?? [];
         const result = syncCalendarEvents(db, events);
         return { upserted: result.upserted, deleted };
+      },
+    },
+
+    // -------- categories --------
+    // Categories drive *when* work happens. Every project belongs to one;
+    // each category owns a default scheduling window. Filtering by category
+    // is also the screen-share filter — same data, two uses.
+    {
+      name: 'list_categories',
+      description: 'List categories ordered by display_order',
+      inputSchema: { type: 'object', properties: {} },
+      async handler() {
+        return { categories: listCategories(db) };
+      },
+    },
+    {
+      name: 'create_category',
+      description:
+        'Create a new category with an optional default scheduling window. ' +
+        'default_window shape: ' +
+        '{ days: int[] (0=Sun..6=Sat), start: "HH:MM", end: "HH:MM" }.',
+      inputSchema: {
+        type: 'object',
+        required: ['id', 'name'],
+        properties: {
+          id: { type: 'string' },
+          name: { type: 'string' },
+          display_order: { type: 'integer' },
+          timezone: { type: 'string' },
+          default_window: {
+            type: ['object', 'null'],
+            properties: {
+              days: { type: 'array', items: { type: 'integer' } },
+              start: { type: 'string' },
+              end: { type: 'string' },
+            },
+          },
+        },
+      },
+      async handler(args) {
+        return {
+          category: createCategory(db, {
+            id: requireString(args, 'id'),
+            name: requireString(args, 'name'),
+            display_order: args.display_order,
+            default_window: args.default_window ?? null,
+            timezone: args.timezone,
+          }),
+        };
+      },
+    },
+    {
+      name: 'update_category',
+      description:
+        "Update a category's name, display order, timezone, or default " +
+        'scheduling window.',
+      inputSchema: {
+        type: 'object',
+        required: ['id'],
+        properties: {
+          id: { type: 'string' },
+          name: { type: 'string' },
+          display_order: { type: 'integer' },
+          timezone: { type: 'string' },
+          default_window: {
+            type: ['object', 'null'],
+            properties: {
+              days: { type: 'array', items: { type: 'integer' } },
+              start: { type: 'string' },
+              end: { type: 'string' },
+            },
+          },
+        },
+      },
+      async handler(args) {
+        const id = requireString(args, 'id');
+        const patch: {
+          name?: string;
+          display_order?: number;
+          timezone?: string;
+          default_window?: CategoryWindow | null;
+        } = {};
+        if (args.name !== undefined) patch.name = args.name;
+        if (args.display_order !== undefined)
+          patch.display_order = args.display_order;
+        if (args.timezone !== undefined) patch.timezone = args.timezone;
+        if (args.default_window !== undefined)
+          patch.default_window = args.default_window;
+        return { category: updateCategory(db, id, patch) };
+      },
+    },
+
+    // -------- availability overrides --------
+    // The frictionless answer to "Tuesday night I'm doing nothing — don't
+    // schedule anything." One conversational sentence → one MCP call →
+    // the block exists. No settings UI, no placeholder calendar event.
+    {
+      name: 'block_time',
+      description:
+        "Reserve a window so the planner won't schedule into it. " +
+        'category_id is optional — leave it null to block across every ' +
+        'category, or set it to scope (e.g. "personal") to block only ' +
+        'that category.',
+      inputSchema: {
+        type: 'object',
+        required: ['start', 'end'],
+        properties: {
+          start: { type: 'string' },
+          end: { type: 'string' },
+          category_id: { type: ['string', 'null'] },
+          reason: { type: ['string', 'null'] },
+        },
+      },
+      async handler(args) {
+        return {
+          override: createAvailabilityOverride(db, {
+            start: requireString(args, 'start'),
+            end: requireString(args, 'end'),
+            available: 0,
+            category_id: args.category_id ?? null,
+            reason: args.reason ?? null,
+          }),
+        };
+      },
+    },
+    {
+      name: 'open_time',
+      description:
+        'Mark a window as available even if it falls outside the normal ' +
+        'category window. e.g. "Saturday morning is fair game for personal ' +
+        'work".',
+      inputSchema: {
+        type: 'object',
+        required: ['start', 'end'],
+        properties: {
+          start: { type: 'string' },
+          end: { type: 'string' },
+          category_id: { type: ['string', 'null'] },
+          reason: { type: ['string', 'null'] },
+        },
+      },
+      async handler(args) {
+        return {
+          override: createAvailabilityOverride(db, {
+            start: requireString(args, 'start'),
+            end: requireString(args, 'end'),
+            available: 1,
+            category_id: args.category_id ?? null,
+            reason: args.reason ?? null,
+          }),
+        };
+      },
+    },
+    {
+      name: 'list_availability',
+      description:
+        'List availability overrides intersecting [from, to]. Optional ' +
+        'category_id filter (pass null to get global-only overrides).',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          from: { type: 'string' },
+          to: { type: 'string' },
+          category_id: { type: ['string', 'null'] },
+        },
+      },
+      async handler(args) {
+        return {
+          overrides: listAvailabilityOverrides(db, {
+            from: args.from,
+            to: args.to,
+            category_id: args.category_id,
+          }),
+        };
+      },
+    },
+    {
+      name: 'delete_availability',
+      description: 'Delete a single availability override by id',
+      inputSchema: {
+        type: 'object',
+        required: ['id'],
+        properties: { id: { type: 'integer' } },
+      },
+      async handler(args) {
+        deleteAvailabilityOverride(db, requireNumber(args, 'id'));
+        return { ok: true };
+      },
+    },
+    {
+      name: 'clear_availability',
+      description:
+        'Clear every override fully contained in [start, end]. Useful when ' +
+        'plans change: "actually, I am free Tuesday night" wipes the block ' +
+        'without making the user remember IDs.',
+      inputSchema: {
+        type: 'object',
+        required: ['start', 'end'],
+        properties: {
+          start: { type: 'string' },
+          end: { type: 'string' },
+          category_id: { type: ['string', 'null'] },
+        },
+      },
+      async handler(args) {
+        const removed = clearAvailabilityOverrides(db, {
+          start: requireString(args, 'start'),
+          end: requireString(args, 'end'),
+          category_id: args.category_id,
+        });
+        return { removed };
       },
     },
   ];

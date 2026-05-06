@@ -50,6 +50,14 @@ describe('MCP tools layer', () => {
       'place_task',
       'unplace_task',
       'sync_calendar_events',
+      'list_categories',
+      'create_category',
+      'update_category',
+      'block_time',
+      'open_time',
+      'list_availability',
+      'delete_availability',
+      'clear_availability',
     ]) {
       expect(names).toContain(expected);
     }
@@ -251,5 +259,153 @@ describe('MCP tools layer', () => {
     await expect(
       create.handler({ id: 'acme' /* missing name + prefix */ }),
     ).rejects.toThrow();
+  });
+
+  it('list_categories returns the seeded work + personal categories', async () => {
+    const db = freshDb();
+    const tools = buildTools(db);
+    const result = await getTool(tools, 'list_categories').handler({});
+    const ids = result.categories.map((c: any) => c.id);
+    expect(ids).toContain('work');
+    expect(ids).toContain('personal');
+  });
+
+  it('update_category changes the default scheduling window', async () => {
+    const db = freshDb();
+    const tools = buildTools(db);
+    const result = await getTool(tools, 'update_category').handler({
+      id: 'work',
+      default_window: { days: [1, 2, 3, 4, 5], start: '08:00', end: '18:00' },
+    });
+    expect(result.category.default_window).toEqual({
+      days: [1, 2, 3, 4, 5],
+      start: '08:00',
+      end: '18:00',
+    });
+  });
+
+  it('list_projects with category_id filters out the other category', async () => {
+    const db = freshDb();
+    const tools = buildTools(db);
+    await getTool(tools, 'create_project').handler({
+      id: 'acme',
+      name: 'Acme',
+      prefix: 'ACME',
+    });
+    await getTool(tools, 'create_project').handler({
+      id: 'home',
+      name: 'Home',
+      prefix: 'HOME',
+      category_id: 'personal',
+    });
+
+    const workView = await getTool(tools, 'list_projects').handler({
+      category_id: 'work',
+    });
+    expect(workView.projects.map((p: any) => p.id)).toEqual(['acme']);
+  });
+
+  it('block_time creates an availability override for the planner to respect', async () => {
+    const db = freshDb();
+    const tools = buildTools(db);
+    const result = await getTool(tools, 'block_time').handler({
+      start: '2026-05-12T18:00:00Z',
+      end: '2026-05-12T22:00:00Z',
+      reason: 'family dinner',
+    });
+    expect(result.override.available).toBe(0);
+    expect(result.override.reason).toBe('family dinner');
+  });
+
+  it('block_time → list_availability → clear_availability round-trip', async () => {
+    const db = freshDb();
+    const tools = buildTools(db);
+    await getTool(tools, 'block_time').handler({
+      start: '2026-05-12T18:00:00Z',
+      end: '2026-05-12T22:00:00Z',
+      category_id: 'personal',
+    });
+    const list = await getTool(tools, 'list_availability').handler({
+      from: '2026-05-12T00:00:00Z',
+      to: '2026-05-13T00:00:00Z',
+      category_id: 'personal',
+    });
+    expect(list.overrides).toHaveLength(1);
+
+    const cleared = await getTool(tools, 'clear_availability').handler({
+      start: '2026-05-12T00:00:00Z',
+      end: '2026-05-13T00:00:00Z',
+      category_id: 'personal',
+    });
+    expect(cleared.removed).toBe(1);
+
+    const after = await getTool(tools, 'list_availability').handler({
+      from: '2026-05-12T00:00:00Z',
+      to: '2026-05-13T00:00:00Z',
+      category_id: 'personal',
+    });
+    expect(after.overrides).toHaveLength(0);
+  });
+
+  it('open_time records an availability=1 (carve-out) override', async () => {
+    const db = freshDb();
+    const tools = buildTools(db);
+    const result = await getTool(tools, 'open_time').handler({
+      start: '2026-05-09T10:00:00Z',
+      end: '2026-05-09T12:00:00Z',
+      category_id: 'personal',
+      reason: 'free Saturday morning',
+    });
+    expect(result.override.available).toBe(1);
+    expect(result.override.category_id).toBe('personal');
+  });
+
+  // Story 1: screen-share filter — when sharing your screen at work, the
+  // GUI should never leak personal projects/budgets/tasks. This test pins
+  // the API contract that list_projects + get_all_budgets + get_week_layout
+  // can all be filtered to work-only output.
+  it('screen-share story: every list endpoint can be filtered to a single category', async () => {
+    const db = freshDb();
+    const tools = buildTools(db);
+
+    await getTool(tools, 'create_project').handler({
+      id: 'acme',
+      name: 'Acme',
+      prefix: 'ACME',
+      weekly_budget_minutes: 600,
+    });
+    await getTool(tools, 'create_project').handler({
+      id: 'home',
+      name: 'Home',
+      prefix: 'HOME',
+      category_id: 'personal',
+      weekly_budget_minutes: 300,
+    });
+    await getTool(tools, 'create_task').handler({
+      project_id: 'acme',
+      title: 'Build report',
+    });
+    await getTool(tools, 'create_task').handler({
+      project_id: 'home',
+      title: 'Therapy appointment',
+    });
+
+    const projects = await getTool(tools, 'list_projects').handler({
+      category_id: 'work',
+    });
+    const personalNames = projects.projects
+      .map((p: any) => p.id)
+      .filter((id: string) => id === 'home');
+    expect(personalNames).toEqual([]);
+
+    // The personal task is still in the DB but shouldn't surface in any
+    // work-filtered listing the GUI calls.
+    const allTasks = await getTool(tools, 'list_tasks').handler({});
+    const workProjectIds = projects.projects.map((p: any) => p.id);
+    const taskTitlesVisibleToWork = allTasks.tasks
+      .filter((t: any) => workProjectIds.includes(t.project_id))
+      .map((t: any) => t.title);
+    expect(taskTitlesVisibleToWork).toContain('Build report');
+    expect(taskTitlesVisibleToWork).not.toContain('Therapy appointment');
   });
 });

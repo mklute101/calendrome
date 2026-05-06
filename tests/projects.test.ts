@@ -67,4 +67,56 @@ describe('projects', () => {
     expect(inactive.length).toBe(1);
     expect(inactive[0].id).toBe('b');
   });
+
+  it('createProject defaults category_id to work', () => {
+    const db = freshDb();
+    const p = createProject(db, { id: 'a', name: 'A', prefix: 'A' });
+    expect(p.category_id).toBe('work');
+  });
+
+  it('createProject honors an explicit category_id', () => {
+    const db = freshDb();
+    const p = createProject(db, {
+      id: 'home',
+      name: 'Home',
+      prefix: 'HOME',
+      category_id: 'personal',
+    });
+    expect(p.category_id).toBe('personal');
+  });
+
+  it('listProjects filters by category_id (single value)', () => {
+    const db = freshDb();
+    createProject(db, { id: 'acme', name: 'Acme', prefix: 'ACME' });
+    createProject(db, {
+      id: 'home',
+      name: 'Home',
+      prefix: 'HOME',
+      category_id: 'personal',
+    });
+    const work = listProjects(db, { category_id: 'work' });
+    expect(work.map((p) => p.id)).toEqual(['acme']);
+    const personal = listProjects(db, { category_id: 'personal' });
+    expect(personal.map((p) => p.id)).toEqual(['home']);
+  });
+
+  it('listProjects filters by category_id array (work view = work + both)', () => {
+    const db = freshDb();
+    createProject(db, { id: 'acme', name: 'Acme', prefix: 'ACME' });
+    createProject(db, {
+      id: 'home',
+      name: 'Home',
+      prefix: 'HOME',
+      category_id: 'personal',
+    });
+    const result = listProjects(db, { category_id: ['work', 'personal'] });
+    expect(result.length).toBe(2);
+  });
+
+  it('updateProject can move a project between categories', () => {
+    const db = freshDb();
+    createProject(db, { id: 'acme', name: 'Acme', prefix: 'ACME' });
+    const moved = updateProject(db, 'acme', { category_id: 'personal' });
+    expect(moved.category_id).toBe('personal');
+  });
 });

@@ -20,6 +20,8 @@ import { listTasks } from '../tasks.js';
 import { listHabits, generateHabitInstances } from '../habits.js';
 import { getAllBudgets } from '../budgets.js';
 import { listCalendarEvents } from '../calendar-sync.js';
+import { listCategories } from '../categories.js';
+import { listAvailabilityOverrides } from '../availability.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DB_PATH = process.env.CALENDROME_DB ?? 'calendrome.db';
@@ -53,10 +55,24 @@ app.get('/api/projects', (_req, res) => {
 });
 
 /**
+ * List categories (work, personal, …). Source for the Work/All toggle
+ * in the dashboard header — the client builds a project→category map
+ * from `/api/projects` and filters everything client-side.
+ */
+app.get('/api/categories', (_req, res) => {
+  const db = getDb();
+  try {
+    res.json(listCategories(db));
+  } finally {
+    db.close();
+  }
+});
+
+/**
  * Return everything needed to render one week of the dashboard:
  * tasks, materialized habit instances, time logs, project budgets,
- * and synced calendar events. `start` is YYYY-MM-DD; the range
- * covers seven days.
+ * synced calendar events, and availability overrides. `start` is
+ * YYYY-MM-DD; the range covers seven days.
  */
 app.get('/api/week', (req, res) => {
   const start = String(req.query.start ?? '');
@@ -114,6 +130,11 @@ app.get('/api/week', (req, res) => {
       end + 'T23:59:59',
     );
 
+    const availability = listAvailabilityOverrides(db, {
+      from: start + 'T00:00:00',
+      to: end + 'T23:59:59',
+    });
+
     res.json({
       start,
       end,
@@ -122,6 +143,7 @@ app.get('/api/week', (req, res) => {
       time_logs: timeLogs,
       budgets,
       calendar_events: calendarEvents,
+      availability,
     });
   } finally {
     db.close();
