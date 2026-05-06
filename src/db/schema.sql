@@ -78,3 +78,15 @@ CREATE TABLE IF NOT EXISTS habit_instances (
   completed_at      TEXT,
   UNIQUE(habit_id, scheduled_start)
 );
+
+CREATE TABLE IF NOT EXISTS calendar_events (
+  id              TEXT PRIMARY KEY,
+  calendar_id     TEXT NOT NULL,
+  project_id      TEXT REFERENCES projects(id),
+  summary         TEXT NOT NULL,
+  start           TEXT NOT NULL,
+  end             TEXT NOT NULL,
+  duration_minutes INTEGER NOT NULL,
+  is_meeting      INTEGER NOT NULL DEFAULT 0,
+  synced_at       TEXT NOT NULL DEFAULT (datetime('now'))
+);

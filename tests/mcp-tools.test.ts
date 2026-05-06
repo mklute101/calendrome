@@ -49,6 +49,7 @@ describe('MCP tools layer', () => {
       'get_timesheet_summary',
       'place_task',
       'unplace_task',
+      'sync_calendar_events',
     ]) {
       expect(names).toContain(expected);
     }
