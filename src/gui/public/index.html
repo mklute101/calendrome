@@ -194,6 +194,9 @@
   .timeline-block.logged {
     background: color-mix(in srgb, var(--c) 22%, transparent);
   }
+  .timeline-block.meeting {
+    background: color-mix(in srgb, var(--c) 30%, transparent);
+  }
 
   .now-line {
     position: absolute;
@@ -478,6 +481,18 @@ function renderTimeline(days) {
       dayHtml += `<div class="timeline-block habit" style="--c:${c};top:${top}px;height:${height}px">
         <div class="title">${hi.habit_title}</div>
         ${height > 30 ? `<div class="meta">${fmtHours(hi.habit_duration)}</div>` : ''}
+      </div>`;
+    }
+
+    // Calendar events (meetings)
+    for (const ce of d.meetings) {
+      const c = ce.project_id ? getColor(ce.project_id) : '#8b949e';
+      const top = timeToOffset(ce.start);
+      const height = durationToPx(ce.duration_minutes);
+      if (top < 0 || top >= totalHeight) continue;
+      dayHtml += `<div class="timeline-block meeting" style="--c:${c};top:${top}px;height:${height}px">
+        <div class="title">${ce.summary}</div>
+        ${height > 30 ? `<div class="meta">${fmtTime(ce.start)} – ${fmtTime(ce.end)}</div>` : ''}
       </div>`;
     }
 
