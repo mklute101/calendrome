@@ -7,7 +7,7 @@
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
-    "build": "tsc -p tsconfig.json && cp src/db/schema.sql dist/src/db/schema.sql && mkdir -p dist/src/gui/public && cp -R src/gui/public/. dist/src/gui/public/",
+    "build": "tsc -p tsconfig.json && cp src/db/schema.sql dist/src/db/schema.sql && mkdir -p dist/src/gui/public && cp -R src/gui/public/. dist/src/gui/public/ && node scripts/extract-docs.mjs",
     "start": "node dist/src/mcp/server.js",
     "gui": "node dist/src/gui/server.js"
   },

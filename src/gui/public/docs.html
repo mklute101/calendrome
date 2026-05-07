@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Calendrome — Docs</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --surface: #161b22;
+    --surface-2: #1c2128;
+    --border: #30363d;
+    --text: #e6edf3;
+    --text-muted: #8b949e;
+    --accent: #58a6ff;
+    --accent-2: #d2a8ff;
+    --warn: #d29922;
+    --code: #79c0ff;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    display: grid;
+    grid-template-columns: 240px 1fr;
+    line-height: 1.5;
+  }
+  code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+
+  aside {
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    padding: 24px 16px;
+    height: 100vh;
+    overflow-y: auto;
+    position: sticky;
+    top: 0;
+  }
+  aside h1 {
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+    margin-bottom: 18px;
+  }
+  aside .section-title {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+    margin: 16px 0 6px 0;
+  }
+  aside a {
+    display: block;
+    color: var(--text);
+    text-decoration: none;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 0.85rem;
+  }
+  aside a:hover { background: var(--surface-2); color: var(--accent); }
+
+  main {
+    padding: 32px 48px 80px;
+    overflow-y: auto;
+    max-width: 900px;
+  }
+  main h1 { font-size: 1.4rem; margin-bottom: 4px; }
+  main h2 {
+    margin-top: 36px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+    font-size: 1.1rem;
+  }
+  main h3 {
+    margin-top: 22px;
+    font-size: 0.95rem;
+    color: var(--accent);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-weight: 600;
+  }
+  main h3 .method {
+    display: inline-block;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.7rem;
+    padding: 1px 6px;
+    border-radius: 3px;
+    background: var(--surface-2);
+    color: var(--text-muted);
+    margin-right: 8px;
+    vertical-align: middle;
+  }
+  main p, main pre, main ul { margin: 8px 0; }
+  main p { color: var(--text); }
+  main .muted { color: var(--text-muted); font-style: italic; font-size: 0.85rem; }
+  main pre {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 12px;
+    overflow-x: auto;
+    font-size: 0.82rem;
+    color: var(--code);
+  }
+  main .see {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+  }
+  main .see code {
+    color: var(--accent-2);
+    background: var(--surface-2);
+    padding: 1px 5px;
+    border-radius: 3px;
+  }
+  main .meta {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin-top: 4px;
+  }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 14px 18px;
+    margin: 10px 0;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 8px;
+    font-size: 0.85rem;
+  }
+  th, td {
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--border);
+    text-align: left;
+    vertical-align: top;
+  }
+  th {
+    color: var(--text-muted);
+    font-weight: 500;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  td code { color: var(--code); font-size: 0.85rem; }
+  .badge {
+    display: inline-block;
+    font-size: 0.7rem;
+    padding: 1px 6px;
+    border-radius: 3px;
+    background: var(--surface-2);
+    color: var(--text-muted);
+    margin-left: 6px;
+  }
+  .badge.pk { color: var(--accent); }
+  .badge.notnull { color: var(--warn); }
+
+  .header-row {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 18px;
+  }
+  .header-row .gen {
+    color: var(--text-muted);
+    font-size: 0.75rem;
+  }
+  a.back {
+    color: var(--text-muted);
+    text-decoration: none;
+    font-size: 0.8rem;
+  }
+  a.back:hover { color: var(--accent); }
+</style>
+</head>
+<body>
+
+<aside>
+  <h1>Calendrome Docs</h1>
+  <a class="back" href="/">← Back to dashboard</a>
+  <div class="section-title">Sections</div>
+  <a href="#architecture">Architecture</a>
+  <a href="#tools">MCP Tools</a>
+  <a href="#endpoints">GUI Endpoints</a>
+  <a href="#tables">Data Model</a>
+  <div id="nav-tools" class="section-title">Tools</div>
+  <div id="nav-tools-list"></div>
+  <div id="nav-tables" class="section-title">Tables</div>
+  <div id="nav-tables-list"></div>
+</aside>
+
+<main>
+  <div class="header-row">
+    <h1>Calendrome — Inline Documentation</h1>
+    <span class="gen" id="gen"></span>
+  </div>
+  <p class="muted">
+    Source of truth: TSDoc/JSDoc comments in the codebase plus
+    <code>src/db/schema.sql</code>. Edit a comment, run <code>npm run build</code>,
+    refresh.
+  </p>
+
+  <h2 id="architecture">Architecture</h2>
+  <div id="modules"></div>
+
+  <h2 id="tools">MCP Tools</h2>
+  <div id="tools-list"></div>
+
+  <h2 id="endpoints">GUI Endpoints</h2>
+  <div id="endpoints-list"></div>
+
+  <h2 id="tables">Data Model</h2>
+  <div id="tables-list"></div>
+</main>
+
+<script>
+function escape(s) {
+  return String(s ?? '').replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+}
+function paragraphs(text) {
+  if (!text) return '';
+  return text
+    .split(/\n{2,}/)
+    .map((p) => `<p>${escape(p).replace(/\n/g, '<br>')}</p>`)
+    .join('');
+}
+function slug(s) {
+  return String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-');
+}
+
+async function load() {
+  const res = await fetch('/api/docs');
+  if (!res.ok) {
+    document.querySelector('main').innerHTML +=
+      '<div class="card"><strong>Docs not generated yet.</strong> Run <code>npm run build</code>, then refresh.</div>';
+    return;
+  }
+  const docs = await res.json();
+  document.getElementById('gen').textContent =
+    docs.generated_at ? 'generated ' + new Date(docs.generated_at).toLocaleString() : '';
+
+  // ---- Architecture
+  const modulesEl = document.getElementById('modules');
+  modulesEl.innerHTML = docs.modules.map((m) => `
+    <div class="card">
+      <h3>${escape(m.path)}</h3>
+      ${m.summary ? paragraphs(m.summary) : '<p class="muted">No module-level docs yet.</p>'}
+    </div>
+  `).join('');
+
+  // ---- Tools
+  const toolsEl = document.getElementById('tools-list');
+  toolsEl.innerHTML = docs.tools.map((t) => `
+    <div class="card" id="tool-${slug(t.name)}">
+      <h3>${escape(t.name)}</h3>
+      ${t.summary ? paragraphs(t.summary) : '<p class="muted">No documentation yet.</p>'}
+      ${(t.examples || []).map((ex) => `<pre>${escape(ex)}</pre>`).join('')}
+      ${(t.seeAlso || []).length ? `<p class="see">See: ${t.seeAlso.map((s) => `<code>${escape(s)}</code>`).join(' ')}</p>` : ''}
+    </div>
+  `).join('');
+  document.getElementById('nav-tools-list').innerHTML = docs.tools
+    .map((t) => `<a href="#tool-${slug(t.name)}">${escape(t.name)}</a>`).join('');
+
+  // ---- Endpoints
+  const epEl = document.getElementById('endpoints-list');
+  epEl.innerHTML = docs.endpoints.map((e) => `
+    <div class="card">
+      <h3><span class="method">${escape(e.method)}</span>${escape(e.path)}</h3>
+      ${e.summary ? paragraphs(e.summary) : '<p class="muted">No documentation yet.</p>'}
+    </div>
+  `).join('');
+
+  // ---- Tables
+  const tEl = document.getElementById('tables-list');
+  tEl.innerHTML = docs.tables.map((tab) => `
+    <div class="card" id="table-${slug(tab.name)}">
+      <h3>${escape(tab.name)}</h3>
+      <table>
+        <thead><tr><th>Column</th><th>Type</th><th>Notes</th></tr></thead>
+        <tbody>
+          ${tab.columns.map((c) => `
+            <tr>
+              <td><code>${escape(c.name)}</code></td>
+              <td><code>${escape(c.type)}</code></td>
+              <td>
+                ${c.primaryKey ? '<span class="badge pk">PK</span>' : ''}
+                ${c.notNull && !c.primaryKey ? '<span class="badge notnull">NOT NULL</span>' : ''}
+                ${c.references ? `<span class="badge">→ ${escape(c.references)}</span>` : ''}
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  `).join('');
+  document.getElementById('nav-tables-list').innerHTML = docs.tables
+    .map((tab) => `<a href="#table-${slug(tab.name)}">${escape(tab.name)}</a>`).join('');
+}
+
+load();
+</script>
+</body>
+</html>

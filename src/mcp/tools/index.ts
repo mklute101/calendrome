@@ -1,3 +1,18 @@
+/**
+ * MCP tool registry.
+ *
+ * `buildTools(db, options?)` returns the full array of `ToolDescriptor`
+ * objects exposed by the MCP server. Each entry has `{ name, description,
+ * inputSchema, handler }`; the `name` is the public API. Tools are grouped
+ * by domain (projects, tasks, inbox, habits, budgets, layout, timesheet,
+ * calendar) — the boundaries follow the modules under `src/`.
+ *
+ * Adding a tool: append an object literal to the returned array, then
+ * update the expected-surface check in `tests/mcp-tools.test.ts`. To make
+ * the new tool show up on the GUI /docs page, write a JSDoc block
+ * above the object literal — see `create_task` for the canonical
+ * shape (summary, `@example`, `@see`).
+ */
 import type { DB } from '../../db/connection.js';
 import {
   createProject,
@@ -144,6 +159,25 @@ export function buildTools(
     },
 
     // -------- tasks --------
+    /**
+     * Create a task in a project.
+     *
+     * Tasks are the primary unit of work. A new task starts as an
+     * unscheduled item; use `place_task` to put it on the calendar
+     * with an actual time. `duration_minutes` is the planned size,
+     * not the time spent — actual time is tracked via `start_task`
+     * / `stop_task`, which write rows to `time_log`.
+     *
+     * @example
+     * create_task({
+     *   project_id: 'athletech',
+     *   title: 'Review beehiiv feed PR',
+     *   duration_minutes: 60,
+     *   priority: 'high'
+     * })
+     *
+     * @see place_task, update_task, start_task
+     */
     {
       name: 'create_task',
       description: 'Create a task in a project',
@@ -173,6 +207,19 @@ export function buildTools(
         return { task: createTask(db, input) };
       },
     },
+    /**
+     * Update task fields by id.
+     *
+     * Patch-style: only the fields you pass are changed. Pass `null`
+     * to explicitly clear a nullable field (notes, due, snooze_until).
+     * Use this for backfilling notes after-the-fact, adjusting a
+     * planned duration, or moving a `due` date.
+     *
+     * @example
+     * update_task({ id: 17, duration_minutes: 390, notes: 'Trimmed Mon block' })
+     *
+     * @see create_task, place_task, complete_task
+     */
     {
       name: 'update_task',
       description: 'Update task fields',
@@ -221,6 +268,20 @@ export function buildTools(
         return { tasks: searchTasks(db, requireString(args, 'query')) };
       },
     },
+    /**
+     * Start a live timer on a task.
+     *
+     * Inserts a `time_log` row with `started_at = now` and no
+     * `stopped_at`. Pair with `stop_task` to close it out. While
+     * a timer is open the task renders as actively in progress on
+     * the timeline view; closed `time_log` rows render as solid
+     * "logged" blocks.
+     *
+     * @example
+     * start_task({ id: 17 })
+     *
+     * @see stop_task, complete_task
+     */
     {
       name: 'start_task',
       description: 'Start the timer on a task',
@@ -458,6 +519,20 @@ export function buildTools(
     },
 
     // -------- layout & placement --------
+    /**
+     * Return everything that lives on the calendar in a date range —
+     * scheduled tasks (those with a `calendar_event_id`), habit
+     * instances, and synced calendar events — grouped for display.
+     *
+     * Used by the planner skill to reason about what's already on
+     * the calendar before suggesting new placements. `from`/`to` are
+     * ISO date strings (YYYY-MM-DD).
+     *
+     * @example
+     * get_week_layout({ from: '2026-05-04', to: '2026-05-10' })
+     *
+     * @see place_task, get_all_budgets
+     */
     {
       name: 'get_week_layout',
       description:
@@ -500,6 +575,20 @@ export function buildTools(
         return { tasks, habit_instances: habits };
       },
     },
+    /**
+     * Place a task on the calendar at a specific start time.
+     *
+     * Creates a calendar event via the configured `CalendarClient`
+     * (real Google Calendar in production, the stub in tests),
+     * stamps the event id back onto the task, sets the task's `due`
+     * to the start time, and flips status to `SCHEDULED`. The
+     * event's end is computed from the task's `duration_minutes`.
+     *
+     * @example
+     * place_task({ task_id: 17, start: '2026-05-04T07:00:00-05:00' })
+     *
+     * @see create_task, unplace_task, get_week_layout
+     */
     {
       name: 'place_task',
       description: 'Create a calendar event for a task at a specific time',

@@ -1,3 +1,12 @@
+/**
+ * Calendar event sync — inbound mirror of Google Calendar (or any source).
+ *
+ * Calendrome doesn't fetch from Google itself; the planner skill calls
+ * the Google Calendar MCP and pushes events here via
+ * `sync_calendar_events`. Stored events power the timeline view's
+ * meeting/habit overlays and the "available focus time" calculation.
+ * Idempotent: re-syncing the same event id updates in place.
+ */
 import type { DB } from './db/connection.js';
 
 export interface CalendarEventInput {

@@ -1,3 +1,16 @@
+/**
+ * MCP stdio server entry point.
+ *
+ * Boots once per process: opens the SQLite database, runs migrations,
+ * builds the tool array, and wires `tools/list` + `tools/call` handlers
+ * over the stdio transport. The MCP client (Claude, an editor, etc.)
+ * speaks JSON-RPC; we route each `tools/call` to the matching handler
+ * in `tools/index.ts` and serialize the result as a single text block.
+ *
+ * Runs alongside the GUI server (a separate Node process) — both share
+ * the same SQLite file via WAL mode, so writes from MCP are visible to
+ * the GUI on its next request.
+ */
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import {
