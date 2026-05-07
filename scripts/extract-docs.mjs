@@ -19,6 +19,8 @@ const MODULE_PATHS = [
   'src/db/connection.ts',
   'src/gui/server.ts',
   'src/calendar-sync.ts',
+  'src/categories.ts',
+  'src/availability.ts',
 ];
 
 const TOOLS_FILE = 'src/mcp/tools/index.ts';

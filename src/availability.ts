@@ -1,3 +1,19 @@
+/**
+ * Availability overrides — the frictionless answer to "Tuesday night
+ * I'm doing nothing — don't schedule anything."
+ *
+ * The thing Reclaim gets wrong is making ad-hoc schedule changes a
+ * settings exercise. In calendrome, claiming or releasing time is a
+ * single MCP call: `block_time` (available=0) reserves a window, and
+ * `open_time` (available=1) carves out an extra slot inside a normally
+ * blocked window ("Saturday morning is fair game"). `clear_availability`
+ * wipes overrides in a range so the user never has to remember IDs.
+ *
+ * Overrides can be scoped to a single category (`category_id` set) or
+ * apply globally (`category_id` null). The planner consults this table
+ * before suggesting placements; the actual "respect the window" logic
+ * lives in the planner skill, not here — this module is just storage.
+ */
 import type { DB } from './db/connection.js';
 
 export interface AvailabilityOverride {

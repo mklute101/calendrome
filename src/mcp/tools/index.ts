@@ -5,7 +5,8 @@
  * objects exposed by the MCP server. Each entry has `{ name, description,
  * inputSchema, handler }`; the `name` is the public API. Tools are grouped
  * by domain (projects, tasks, inbox, habits, budgets, layout, timesheet,
- * calendar) — the boundaries follow the modules under `src/`.
+ * calendar, categories, availability) — the boundaries follow the modules
+ * under `src/`.
  *
  * Adding a tool: append an object literal to the returned array, then
  * update the expected-surface check in `tests/mcp-tools.test.ts`. To make
@@ -859,6 +860,20 @@ export function buildTools(
     // Categories drive *when* work happens. Every project belongs to one;
     // each category owns a default scheduling window. Filtering by category
     // is also the screen-share filter — same data, two uses.
+    /**
+     * List categories ordered by display_order.
+     *
+     * The seeded set is `work` and `personal`; each row carries a
+     * `default_window` describing when projects in that category are
+     * normally schedulable (Mon-Fri 9-5 for work, evenings/weekends
+     * for personal). The GUI uses this list to render the Work/All
+     * toggle.
+     *
+     * @example
+     * list_categories()
+     *
+     * @see create_category, update_category, list_projects
+     */
     {
       name: 'list_categories',
       description: 'List categories ordered by display_order',
@@ -867,6 +882,25 @@ export function buildTools(
         return { categories: listCategories(db) };
       },
     },
+    /**
+     * Create a new category with an optional default scheduling window.
+     *
+     * Useful for splitting "deep work" (mornings only) out of `work`,
+     * or adding a third bucket like `learning`. Projects can then be
+     * tagged with the new category and the planner will respect its
+     * window when placing tasks.
+     *
+     * @example
+     * create_category({
+     *   id: 'deepwork',
+     *   name: 'Deep Work',
+     *   display_order: 5,
+     *   default_window: { days: [1,2,3,4,5], start: '06:00', end: '09:00' },
+     *   timezone: 'America/Chicago'
+     * })
+     *
+     * @see list_categories, update_category
+     */
     {
       name: 'create_category',
       description:
@@ -903,6 +937,22 @@ export function buildTools(
         };
       },
     },
+    /**
+     * Update a category's window or metadata.
+     *
+     * Patch-style: only the fields you pass are changed. Most common
+     * use is reshaping `default_window` after the planner has been
+     * placing tasks at the wrong hour (e.g. switching `work` from
+     * 9-5 to 8-6, or adding Saturday to the workdays).
+     *
+     * @example
+     * update_category({
+     *   id: 'work',
+     *   default_window: { days: [1,2,3,4,5,6], start: '08:00', end: '18:00' }
+     * })
+     *
+     * @see list_categories, create_category
+     */
     {
       name: 'update_category',
       description:
@@ -948,6 +998,27 @@ export function buildTools(
     // The frictionless answer to "Tuesday night I'm doing nothing — don't
     // schedule anything." One conversational sentence → one MCP call →
     // the block exists. No settings UI, no placeholder calendar event.
+    /**
+     * Reserve a window so the planner won't schedule into it.
+     *
+     * The whole point: "Tuesday night I'm doing nothing — don't
+     * schedule anything" should be one MCP call from one sentence
+     * to Claude. No settings UI, no placeholder calendar event.
+     *
+     * `category_id` scopes the block: `null` blocks across every
+     * category (you're literally unavailable), `"personal"` blocks
+     * only personal-category projects (you're at work, so personal
+     * tasks shouldn't get placed during this window), etc.
+     *
+     * @example
+     * block_time({
+     *   start: '2026-05-12T18:00:00-05:00',
+     *   end:   '2026-05-12T22:00:00-05:00',
+     *   reason: 'family dinner'
+     * })
+     *
+     * @see open_time, list_availability, clear_availability
+     */
     {
       name: 'block_time',
       description:
@@ -977,6 +1048,24 @@ export function buildTools(
         };
       },
     },
+    /**
+     * Carve out a window inside a normally-blocked time, e.g.
+     * "Saturday morning is fair game for personal work this week".
+     *
+     * The inverse of `block_time`. Useful when the default category
+     * window is conservative (personal = evenings only) but a
+     * specific date is freer than usual.
+     *
+     * @example
+     * open_time({
+     *   start: '2026-05-09T10:00:00-05:00',
+     *   end:   '2026-05-09T12:00:00-05:00',
+     *   category_id: 'personal',
+     *   reason: 'free Saturday morning'
+     * })
+     *
+     * @see block_time, list_availability
+     */
     {
       name: 'open_time',
       description:
@@ -1005,6 +1094,21 @@ export function buildTools(
         };
       },
     },
+    /**
+     * List availability overrides intersecting [from, to].
+     *
+     * Returns both blocks (`available: 0`) and openings (`available: 1`).
+     * The planner consults this before suggesting placements; the GUI
+     * renders blocks as greyed-out time on the timeline (follow-up).
+     *
+     * Pass `category_id: null` to get only global overrides (those that
+     * apply regardless of category); omit it to get every override.
+     *
+     * @example
+     * list_availability({ from: '2026-05-04', to: '2026-05-10' })
+     *
+     * @see block_time, open_time, clear_availability
+     */
     {
       name: 'list_availability',
       description:
@@ -1041,6 +1145,25 @@ export function buildTools(
         return { ok: true };
       },
     },
+    /**
+     * Wipe every override fully contained in [start, end].
+     *
+     * The other half of the friction-floor goal: changing your mind
+     * should be just as easy as setting the block in the first place.
+     * "Actually, I'm free Tuesday night" → one MCP call → the block is
+     * gone. The user never has to look up an override id.
+     *
+     * Optional `category_id` scopes the clear (e.g. drop only the
+     * personal blocks in the range, leave the work ones).
+     *
+     * @example
+     * clear_availability({
+     *   start: '2026-05-12T00:00:00Z',
+     *   end:   '2026-05-13T00:00:00Z'
+     * })
+     *
+     * @see block_time, delete_availability
+     */
     {
       name: 'clear_availability',
       description:

@@ -1,3 +1,17 @@
+/**
+ * Categories — top-level scheduling windows that every project belongs to.
+ *
+ * The work/personal split serves two jobs at once: it filters the GUI
+ * for screen-share safety (you don't want personal projects on the
+ * shared screen during a client call), and it tells the planner *when*
+ * a project's work is allowed to be scheduled. A `work` task lands
+ * Mon-Fri 9-5; a `personal` task lands evenings/weekends. Same data,
+ * two uses — that's why categories aren't just a tag.
+ *
+ * Each category owns a `default_window` (a JSON `{ days, start, end }`
+ * object) and a timezone. The migration seeds `work` and `personal`
+ * on a fresh DB; new categories can be created via MCP.
+ */
 import type { DB } from './db/connection.js';
 
 export interface CategoryWindow {
