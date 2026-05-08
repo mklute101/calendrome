@@ -19,6 +19,11 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { openDatabase } from '../db/connection.js';
 import { migrate } from '../db/migrate.js';
+import {
+  GoogleCalendarClient,
+  LocalCalendarClient,
+  type CalendarClient,
+} from '../calendar/index.js';
 import { buildTools } from './tools/index.js';
 
 const DB_PATH = process.env.CALENDROME_DB ?? 'calendrome.db';
@@ -31,7 +36,12 @@ const server = new Server(
 const db = openDatabase(DB_PATH);
 migrate(db);
 
-const tools = buildTools(db);
+const calendar: CalendarClient =
+  process.env.CALENDROME_CALENDAR === 'google'
+    ? new GoogleCalendarClient()
+    : new LocalCalendarClient();
+
+const tools = buildTools(db, { calendar });
 const toolsByName = new Map(tools.map((t) => [t.name, t]));
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({

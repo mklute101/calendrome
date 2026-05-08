@@ -3,6 +3,7 @@ import { freshDb } from './helpers/db.js';
 import { createProject } from '../src/projects.js';
 import { buildTools } from '../src/mcp/tools/index.js';
 import { FakeCalendarClient } from '../src/calendar/fake.js';
+import { LocalCalendarClient } from '../src/calendar/local.js';
 
 /**
  * MCP tools layer tests.
@@ -181,6 +182,44 @@ describe('MCP tools layer', () => {
     expect(calendar.events).toHaveLength(0);
     expect(result.task.calendar_event_id).toBeNull();
     expect(result.task.status).toBe('NEW');
+  });
+
+  it('place_task succeeds against LocalCalendarClient (the production default)', async () => {
+    // Regression guard for #26: server.ts wired buildTools(db) with no
+    // calendar arg, falling through to stubCalendar and throwing
+    // "No CalendarClient configured". Production now wires LocalCalendarClient,
+    // so place_task must work end-to-end against it.
+    const db = freshDb();
+    createProject(db, {
+      id: 'acme',
+      name: 'Acme Corp',
+      prefix: 'ACME',
+      calendar_id: 'cal-acme',
+    });
+
+    const tools = buildTools(db, { calendar: new LocalCalendarClient() });
+
+    const t = await getTool(tools, 'create_task').handler({
+      project_id: 'acme',
+      title: 'Report',
+      duration_minutes: 60,
+    });
+
+    const placed = await getTool(tools, 'place_task').handler({
+      task_id: t.task.id,
+      start: '2026-04-14T10:00:00Z',
+    });
+
+    expect(placed.task.status).toBe('SCHEDULED');
+    expect(placed.task.due).toBe('2026-04-14T10:00:00Z');
+    expect(placed.task.calendar_event_id).toMatch(/^local-[0-9a-f-]{36}$/);
+
+    // unplace_task must not throw against LocalCalendarClient's no-op delete
+    const cleared = await getTool(tools, 'unplace_task').handler({
+      task_id: t.task.id,
+    });
+    expect(cleared.task.calendar_event_id).toBeNull();
+    expect(cleared.task.status).toBe('NEW');
   });
 
   it('unplace_task is a no-op (no calendar call) when task was never placed', async () => {
