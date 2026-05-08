@@ -1,0 +1,5 @@
+[build]
+  publish = "website"
+  command = ""
+  # Skip the build (and PR preview) unless website/ or this file changed.
+  ignore = "git diff --quiet HEAD^ HEAD -- website/ netlify.toml"
