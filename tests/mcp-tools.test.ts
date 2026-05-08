@@ -50,6 +50,7 @@ describe('MCP tools layer', () => {
       'get_timesheet_summary',
       'place_task',
       'unplace_task',
+      'log_time',
       'sync_calendar_events',
       'list_categories',
       'create_category',
@@ -236,6 +237,49 @@ describe('MCP tools layer', () => {
     // Should not throw, should not call deleteEvent
     await getTool(tools, 'unplace_task').handler({ task_id: t.task.id });
     expect(calendar.events).toHaveLength(0);
+  });
+
+  it('log_time handler inserts a closed entry and returns the updated task', async () => {
+    const db = freshDb();
+    createProject(db, { id: 'acme', name: 'Acme Corp', prefix: 'ACME' });
+    const tools = buildTools(db);
+
+    const t = await getTool(tools, 'create_task').handler({
+      project_id: 'acme',
+      title: 'Sprint planning',
+    });
+
+    const result = await getTool(tools, 'log_time').handler({
+      task_id: t.task.id,
+      started_at: '2026-05-04T09:00:00Z',
+      stopped_at: '2026-05-04T12:00:00Z',
+      notes: 'with the team',
+    });
+
+    expect(result.entry.duration_minutes).toBe(180);
+    expect(result.entry.notes).toBe('with the team');
+    expect(result.task.time_spent_minutes).toBe(180);
+    // log_time leaves status alone — user calls complete_task separately
+    expect(result.task.status).toBe('NEW');
+  });
+
+  it('log_time handler propagates validation errors (inverted timestamps)', async () => {
+    const db = freshDb();
+    createProject(db, { id: 'acme', name: 'Acme Corp', prefix: 'ACME' });
+    const tools = buildTools(db);
+
+    const t = await getTool(tools, 'create_task').handler({
+      project_id: 'acme',
+      title: 'X',
+    });
+
+    await expect(
+      getTool(tools, 'log_time').handler({
+        task_id: t.task.id,
+        started_at: '2026-05-04T12:00:00Z',
+        stopped_at: '2026-05-04T09:00:00Z',
+      }),
+    ).rejects.toThrow(/strictly after/);
   });
 
   it('export_timesheet handler returns CSV string', async () => {
