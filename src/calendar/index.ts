@@ -1,6 +1,7 @@
 export * from './types.js';
 export { FakeCalendarClient } from './fake.js';
 export { GoogleCalendarClient } from './google.js';
+export { LocalCalendarClient } from './local.js';
 
 import { NotImplementedError, type CalendarClient } from './types.js';
 
