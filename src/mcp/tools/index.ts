@@ -30,7 +30,7 @@ import {
   getTask,
   type CreateTaskInput,
 } from '../../tasks.js';
-import { startTask, stopTask, completeTask } from '../../time-log.js';
+import { startTask, stopTask, completeTask, logTime } from '../../time-log.js';
 import {
   inboxAdd,
   inboxList,
@@ -353,6 +353,49 @@ export function buildTools(
       },
       async handler(args) {
         return { task: completeTask(db, requireNumber(args, 'id')) };
+      },
+    },
+    /**
+     * Retroactively log a closed time_log entry for work that already happened.
+     *
+     * The escape hatch for hours that were never live-timed: meetings,
+     * ad-hoc work, end-of-week timesheet reconciliation, anything off the
+     * calendar. Pair with `start_task`/`stop_task` (the in-flow path) —
+     * `log_time` covers everything the live timer didn't.
+     *
+     * Validates ISO 8601 timestamps, `stopped_at > started_at`, neither
+     * more than 24h in the future, and no overlap with an open timer on
+     * the same task. Bumps `tasks.time_spent_minutes` but leaves
+     * `tasks.status` alone — call `complete_task` separately if appropriate.
+     *
+     * @example
+     * log_time({ task_id: 17, started_at: '2026-05-04T09:00:00-05:00',
+     *            stopped_at: '2026-05-04T12:00:00-05:00', notes: 'sprint planning' })
+     *
+     * @see start_task, stop_task, get_timesheet_summary
+     */
+    {
+      name: 'log_time',
+      description: 'Retroactively log a closed time_log entry for completed work',
+      inputSchema: {
+        type: 'object',
+        required: ['task_id', 'started_at', 'stopped_at'],
+        properties: {
+          task_id: { type: 'integer' },
+          started_at: { type: 'string' },
+          stopped_at: { type: 'string' },
+          notes: { type: ['string', 'null'] },
+        },
+      },
+      async handler(args) {
+        const taskId = requireNumber(args, 'task_id');
+        const entry = logTime(db, {
+          task_id: taskId,
+          started_at: requireString(args, 'started_at'),
+          stopped_at: requireString(args, 'stopped_at'),
+          notes: (args.notes as string | null | undefined) ?? null,
+        });
+        return { entry, task: getTask(db, taskId) };
       },
     },
 

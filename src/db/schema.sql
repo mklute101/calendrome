@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS time_log (
   started_at       TEXT NOT NULL,
   stopped_at       TEXT,
   duration_minutes INTEGER,
+  notes            TEXT,
   harvest_entry_id INTEGER
 );
 
