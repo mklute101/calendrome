@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS projects (
   weekly_budget_minutes INTEGER,
   harvest_project_id INTEGER,
   harvest_task_id INTEGER,
+  category_id TEXT REFERENCES categories(id),
   active      INTEGER NOT NULL DEFAULT 1,
   created_at  TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
@@ -90,3 +91,31 @@ CREATE TABLE IF NOT EXISTS calendar_events (
   is_meeting      INTEGER NOT NULL DEFAULT 0,
   synced_at       TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- Categories: top-level scheduling windows. Every project belongs to one.
+-- The screen-share filter and the "when can this be scheduled" decision
+-- are the same lookup. See src/categories.ts for the default_window
+-- shape (JSON of days/start/end).
+CREATE TABLE IF NOT EXISTS categories (
+  id             TEXT PRIMARY KEY,
+  name           TEXT NOT NULL,
+  display_order  INTEGER NOT NULL DEFAULT 0,
+  default_window TEXT,
+  timezone       TEXT NOT NULL DEFAULT 'UTC',
+  created_at     TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Ad-hoc availability blocks/openings. The frictionless answer to
+-- "Tuesday night I'm not doing anything — don't schedule anything."
+-- See src/availability.ts for semantics of available/category_id.
+CREATE TABLE IF NOT EXISTS availability_overrides (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  start       TEXT NOT NULL,
+  end         TEXT NOT NULL,
+  available   INTEGER NOT NULL,
+  category_id TEXT REFERENCES categories(id),
+  reason      TEXT,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_availability_overrides_range
+  ON availability_overrides(start, end);

@@ -240,6 +240,10 @@
     <span style="width:1px;height:20px;background:var(--border);margin:0 4px"></span>
     <button class="nav-btn active" id="btn-compact">Compact</button>
     <button class="nav-btn" id="btn-timeline">Timeline</button>
+    <span style="width:1px;height:20px;background:var(--border);margin:0 4px"></span>
+    <!-- Work view is the screen-share-safe default. "All" reveals everything. -->
+    <button class="nav-btn active" id="btn-cat-work" title="Show only work projects (screen-share safe)">Work</button>
+    <button class="nav-btn" id="btn-cat-all" title="Show every category">All</button>
   </div>
 </header>
 
@@ -260,8 +264,13 @@ const HOUR_COUNT = HOUR_END - HOUR_START;
 const HOUR_PX = 60;
 
 let projectColors = {};
+// projectId → category_id, populated by loadProjects()
+let projectCategory = {};
 let weekStart = getMonday(new Date());
 let viewMode = localStorage.getItem('calendrome-view') || 'compact';
+// Default to "work" so casual screen-shares never leak personal stuff.
+// Toggle to "all" when you actually want to see everything.
+let categoryView = localStorage.getItem('calendrome-category-view') || 'work';
 let weekData = null;
 
 function getMonday(d) {
@@ -326,10 +335,50 @@ async function loadProjects() {
   const res = await fetch('/api/projects');
   const projects = await res.json();
   projectColors = {};
+  projectCategory = {};
   for (let i = 0; i < projects.length; i++) {
     const p = projects[i];
     projectColors[p.id] = p.color || PALETTE[i % PALETTE.length];
+    // Treat missing category_id as 'work' to match the migration backfill.
+    projectCategory[p.id] = p.category_id || 'work';
   }
+}
+
+// Returns true if a project (or unassigned thing) should be visible
+// under the active category view.
+function visibleInCurrentView(projectId) {
+  if (categoryView === 'all') return true;
+  if (!projectId) return true; // unassigned — always show
+  return projectCategory[projectId] === categoryView;
+}
+
+// Filter the /api/week payload down to the active category view. Server
+// returns everything; the client drops what shouldn't be visible. Keeps
+// the API simple and the toggle instant.
+function filterWeekData(data) {
+  if (categoryView === 'all') return data;
+  return {
+    ...data,
+    tasks: data.tasks.filter((t) => visibleInCurrentView(t.project_id)),
+    habit_instances: data.habit_instances.filter((h) =>
+      visibleInCurrentView(h.project_id),
+    ),
+    time_logs: data.time_logs.filter((tl) =>
+      visibleInCurrentView(tl.project_id),
+    ),
+    calendar_events: (data.calendar_events || []).filter((ce) =>
+      visibleInCurrentView(ce.project_id),
+    ),
+    budgets: data.budgets.filter((b) => visibleInCurrentView(b.project_id)),
+  };
+}
+
+function setCategoryView(view) {
+  categoryView = view;
+  localStorage.setItem('calendrome-category-view', view);
+  document.getElementById('btn-cat-work').classList.toggle('active', view === 'work');
+  document.getElementById('btn-cat-all').classList.toggle('active', view === 'all');
+  if (weekData) renderView(filterWeekData(weekData));
 }
 
 function buildDays(data) {
@@ -552,7 +601,7 @@ async function render() {
   weekData = await res.json();
   document.getElementById('week-label').textContent =
     `${fmtDate(weekData.start)} – ${fmtDate(weekData.end)}`;
-  renderView(weekData);
+  renderView(filterWeekData(weekData));
 }
 
 // Navigation
@@ -564,8 +613,13 @@ document.getElementById('today-btn').onclick = () => { weekStart = getMonday(new
 document.getElementById('btn-compact').onclick = () => setView('compact');
 document.getElementById('btn-timeline').onclick = () => setView('timeline');
 
+// Category toggle (Work / All)
+document.getElementById('btn-cat-work').onclick = () => setCategoryView('work');
+document.getElementById('btn-cat-all').onclick = () => setCategoryView('all');
+
 // Init
 setView(viewMode);
+setCategoryView(categoryView);
 render();
 </script>
 </body>

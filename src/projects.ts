@@ -9,6 +9,7 @@ export interface Project {
   weekly_budget_minutes: number | null;
   harvest_project_id: number | null;
   harvest_task_id: number | null;
+  category_id: string | null;
   active: number;
   created_at: string;
   updated_at: string;
@@ -23,6 +24,7 @@ export interface CreateProjectInput {
   weekly_budget_minutes?: number | null;
   harvest_project_id?: number | null;
   harvest_task_id?: number | null;
+  category_id?: string | null;
 }
 
 export interface UpdateProjectInput {
@@ -33,13 +35,14 @@ export interface UpdateProjectInput {
   weekly_budget_minutes?: number | null;
   harvest_project_id?: number | null;
   harvest_task_id?: number | null;
+  category_id?: string | null;
   active?: number;
 }
 
 export function createProject(db: DB, input: CreateProjectInput): Project {
   db.prepare(
-    `INSERT INTO projects (id, name, prefix, calendar_id, color, weekly_budget_minutes, harvest_project_id, harvest_task_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO projects (id, name, prefix, calendar_id, color, weekly_budget_minutes, harvest_project_id, harvest_task_id, category_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     input.id,
     input.name,
@@ -49,6 +52,7 @@ export function createProject(db: DB, input: CreateProjectInput): Project {
     input.weekly_budget_minutes ?? null,
     input.harvest_project_id ?? null,
     input.harvest_task_id ?? null,
+    input.category_id ?? 'work',
   );
   return getProject(db, input.id) as Project;
 }
@@ -79,16 +83,31 @@ export function updateProject(
   return getProject(db, id) as Project;
 }
 
-export function listProjects(
-  db: DB,
-  opts: { active?: boolean } = {},
-): Project[] {
-  if (opts.active === undefined) {
-    return db
-      .prepare('SELECT * FROM projects ORDER BY id')
-      .all() as Project[];
+export interface ListProjectsOpts {
+  active?: boolean;
+  category_id?: string | string[];
+}
+
+export function listProjects(db: DB, opts: ListProjectsOpts = {}): Project[] {
+  const where: string[] = [];
+  const values: unknown[] = [];
+  if (opts.active !== undefined) {
+    where.push('active = ?');
+    values.push(opts.active ? 1 : 0);
   }
-  return db
-    .prepare('SELECT * FROM projects WHERE active = ? ORDER BY id')
-    .all(opts.active ? 1 : 0) as Project[];
+  if (opts.category_id !== undefined) {
+    const cats = Array.isArray(opts.category_id)
+      ? opts.category_id
+      : [opts.category_id];
+    if (cats.length > 0) {
+      const placeholders = cats.map(() => '?').join(', ');
+      where.push(`category_id IN (${placeholders})`);
+      values.push(...cats);
+    }
+  }
+  const sql =
+    'SELECT * FROM projects' +
+    (where.length ? ` WHERE ${where.join(' AND ')}` : '') +
+    ' ORDER BY id';
+  return db.prepare(sql).all(...values) as Project[];
 }
