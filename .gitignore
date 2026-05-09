@@ -6,6 +6,7 @@ dist/
 *.sqlite
 .env
 .env.local
+.claude/*.local.md
 *.js.map
 *.d.ts
 !jest.config.d.ts

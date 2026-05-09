@@ -1,0 +1,13 @@
+{
+  "name": "calendrome",
+  "version": "0.1.0",
+  "description": "Calendar-as-source-of-truth task scheduling for Claude Code — onboarding, weekly planning, daily brief, and quick blocks for the calendrome MCP",
+  "author": {
+    "name": "Matthaus Klute",
+    "email": "klute101@gmail.com"
+  },
+  "homepage": "https://github.com/mklute101/calendrome",
+  "repository": "https://github.com/mklute101/calendrome",
+  "license": "MIT",
+  "keywords": ["calendar", "scheduling", "planner", "calendrome", "mcp"]
+}
