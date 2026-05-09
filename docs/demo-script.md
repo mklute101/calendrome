@@ -33,25 +33,25 @@ Open http://localhost:3737
 
 ---
 
-## Beat 3: The ONA Example (90 seconds)
+## Beat 3: The DevCon Example (90 seconds)
 
-> "I have the ONA conference May 15th. I want to spend 10 hours
+> "I have the DevCon conference May 15th. I want to spend 10 hours
 > prepping — research speakers, plan who to meet, take notes on
 > sessions to attend."
 
 In Claude Code:
 ```
-Create a task: project "ap", title "ONA conference prep",
+Create a task: project "glbx", title "DevCon conference prep",
 10 hours, due May 15th
 ```
 
 Show the task created. Then:
 ```
-What's my pacing look like? I have 10 hours of ONA prep
+What's my pacing look like? I have 10 hours of DevCon prep
 due May 15th — how much per week do I need?
 ```
 
-Claude calculates: "You have 2 weeks. That's 5 hours/week. Your AP
+Claude calculates: "You have 2 weeks. That's 5 hours/week. Your GLBX
 budget has 3h remaining this week — you'd need to stretch or start
 next week."
 
