@@ -16,9 +16,10 @@ The flow is **state-aware**: detect what's already configured, then branch.
 Run these checks in parallel before talking to the user:
 
 1. **Settings file**: Does `.claude/calendrome.local.md` exist in the current project? (Read it if so.)
-2. **MCP configuration**: Read `~/.claude.json` and check for a `calendrome` entry under `mcpServers`. Note whether the calendrome MCP is wired.
-3. **Calendrome state** (only if MCP is wired and reachable): Call `mcp__calendrome__list_projects` and `mcp__calendrome__list_categories`. Project count > 0 means there's real configuration.
-4. **Other integrations** (read `~/.claude.json` `mcpServers`): note presence of `atlassian`, any `harvest*`, `claude_ai_Google_Calendar`, etc.
+2. **MCP configuration**: Read `~/.claude.json` and check for a `calendrome` entry under `mcpServers`. Note the path it points to (e.g. the `args[]` value ending in `dist/src/mcp/server.js`) and whether that path still exists on disk.
+3. **Source directory**: If the settings file (from step 1) has `calendrome_repo_path`, check that path. Otherwise check the default (`~/dev/tools/calendrome`) plus any path inferred from the MCP config (step 2). Record: source-present? and `dist/src/mcp/server.js` built?
+4. **Calendrome state** (only if MCP is wired and reachable): Call `mcp__calendrome__list_projects` and `mcp__calendrome__list_categories`. Project count > 0 means there's real configuration.
+5. **Other integrations** (read `~/.claude.json` `mcpServers`): note presence of `atlassian`, any `harvest*`, `claude_ai_Google_Calendar`, etc.
 
 Classify into one of:
 
@@ -28,17 +29,80 @@ Classify into one of:
 | **Partial-MCP** | no | yes | 0 | → Phase 2 step 3 onward (skip MCP install) |
 | **Re-run** | yes | yes | >0 | → Phase 3: Re-run Menu |
 | **Drift** | mixed | mixed | mixed | Show what's detected, ask user to choose: Real Setup or Re-run Menu |
+| **MCP-stale** | varies | yes, but path missing | n/a | → Phase 2 step 1, sub-state "Re-register" |
+
+The MCP-stale case happens when the user's `~/.claude.json` still references a calendrome path that no longer exists (e.g. they moved or deleted the source directory). Do not silently ignore — it surfaces as `mcp__calendrome__*` tools either failing on call or being absent. Treat as MCP-not-wired for routing purposes, but tell the user what was detected so they can confirm.
 
 ## Phase 2: Real Setup (first-time)
 
-### Step 1 — MCP install (skip if already wired)
+### Step 1 — MCP install (skip if already wired and source path resolves)
 
-1. Ask: "Where would you like to install calendrome?" Default: `~/dev/tools/calendrome`. Accept any directory.
-2. Run via Bash, in sequence:
-   - `git clone https://github.com/mklute101/calendrome <target>` (skip if directory exists)
-   - `cd <target> && npm install`
-   - `npm run build`
-3. Register the MCP with Claude Code using the official CLI command (matches the website's install instructions):
+The user's first impression. Make it solid. There are several legitimate starting points; detect first, then act.
+
+#### 1a — Pre-flight checks
+
+Before touching anything, verify the user's environment can complete the install. Run these in parallel:
+
+- `node --version` — must be `v20.0.0` or higher (calendrome requires Node 20+)
+- `git --version` — must succeed
+- `npm --version` — must succeed
+- `which claude` — Claude Code CLI must be on PATH (it should be, since the user is using it now, but verify)
+
+If any fail, stop and tell the user exactly which tool is missing or out of date and how to install it. Do **not** plough ahead — half-installed states are worse than no install.
+
+#### 1b — Determine sub-state
+
+Using the source-present and built flags from Phase 1, plus the result of step 2 (MCP wired? path resolves?), pick a sub-state:
+
+| Sub-state | Source dir? | Built? | MCP registered? | Action |
+|---|---|---|---|---|
+| **Full install** | no | n/a | no | clone → npm install → npm run build → register |
+| **Build-only** | yes | no | no | (skip clone) npm install → npm run build → register |
+| **Register-only** | yes | yes | no | (skip clone, skip build) register |
+| **Re-register** | yes | yes | yes (stale path) | unregister → register with correct path |
+| **Skip** | yes | yes | yes (path resolves) | nothing to do; jump to Step 2 |
+
+Tell the user which sub-state was detected before acting. Example: *"You already have calendrome cloned at `~/dev/tools/calendrome` and built — I'll just register the MCP and we'll skip the clone and build."*
+
+#### 1c — Resolve the install path
+
+If sub-state is **Full install**, ask the user where to clone:
+
+> "Where should I install calendrome? [default: `~/dev/tools/calendrome`]"
+
+If the user picks a path that already exists, check whether it's a valid calendrome clone:
+
+- Is there a `.git/config` with `https://github.com/mklute101/calendrome`?
+- Does `package.json` have `"name": "calendrome"`?
+
+If yes → switch to **Build-only** or **Register-only** sub-state and continue. If no → tell the user the directory exists and is not a calendrome clone, ask them to pick a different path. Do **not** clone over an existing non-calendrome directory.
+
+#### 1d — Run install commands
+
+Based on sub-state, run the appropriate commands via Bash. Run them sequentially, not in parallel, and check the exit code of each.
+
+**Full install:**
+```bash
+git clone https://github.com/mklute101/calendrome <target>
+cd <target>
+npm install
+npm run build
+```
+
+**Build-only:**
+```bash
+cd <target>
+npm install
+npm run build
+```
+
+**Register-only:** skip directly to step 1e.
+
+If `npm install` or `npm run build` fails, stop and surface the error to the user with one of the troubleshooting hints from `references/install-flow.md`. Do not retry silently. Do not proceed to MCP registration with an unbuilt source — `claude mcp add` will succeed but the MCP itself will fail to start when Claude Code tries to launch it.
+
+#### 1e — Register the MCP
+
+Run the canonical `claude mcp add` command (matches the website's manual-install copy):
 
 ```bash
 cd <target>
@@ -47,11 +111,25 @@ claude mcp add calendrome \
   -- node "$PWD/dist/src/mcp/server.js"
 ```
 
-Verify with `claude mcp list`.
+For **Re-register** sub-state, first remove the stale entry:
+```bash
+claude mcp remove calendrome
+```
+Then run the add command above with the correct path.
 
-4. Tell the user: "Restart Claude Code, then reply when ready so we continue."
+Verify with `claude mcp list`. Confirm to the user that calendrome appears in the list with the expected absolute path.
 
-Do not edit `~/.claude.json` directly. The `claude mcp add` command is the canonical path; manual JSON editing is brittle and unnecessary.
+Do **not** edit `~/.claude.json` directly. The `claude mcp add` command is the canonical path; manual JSON editing is brittle and unnecessary.
+
+#### 1f — Restart boundary
+
+MCP changes do not hot-load. The MCP server isn't actually reachable from this session even though it's registered. Tell the user:
+
+> "Calendrome's MCP is installed and registered. **Restart Claude Code** to pick it up — quit fully (Cmd-Q on Mac) and relaunch. Then run `/calendrome:onboard` again from any directory and I'll continue from where we left off (Step 2: connection-discovery)."
+
+Do **not** continue past this point in the same session. The state machine in Phase 1 will route the post-restart run to **Partial-MCP** (since the settings file still doesn't exist) and skip directly to Step 2. That's by design.
+
+For deeper troubleshooting (failure modes, idempotency edge cases, what to do when `claude mcp add` rejects), see `references/install-flow.md`.
 
 ### Step 2 — Connection-first discovery
 
@@ -182,13 +260,15 @@ This spins up a throwaway calendrome instance on an alt port + alt DB, pre-seede
 
 ## Critical guardrails
 
-- **Never edit `~/.claude.json` automatically.** Always print the JSON block and ask the user to paste it. (Auto-editing the user-level Claude Code config without explicit consent is overreach.)
+- **Never edit `~/.claude.json` directly.** Use `claude mcp add` and `claude mcp remove` for MCP registration changes — they edit the file safely and survive Claude Code upgrades. Never write to `~/.claude.json` with the Edit or Write tools.
 - **Never delete the calendrome DB without two confirmations.**
 - **Never write PII into the plugin repo itself** — only into the user's project-local settings file.
 - **Skip steps with explanation** when their preconditions are already met. Do not re-ask questions whose answers are already in the settings file.
+- **Stop at the restart boundary in Step 1f.** MCP changes don't hot-load. Continuing past it in the same session will fail in confusing ways.
 
 ## Additional resources
 
 - `references/settings-schema.md` — full settings file schema and field reference
+- `references/install-flow.md` — Step 1 troubleshooting: pre-flight failures, idempotency cases, and what to do when install commands fail
 
 The first version of this skill keeps detail in SKILL.md; refactor to references/ once the conversational flow stabilizes (see calendrome issue #15).
