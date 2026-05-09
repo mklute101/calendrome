@@ -863,8 +863,54 @@
 <section id="install">
   <div class="container">
     <div class="section-eyebrow">Try it</div>
-    <h2 class="section-title">Run it locally in three steps.</h2>
+    <h2 class="section-title">Run it locally.</h2>
     <p class="section-lede">Calendrome is a local MCP server. No accounts. No cloud. The database is one SQLite file on your machine that you can delete whenever you're done experimenting.</p>
+
+    <p class="install-note" style="margin-top:0;margin-bottom:24px;font-size:0.95rem;color:var(--text);"><strong>Recommended:</strong> install the Claude Code plugin and let <code>/calendrome:onboard</code> walk you through MCP setup. <a href="#install-plugin" style="color:var(--accent);">Plugin install ↓</a> · <a href="#install-manual" style="color:var(--accent);">Manual MCP-only install ↓</a></p>
+
+    <h3 id="install-plugin" style="margin-top:8px;margin-bottom:14px;">Plugin install (recommended)</h3>
+
+    <div class="install-card">
+      <div class="install-step">
+        <div class="num">1</div>
+        <div>
+          <h4>Add the marketplace and install the plugin</h4>
+          <p>Two commands — works from any directory.</p>
+          <div class="code-block">
+            <button class="copy-btn" type="button">Copy</button>
+<pre>claude plugin marketplace add mklute101/calendrome
+claude plugin install calendrome</pre>
+          </div>
+          <p style="margin-top:10px;">This is a self-hosted, GitHub-based marketplace. Calendrome is in beta and is <strong>not</strong> on the Anthropic official marketplace.</p>
+        </div>
+      </div>
+
+      <div class="install-step">
+        <div class="num">2</div>
+        <div>
+          <h4>Run <code>/calendrome:onboard</code></h4>
+          <p>From any Claude Code session. Onboard handles the rest — clones the calendrome repo, builds the MCP server, registers it with Claude Code, and walks you through your first projects and budgets.</p>
+<pre style="color:var(--text);">$ /calendrome:onboard
+Where would you like to install calendrome?
+[default: ~/dev/tools/calendrome]</pre>
+        </div>
+      </div>
+
+      <div class="install-step">
+        <div class="num">3</div>
+        <div>
+          <h4>Start planning</h4>
+          <p>Restart Claude Code when onboard tells you to. Then try the <code>/calendrome:week</code> skill — or just say <em>"create an ACME project, 20 hours a week"</em>.</p>
+<pre style="color:var(--text);">$ /calendrome:week
+Pulling Jira tickets…
+Reading your calendar…
+Here's a draft for 2026-05-11 → 2026-05-17.</pre>
+        </div>
+      </div>
+    </div>
+
+    <h3 id="install-manual" style="margin-top:36px;margin-bottom:14px;">Manual install (MCP only)</h3>
+    <p class="section-lede" style="font-size:0.95rem;margin-bottom:18px;">Skip the plugin and just register the MCP server. You'll have raw <code>mcp__calendrome__*</code> tools available but no <code>/calendrome:*</code> slash commands.</p>
 
     <div class="install-card">
       <div class="install-step">
@@ -900,12 +946,8 @@ npm run build</pre>
       <div class="install-step">
         <div class="num">3</div>
         <div>
-          <h4>Start planning</h4>
-          <p>Restart Claude Code, then try the <code>/week</code> skill — or just say <em>"create an ACME project, 20 hours a week"</em>.</p>
-<pre style="color:var(--text);">$ /week
-Pulling Jira tickets…
-Reading your calendar…
-Here's a draft for 2026-05-11 → 2026-05-17.</pre>
+          <h4>Start using the tools</h4>
+          <p>Restart Claude Code. Calendrome's MCP tools are now available — call them directly, or just say <em>"create an ACME project, 20 hours a week"</em> and Claude will pick the right tool.</p>
         </div>
       </div>
     </div>

@@ -20,6 +20,23 @@ Per-user configuration lives in `.claude/calendrome.local.md` (created and edite
 
 ## Installation
 
-This plugin ships skills only. The calendrome MCP server still requires a manual one-time install — `/calendrome:onboard` will walk you through it.
+Two steps. The first registers the plugin; the second sets up the MCP server.
 
-See [issue #53](https://github.com/mklute101/calendrome/issues/53) for the long-term plan to make MCP install one step (npm publish, release artifacts, etc.).
+```bash
+claude plugin marketplace add mklute101/calendrome
+claude plugin install calendrome
+```
+
+That makes `/calendrome:*` available in every Claude Code session. Then, from any directory:
+
+```
+/calendrome:onboard
+```
+
+Onboard handles the rest: clone the calendrome MCP server, build it, register it with Claude Code, and walk through your first projects and budgets.
+
+This is a self-hosted, GitHub-based marketplace — calendrome is in beta and is **not** listed on the Anthropic official marketplace. See [issue #53](https://github.com/mklute101/calendrome/issues/53) for the longer-term plan to ship the MCP layer via npm or release artifacts.
+
+### Prefer to install only the MCP server?
+
+If you don't want the plugin's slash commands and just want raw MCP tools, follow the manual install in the [main repo README](https://github.com/mklute101/calendrome#readme) — it skips the plugin layer entirely.

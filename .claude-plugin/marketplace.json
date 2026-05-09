@@ -1,0 +1,15 @@
+{
+  "name": "mklute101-calendrome",
+  "owner": {
+    "name": "Matthaus Klute"
+  },
+  "plugins": [
+    {
+      "name": "calendrome",
+      "source": "./plugin",
+      "description": "Calendar-as-source-of-truth task scheduling — onboarding, weekly planning, daily brief, and quick blocks for the calendrome MCP. Beta.",
+      "version": "0.1.0",
+      "category": "productivity"
+    }
+  ]
+}
