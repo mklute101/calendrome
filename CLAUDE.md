@@ -96,3 +96,9 @@ sentence — never a click path.
 - When adding tools: update `src/mcp/tools/index.ts` + the surface
   check in `tests/mcp-tools.test.ts`
 - Schema: `src/db/schema.sql` (idempotent `IF NOT EXISTS`)
+- **Keep the website in sync.** When changing how calendrome is
+  installed, distributed, or invoked (MCP setup, plugin install,
+  slash command names), update `website/index.html` (§install) and
+  `website/docs.html` in the same change. The install section is
+  the user's first impression — drift is costly. Treat it as part
+  of the wrap-up checklist on any PR that touches install/skills.
