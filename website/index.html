@@ -25,8 +25,8 @@
     --good: #3fb950;
     --code: #79c0ff;
   }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  html { scroll-behavior: smooth; }
+  * { box-sizing: border-box; margin: 0; padding: 0; min-width: 0; }
+  html { scroll-behavior: smooth; overflow-x: clip; }
   body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
     background: var(--bg);
@@ -55,6 +55,7 @@
     align-items: center;
     justify-content: space-between;
     gap: 16px;
+    flex-wrap: wrap;
   }
   .logo {
     display: flex;
@@ -94,6 +95,8 @@
   .nav-links {
     display: flex; gap: 22px;
     font-size: 0.85rem;
+    flex-wrap: wrap;
+    justify-content: flex-end;
   }
   .nav-links a {
     color: var(--text-muted);
@@ -101,13 +104,15 @@
     transition: color 0.15s;
   }
   .nav-links a:hover { color: var(--accent); }
-  @media (max-width: 640px) { .nav-links a:not(.gh) { display: none; } }
+  @media (max-width: 640px) {
+    .nav-links { gap: 14px; font-size: 0.8rem; }
+  }
 
   /* HERO */
   .hero { padding: 90px 0 60px; text-align: center; }
   .hero h1 {
-    font-size: 2.8rem;
-    line-height: 1.12;
+    font-size: clamp(1.9rem, 6.5vw, 2.8rem);
+    line-height: 1.15;
     margin-bottom: 22px;
     letter-spacing: -0.02em;
     font-weight: 700;
@@ -566,6 +571,7 @@
     border-radius: 3px;
     font-size: 0.82rem;
   }
+  .install-step > div { min-width: 0; }
   .install-step pre {
     background: var(--surface-2);
     border: 1px solid var(--border);
@@ -573,9 +579,30 @@
     padding: 12px 14px;
     font-size: 0.8rem;
     color: var(--code);
-    overflow-x: auto;
     line-height: 1.55;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
   }
+  .code-block { position: relative; }
+  .code-block pre { padding-right: 64px; }
+  .copy-btn {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    padding: 3px 9px;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    font-family: inherit;
+    cursor: pointer;
+    opacity: 0.8;
+    transition: opacity 0.15s, color 0.15s, border-color 0.15s;
+  }
+  .code-block:hover .copy-btn { opacity: 1; }
+  .copy-btn:hover { color: var(--accent); border-color: var(--accent); }
+  .copy-btn.copied { color: var(--good); border-color: var(--good); }
   .install-note {
     margin-top: 18px;
     color: var(--text-muted);
@@ -624,7 +651,8 @@
       <a href="#philosophy">Philosophy</a>
       <a href="#connector">Connector</a>
       <a href="#install">Install</a>
-      <a class="gh" href="https://github.com/mklute101/calendrome">GitHub</a>
+      <a href="/docs">Docs</a>
+      <a class="gh" href="https://github.com/mklute101/calendrome" target="_blank" rel="noopener noreferrer">GitHub</a>
     </nav>
   </div>
 </header>
@@ -844,27 +872,28 @@
         <div>
           <h4>Clone and build</h4>
           <p>Requires Node 20+ and npm.</p>
+          <div class="code-block">
+            <button class="copy-btn" type="button">Copy</button>
 <pre>git clone https://github.com/mklute101/calendrome.git
 cd calendrome
 npm install
 npm run build</pre>
+          </div>
         </div>
       </div>
 
       <div class="install-step">
         <div class="num">2</div>
         <div>
-          <h4>Wire it into Claude Code</h4>
-          <p>Add to <code>~/.claude/settings.json</code> (or a project-level <code>.claude/settings.json</code>):</p>
-<pre>{
-  "mcpServers": {
-    "calendrome": {
-      "command": "node",
-      "args": ["/path/to/calendrome/dist/src/mcp/server.js"],
-      "env": { "CALENDROME_DB": "/path/to/calendrome.db" }
-    }
-  }
-}</pre>
+          <h4>Register it with Claude Code</h4>
+          <p>From inside the cloned <code>calendrome/</code> folder, one command:</p>
+          <div class="code-block">
+            <button class="copy-btn" type="button">Copy</button>
+<pre>claude mcp add calendrome \
+  --env CALENDROME_DB="$PWD/calendrome.db" \
+  -- node "$PWD/dist/src/mcp/server.js"</pre>
+          </div>
+          <p style="margin-top:10px;"><code>$PWD</code> resolves to your current directory, so the absolute paths get filled in automatically. Verify with <code>claude mcp list</code>.</p>
         </div>
       </div>
 
@@ -889,10 +918,30 @@ Here's a draft for 2026-05-11 → 2026-05-17.</pre>
   <div class="container">
     <div>Calendrome · Beta · Local-first weekly planning for Claude</div>
     <div>
-      <a href="https://github.com/mklute101/calendrome">GitHub →</a>
+      <a href="https://github.com/mklute101/calendrome" target="_blank" rel="noopener noreferrer">GitHub →</a>
     </div>
   </div>
 </footer>
 
+<script>
+  document.querySelectorAll('.code-block').forEach((block) => {
+    const btn = block.querySelector('.copy-btn');
+    const pre = block.querySelector('pre');
+    if (!btn || !pre) return;
+    btn.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(pre.textContent.trim());
+        btn.textContent = 'Copied';
+        btn.classList.add('copied');
+      } catch (e) {
+        btn.textContent = 'Failed';
+      }
+      setTimeout(() => {
+        btn.textContent = 'Copy';
+        btn.classList.remove('copied');
+      }, 1500);
+    });
+  });
+</script>
 </body>
 </html>
