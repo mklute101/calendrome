@@ -33,6 +33,12 @@ export function migrate(db: DB): void {
     );
   }
 
+  if (!hasColumn(db, 'habit_instances', 'time_entry_id')) {
+    db.exec(
+      'ALTER TABLE habit_instances ADD COLUMN time_entry_id INTEGER REFERENCES time_entry(id)',
+    );
+  }
+
   const count = (
     db.prepare('SELECT COUNT(*) AS n FROM categories').get() as { n: number }
   ).n;

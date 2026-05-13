@@ -78,6 +78,7 @@ CREATE TABLE IF NOT EXISTS habit_instances (
   status            TEXT NOT NULL DEFAULT 'PLANNED',
   calendar_event_id TEXT,
   completed_at      TEXT,
+  time_entry_id     INTEGER REFERENCES time_entry(id),
   UNIQUE(habit_id, scheduled_start)
 );
 

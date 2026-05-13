@@ -141,4 +141,10 @@ describe('time_entry schema', () => {
       ).run('2026-05-13T09:00:00Z', '2026-05-13T10:00:00Z', 2, 'UNCONFIRMED', 'manual'),
     ).toThrow();
   });
+
+  it('adds time_entry_id sidecar column to habit_instances', () => {
+    const db = freshDb();
+    const cols = db.prepare("PRAGMA table_info('habit_instances')").all() as { name: string }[];
+    expect(cols.map((c) => c.name)).toContain('time_entry_id');
+  });
 });
