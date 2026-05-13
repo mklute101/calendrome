@@ -120,3 +120,40 @@ CREATE TABLE IF NOT EXISTS availability_overrides (
 );
 CREATE INDEX IF NOT EXISTS idx_availability_overrides_range
   ON availability_overrides(start, end);
+
+CREATE TABLE IF NOT EXISTS time_entry (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id         INTEGER REFERENCES tasks(id),
+  project_id      TEXT    REFERENCES projects(id),
+  start_at        TEXT    NOT NULL,
+  end_at          TEXT    NOT NULL,
+  actual_minutes  INTEGER,
+  status          TEXT    NOT NULL DEFAULT 'UNCONFIRMED'
+                          CHECK (status IN ('UNCONFIRMED', 'CONFIRMED')),
+  confirmed_at    TEXT,
+  source          TEXT    NOT NULL
+                          CHECK (source IN ('placement', 'gcal-sync', 'habit', 'manual')),
+  external_id     TEXT,
+  is_meeting      INTEGER NOT NULL DEFAULT 0,
+  synced_at       TEXT,
+  harvest_entry_id INTEGER,
+  notes           TEXT,
+  created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+  updated_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_time_entry_range ON time_entry(start_at, end_at);
+CREATE INDEX IF NOT EXISTS idx_time_entry_status_start ON time_entry(status, start_at);
+CREATE INDEX IF NOT EXISTS idx_time_entry_project ON time_entry(project_id);
+CREATE INDEX IF NOT EXISTS idx_time_entry_task ON time_entry(task_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_time_entry_external
+  ON time_entry(external_id) WHERE external_id IS NOT NULL;
+
+CREATE VIEW IF NOT EXISTS v_task_time_spent AS
+SELECT
+  task_id,
+  CAST(SUM(COALESCE(actual_minutes,
+    (julianday(end_at) - julianday(start_at)) * 24 * 60)) AS INTEGER) AS minutes
+FROM time_entry
+WHERE status = 'CONFIRMED' AND task_id IS NOT NULL
+GROUP BY task_id;
