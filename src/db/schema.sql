@@ -139,7 +139,10 @@ CREATE TABLE IF NOT EXISTS time_entry (
   harvest_entry_id INTEGER,
   notes           TEXT,
   created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
-  updated_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+  updated_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+  CHECK (end_at >= start_at),
+  CHECK (actual_minutes IS NULL OR actual_minutes >= 0),
+  CHECK (is_meeting IN (0, 1))
 );
 
 CREATE INDEX IF NOT EXISTS idx_time_entry_range ON time_entry(start_at, end_at);
@@ -152,8 +155,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_time_entry_external
 CREATE VIEW IF NOT EXISTS v_task_time_spent AS
 SELECT
   task_id,
-  CAST(SUM(COALESCE(actual_minutes,
-    (julianday(end_at) - julianday(start_at)) * 24 * 60)) AS INTEGER) AS minutes
+  CAST(ROUND(SUM(COALESCE(actual_minutes,
+    (julianday(end_at) - julianday(start_at)) * 24 * 60))) AS INTEGER) AS minutes
 FROM time_entry
 WHERE status = 'CONFIRMED' AND task_id IS NOT NULL
 GROUP BY task_id;
