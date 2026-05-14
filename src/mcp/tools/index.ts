@@ -31,7 +31,12 @@ import {
   type CreateTaskInput,
 } from '../../tasks.js';
 import { startTask, stopTask, completeTask, logTime } from '../../time-log.js';
-import { confirmTimeEntry, skipTimeEntry } from '../../time-entry.js';
+import {
+  confirmTimeEntry,
+  skipTimeEntry,
+  listPendingReview,
+  moveTimeEntry,
+} from '../../time-entry.js';
 import {
   inboxAdd,
   inboxList,
@@ -776,6 +781,51 @@ export function buildTools(
         const timeEntryId = requireNumber(args, 'time_entry_id');
         skipTimeEntry(db, timeEntryId);
         return { skipped: true, time_entry_id: timeEntryId };
+      },
+    },
+    {
+      name: 'list_pending_review',
+      description:
+        'List past UNCONFIRMED time_entries that need confirmation or ' +
+        'skip. Defaults to work-category entries only.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          from: { type: 'string' },
+          to: { type: 'string' },
+          category: { type: 'string' },
+        },
+      },
+      async handler(args) {
+        return {
+          rows: listPendingReview(db, {
+            from: args?.from,
+            to: args?.to,
+            category: args?.category,
+          }),
+        };
+      },
+    },
+    {
+      name: 'move_placement',
+      description:
+        'Reschedule an UNCONFIRMED placement or habit entry. Preserves ' +
+        'duration by default.',
+      inputSchema: {
+        type: 'object',
+        required: ['time_entry_id', 'new_start_at'],
+        properties: {
+          time_entry_id: { type: 'integer' },
+          new_start_at: { type: 'string' },
+          new_end_at: { type: 'string' },
+        },
+      },
+      async handler(args) {
+        const id = requireNumber(args, 'time_entry_id');
+        moveTimeEntry(db, id, requireString(args, 'new_start_at'), {
+          new_end_at: args?.new_end_at,
+        });
+        return { moved: true, time_entry_id: id };
       },
     },
 
