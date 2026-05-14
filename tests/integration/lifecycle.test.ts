@@ -11,11 +11,14 @@ import {
 } from '../../src/habits.js';
 import { getProjectBudget } from '../../src/budgets.js';
 import { exportTimesheet } from '../../src/timesheet.js';
+import { insertTimeEntry } from '../../src/time-entry.js';
 
 /**
  * End-to-end integration: create a project, do work, export, check budgets.
  * Time logs are inserted directly with explicit durations to keep the test
- * deterministic without 5-minute sleeps.
+ * deterministic without 5-minute sleeps. We seed both `time_log` (legacy
+ * surface still used by the budgets module) and a CONFIRMED `time_entry`
+ * (the export now reads from there) so the assertion covers both halves.
  */
 function insertTimeLog(
   db: any,
@@ -30,6 +33,22 @@ function insertTimeLog(
   db.prepare(
     `UPDATE tasks SET time_spent_minutes = time_spent_minutes + ? WHERE id = ?`,
   ).run(durationMinutes, taskId);
+
+  const start = new Date(startedAt);
+  const end = new Date(start.getTime() + durationMinutes * 60000);
+  const task = db
+    .prepare('SELECT project_id FROM tasks WHERE id = ?')
+    .get(taskId) as { project_id: string };
+  insertTimeEntry(db, {
+    task_id: taskId,
+    project_id: task.project_id,
+    start_at: start.toISOString(),
+    end_at: end.toISOString(),
+    actual_minutes: durationMinutes,
+    status: 'CONFIRMED',
+    confirmed_at: end.toISOString(),
+    source: 'manual',
+  });
 }
 
 describe('integration: full lifecycle', () => {

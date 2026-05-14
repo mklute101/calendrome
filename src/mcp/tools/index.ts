@@ -899,9 +899,13 @@ export function buildTools(
     {
       name: 'export_timesheet',
       description:
-        'Render a timesheet for a date range. `format` is "csv" (default) ' +
-        'or "markdown". `include_totals` appends per-project subtotals and ' +
-        'a grand total row (markdown always includes totals).',
+        'Render a timesheet for a date range from CONFIRMED time_entry ' +
+        'rows. `format` is "csv" (default) or "markdown". `include_totals` ' +
+        'appends per-project subtotals and a grand total row (markdown ' +
+        'always includes totals). `categories` filters by project category ' +
+        '— defaults to `["work"]` so personal hours stay out of client ' +
+        'timesheets; pass `["personal"]` or `["work", "personal"]` to ' +
+        'include them.',
       inputSchema: {
         type: 'object',
         required: ['from', 'to'],
@@ -910,11 +914,19 @@ export function buildTools(
           to: { type: 'string' },
           format: { type: 'string', enum: ['csv', 'markdown'] },
           include_totals: { type: 'boolean' },
+          categories: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Project categories to include. Default ["work"].',
+          },
         },
       },
       async handler(args) {
         const format =
           args?.format === 'markdown' ? 'markdown' : 'csv';
+        const categories = Array.isArray(args?.categories)
+          ? (args!.categories as string[])
+          : undefined;
         const rendered = exportTimesheet(
           db,
           requireString(args, 'from'),
@@ -922,6 +934,7 @@ export function buildTools(
           {
             format,
             includeTotals: args?.include_totals === true,
+            categories,
           },
         );
         // Keep the legacy `csv` key on the response for backwards
@@ -932,24 +945,45 @@ export function buildTools(
     {
       name: 'get_timesheet_summary',
       description:
-        'Structured timesheet data for a date range: rows plus ' +
-        'per-project totals plus grand total (in hours). Prefer this ' +
-        'over export_timesheet when a planner skill needs to reason ' +
-        'about the numbers instead of just display them.',
+        'Structured timesheet data for a date range from CONFIRMED ' +
+        'time_entry rows: rows plus per-project totals plus grand total ' +
+        '(in hours). Prefer this over export_timesheet when a planner ' +
+        'skill needs to reason about the numbers instead of just display ' +
+        'them. `categories` filters by project category — defaults to ' +
+        '`["work"]`. Pass `include_unconfirmed: true` to surface a ' +
+        'separate `unconfirmed` section listing UNCONFIRMED entries in ' +
+        'the same range — useful for catching drift before a Harvest push.',
       inputSchema: {
         type: 'object',
         required: ['from', 'to'],
         properties: {
           from: { type: 'string' },
           to: { type: 'string' },
+          categories: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Project categories to include. Default ["work"].',
+          },
+          include_unconfirmed: {
+            type: 'boolean',
+            description:
+              'Include UNCONFIRMED entries as a separate section. Default false.',
+          },
         },
       },
       async handler(args) {
+        const categories = Array.isArray(args?.categories)
+          ? (args!.categories as string[])
+          : undefined;
         return {
           summary: getTimesheetSummary(
             db,
             requireString(args, 'from'),
             requireString(args, 'to'),
+            {
+              categories,
+              include_unconfirmed: args?.include_unconfirmed === true,
+            },
           ),
         };
       },
@@ -959,16 +993,30 @@ export function buildTools(
     {
       name: 'harvest_push_timesheet',
       description:
-        'Push time_log entries to Harvest for a date range. Requires ' +
-        'HARVEST_TOKEN and HARVEST_ACCOUNT_ID env vars. Skips entries ' +
-        'already pushed (harvest_entry_id set). Projects must have ' +
-        'harvest_project_id and harvest_task_id mapped.',
+        'Push CONFIRMED time_entry rows to Harvest for a date range. ' +
+        'Requires HARVEST_TOKEN and HARVEST_ACCOUNT_ID env vars. Skips ' +
+        'entries already pushed (harvest_entry_id set). Projects must ' +
+        'have harvest_project_id and harvest_task_id mapped. ' +
+        '`categories` defaults to `["work"]` — personal hours never ' +
+        'leak unless explicitly opted in. Refuses to push if any ' +
+        'UNCONFIRMED entries exist in the range (the planner should ' +
+        'confirm or skip them first); pass `force: true` to override.',
       inputSchema: {
         type: 'object',
         required: ['from', 'to'],
         properties: {
           from: { type: 'string' },
           to: { type: 'string' },
+          categories: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Project categories to push. Default ["work"].',
+          },
+          force: {
+            type: 'boolean',
+            description:
+              'Skip the UNCONFIRMED-entry pre-flight check. Default false.',
+          },
         },
       },
       async handler(args) {
@@ -980,11 +1028,18 @@ export function buildTools(
           );
         }
         const client = new HarvestClient({ token, accountId });
+        const categories = Array.isArray(args?.categories)
+          ? (args!.categories as string[])
+          : undefined;
         return harvestPushTimesheet(
           db,
           client,
           requireString(args, 'from'),
           requireString(args, 'to'),
+          {
+            categories,
+            force: args?.force === true,
+          },
         );
       },
     },
