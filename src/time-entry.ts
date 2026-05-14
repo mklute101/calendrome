@@ -84,3 +84,79 @@ export function skipTimeEntry(db: DB, id: number): void {
   }
   db.prepare(`DELETE FROM time_entry WHERE id = ?`).run(id);
 }
+
+export interface TimeEntryRow {
+  id: number;
+  task_id: number | null;
+  project_id: string | null;
+  start_at: string;
+  end_at: string;
+  actual_minutes: number | null;
+  status: TimeEntryStatus;
+  confirmed_at: string | null;
+  source: TimeEntrySource;
+  external_id: string | null;
+  is_meeting: number;
+  synced_at: string | null;
+  harvest_entry_id: number | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ListPendingReviewOptions {
+  from?: string;
+  to?: string;
+  category?: string;
+}
+
+export function listPendingReview(db: DB, opts: ListPendingReviewOptions): TimeEntryRow[] {
+  const category = opts.category ?? 'work';
+  const from = opts.from ?? '1970-01-01T00:00:00Z';
+  const to = opts.to ?? new Date().toISOString();
+
+  return db.prepare(`
+    SELECT te.* FROM time_entry te
+    LEFT JOIN projects p ON p.id = te.project_id
+    WHERE te.status = 'UNCONFIRMED'
+      AND te.start_at >= ?
+      AND te.start_at < ?
+      AND (p.category_id = ? OR (p.category_id IS NULL AND ? = 'work'))
+    ORDER BY te.start_at ASC
+  `).all(from, to, category, category) as TimeEntryRow[];
+}
+
+export interface MoveOptions {
+  new_end_at?: string;
+  preserve_duration?: boolean;
+}
+
+function toIsoSeconds(date: Date): string {
+  return date.toISOString().replace(/\.\d{3}Z$/, 'Z');
+}
+
+export function moveTimeEntry(db: DB, id: number, new_start_at: string, opts: MoveOptions = {}): void {
+  const existing = db.prepare(`SELECT status, source, start_at, end_at FROM time_entry WHERE id = ?`)
+    .get(id) as { status: string; source: string; start_at: string; end_at: string } | undefined;
+  if (!existing) throw new Error(`time_entry ${id} not found`);
+  if (existing.status === 'CONFIRMED') throw new Error('cannot move a confirmed entry');
+  if (existing.source === 'gcal-sync') {
+    throw new Error('cannot move a gcal-synced entry; reschedule in Google Calendar');
+  }
+  if (existing.source === 'manual') {
+    throw new Error('cannot move a manual entry; manual entries are CONFIRMED by definition');
+  }
+
+  let new_end_at: string;
+  if (opts.new_end_at) {
+    new_end_at = opts.new_end_at;
+  } else {
+    const oldDuration =
+      new Date(existing.end_at).getTime() - new Date(existing.start_at).getTime();
+    new_end_at = toIsoSeconds(new Date(new Date(new_start_at).getTime() + oldDuration));
+  }
+
+  db.prepare(
+    `UPDATE time_entry SET start_at = ?, end_at = ?, updated_at = datetime('now') WHERE id = ?`,
+  ).run(new_start_at, new_end_at, id);
+}
