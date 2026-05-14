@@ -109,6 +109,16 @@
   .block.logged {
     background: color-mix(in srgb, var(--c) 22%, transparent);
   }
+  /* Past UNCONFIRMED placement / gcal-sync entries: visual "needs review"
+     cue. The fix lives in MCP (/calendrome:today); the GUI just flags. */
+  .block.overdue-review {
+    border-left-color: #ff8c00;
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, #ff8c00 45%, transparent);
+  }
+  .block.overdue-review .title::before {
+    content: '⚠ ';
+    color: #ff8c00;
+  }
   .empty { color: var(--text-muted); font-size: 0.75rem; padding: 20px 12px; text-align: center; }
 
   /* ===== TIMELINE VIEW ===== */
@@ -196,6 +206,15 @@
   }
   .timeline-block.meeting {
     background: color-mix(in srgb, var(--c) 30%, transparent);
+  }
+  /* See `.block.overdue-review` — same intent for the timeline view. */
+  .timeline-block.overdue-review {
+    border-left-color: #ff8c00;
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, #ff8c00 45%, transparent);
+  }
+  .timeline-block.overdue-review .title::before {
+    content: '⚠ ';
+    color: #ff8c00;
   }
 
   .now-line {
@@ -290,6 +309,22 @@ function addDays(dateStr, n) {
 function fmtDate(dateStr) {
   const d = new Date(dateStr + 'T12:00:00');
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+// True when a calendar event (gcal-sync time_entry) is past its start
+// and still UNCONFIRMED — surfaces as a "needs review" cue in both views.
+// The fix is in MCP (e.g. /calendrome:today → complete_task / confirm),
+// not in the GUI; this is purely indicative.
+function isOverdueEvent(ce) {
+  if (!ce || ce.status !== 'UNCONFIRMED') return false;
+  return Date.parse(ce.start) < Date.now();
+}
+
+// True when a task was placed (status=SCHEDULED) and its due time has
+// passed — the paired UNCONFIRMED time_entry awaits confirmation.
+function isOverdueTask(t) {
+  if (!t || t.status !== 'SCHEDULED' || !t.due) return false;
+  return Date.parse(t.due) < Date.now();
 }
 
 function getColor(projectId) {
@@ -460,7 +495,8 @@ function renderCompact(days) {
 
     for (const ce of d.meetings) {
       const c = ce.project_id ? getColor(ce.project_id) : '#8b949e';
-      body.innerHTML += `<div class="block meeting" style="--c:${c}"><div class="title">${ce.summary}</div><div class="meta">${fmtTime(ce.start)} – ${fmtTime(ce.end)}</div></div>`;
+      const overdue = isOverdueEvent(ce) ? ' overdue-review' : '';
+      body.innerHTML += `<div class="block meeting${overdue}" style="--c:${c}"><div class="title">${ce.summary}</div><div class="meta">${fmtTime(ce.start)} – ${fmtTime(ce.end)}</div></div>`;
     }
     for (const hi of d.habits) {
       const c = getColor(hi.project_id);
@@ -468,7 +504,8 @@ function renderCompact(days) {
     }
     for (const t of d.tasks) {
       const c = getColor(t.project_id);
-      body.innerHTML += `<div class="block" style="--c:${c}"><div class="title">${t.title}</div><div class="meta">${fmtHours(t.duration_minutes)} · ${t.priority} · ${t.project_id}</div></div>`;
+      const overdue = isOverdueTask(t) ? ' overdue-review' : '';
+      body.innerHTML += `<div class="block${overdue}" style="--c:${c}"><div class="title">${t.title}</div><div class="meta">${fmtHours(t.duration_minutes)} · ${t.priority} · ${t.project_id}</div></div>`;
     }
     for (const tl of d.logs) {
       const c = getColor(tl.project_id);
@@ -539,7 +576,8 @@ function renderTimeline(days) {
       const top = timeToOffset(ce.start);
       const height = durationToPx(ce.duration_minutes);
       if (top < 0 || top >= totalHeight) continue;
-      dayHtml += `<div class="timeline-block meeting" style="--c:${c};top:${top}px;height:${height}px">
+      const overdue = isOverdueEvent(ce) ? ' overdue-review' : '';
+      dayHtml += `<div class="timeline-block meeting${overdue}" style="--c:${c};top:${top}px;height:${height}px">
         <div class="title">${ce.summary}</div>
         ${height > 30 ? `<div class="meta">${fmtTime(ce.start)} – ${fmtTime(ce.end)}</div>` : ''}
       </div>`;
@@ -552,7 +590,8 @@ function renderTimeline(days) {
       const top = timeToOffset(t.due);
       const height = durationToPx(t.duration_minutes);
       if (top < 0 || top >= totalHeight) continue;
-      dayHtml += `<div class="timeline-block" style="--c:${c};top:${top}px;height:${height}px">
+      const overdue = isOverdueTask(t) ? ' overdue-review' : '';
+      dayHtml += `<div class="timeline-block${overdue}" style="--c:${c};top:${top}px;height:${height}px">
         <div class="title">${t.title}</div>
         ${height > 30 ? `<div class="meta">${fmtHours(t.duration_minutes)} · ${t.project_id}</div>` : ''}
       </div>`;

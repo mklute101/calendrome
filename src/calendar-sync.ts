@@ -29,6 +29,7 @@ export interface CalendarEvent {
   duration_minutes: number;
   is_meeting: number;
   synced_at: string;
+  status: 'UNCONFIRMED' | 'CONFIRMED';
 }
 
 export function syncCalendarEvents(
@@ -98,7 +99,8 @@ export function listCalendarEvents(
 ): CalendarEvent[] {
   // Reads gcal-sync rows from the unified time_entry table and projects
   // them into the legacy CalendarEvent shape so existing consumers (GUI
-  // timeline, planner skill) keep working unchanged.
+  // timeline, planner skill) keep working unchanged. `status` is included
+  // so the GUI can visually flag past-UNCONFIRMED entries as "needs review".
   return db
     .prepare(
       `SELECT
@@ -110,7 +112,8 @@ export function listCalendarEvents(
          te.end_at                                            AS end,
          CAST(ROUND((julianday(te.end_at) - julianday(te.start_at)) * 24 * 60) AS INTEGER) AS duration_minutes,
          te.is_meeting                                        AS is_meeting,
-         te.synced_at                                         AS synced_at
+         te.synced_at                                         AS synced_at,
+         te.status                                            AS status
        FROM time_entry te
        LEFT JOIN projects p ON p.id = te.project_id
        WHERE te.source = 'gcal-sync'
