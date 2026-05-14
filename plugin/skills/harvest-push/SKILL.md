@@ -45,11 +45,69 @@ Timesheet preview — [from] to [to]
 | globex  | 2026-05-06 | 3.00  | Pipeline migration |
 
 Total: 9.25h across 2 projects.
-
-Push these to Harvest? (y/N)
 ```
 
-### Step 2 — Verify Harvest mappings
+Don't ask for push confirmation yet — Steps 2 and 3 may change what's about to be sent.
+
+### Step 2 — Pre-flight: pending-review check
+
+`harvest_push_timesheet` refuses to push if any UNCONFIRMED entries
+exist in the date range. Catch this upfront so the user can resolve
+them inline instead of seeing a tool error.
+
+Call `mcp__calendrome__list_pending_review { from, to }`.
+
+**If empty:** proceed to Step 3.
+
+**If non-empty:** surface the list and ask the user how to resolve.
+Use the list-then-one-sentence pattern (same as `/today`):
+
+```
+3 entries from this range still pending review:
+  · Tue · A2-151 WebKit hotfix      2.0h placed
+  · Wed · ATN Internal Meeting       0.5h placed
+  · Fri · Beehiiv feed (A2-150)      2.0h placed
+
+How should we resolve these before push? (or say 'force' to push anyway)
+```
+
+Then parse the user's one-sentence reply and fire the appropriate
+calls: `confirm_placement`, `skip_placement`, or `log_time` (to
+correct durations). Example user reply: *"2h WebKit was actually
+3h, meeting as-placed, skip the Friday beehiiv."*
+
+**Never silently set `force: true`.** The guard exists so the user
+explicitly sees what's UNCONFIRMED before pushing. Only pass
+`force: true` if the user typed "force" (or equivalent — "push
+anyway", "ignore", "yolo it").
+
+After resolving, re-run `list_pending_review` to verify it's now
+empty (or that what remains matches what the user wanted to keep
+unconfirmed + force).
+
+### Step 3 — Personal-data preview
+
+`harvest_push_timesheet` defaults to `categories: ['work']` — personal
+hours never leak unless the user explicitly opts in. Show what
+would be excluded so the user can decide.
+
+Call `mcp__calendrome__get_timesheet_summary { from, to, categories: ['personal'] }`.
+
+**If the grand total is zero:** skip — don't print a line.
+
+**If non-zero:** surface a single line:
+
+```
+Excluded: 2 personal entries (~3.5h) — pass `--include-personal` to include.
+```
+
+If the user follows up with `--include-personal` (or "include personal",
+"send everything"), set `categories: ['work', 'personal']` (or omit
+the filter to include all categories) on the push call. Otherwise
+the default `['work']` filter stands. **Never auto-include** — this
+is explicit opt-in.
+
+### Step 4 — Verify Harvest mappings
 
 Before pushing, confirm each project has Harvest IDs configured. Call `mcp__calendrome__list_projects {}` and check for `harvest_project_id` and `harvest_task_id` on each project that appears in the preview.
 
@@ -65,20 +123,42 @@ Set them with:
 Or run mcp__calendrome__harvest_list_projects {} to find the right IDs.
 ```
 
-### Step 3 — Push
+### Step 5 — Final confirm
+
+Now ask for the push confirmation, surfacing the resolved state:
+
+```
+Pushing 8 entries totaling 9.25h from [work]. Continue? (y/N)
+```
+
+If the user opted into personal hours, reflect it:
+
+```
+Pushing 10 entries totaling 12.75h from [work, personal]. Continue? (y/N)
+```
+
+If the user said `force` in Step 2, reflect it:
+
+```
+Pushing 8 entries totaling 9.25h from [work] (force — 1 UNCONFIRMED). Continue? (y/N)
+```
+
+### Step 6 — Push
 
 On confirmation, call:
 
 ```
 mcp__calendrome__harvest_push_timesheet {
   from: "<ISO date>",
-  to:   "<ISO date>"
+  to:   "<ISO date>",
+  categories: <as resolved in Step 3>,  // omit if default ["work"]
+  force: <true only if user said so in Step 2>
 }
 ```
 
 Surface the result. Note any rows that failed (e.g., already-submitted Harvest entries that the API rejects).
 
-### Step 4 — Confirm
+### Step 7 — Confirm
 
 ```
 Pushed N entries to Harvest.
@@ -96,3 +176,4 @@ Total: X.YYh
 - No time entries in range → tell the user "Nothing to push for [range]" and exit.
 - Harvest credentials missing (server returns auth error) → point at `HARVEST_TOKEN` / `HARVEST_ACCOUNT_ID` env vars on the calendrome MCP server.
 - Project mapping changed mid-week → stop, ask user to confirm which mapping should win.
+- `harvest_push_timesheet` returns an unconfirmed-guard error despite Step 2 resolution → re-run `list_pending_review` for the range; something raced (e.g., a habit instance auto-generated). Resolve and retry; don't auto-force.
