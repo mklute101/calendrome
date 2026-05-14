@@ -155,6 +155,21 @@ describe('MCP tools layer', () => {
     // Task got linked to the event
     expect(placed.task.calendar_event_id).toBe(event.id);
     expect(placed.task.status).toBe('SCHEDULED');
+
+    // A paired UNCONFIRMED time_entry was inserted (source='placement',
+    // external_id=event.id). This is the row the confirmation flow
+    // operates on.
+    const rows = db
+      .prepare(`SELECT * FROM time_entry WHERE external_id = ?`)
+      .all(event.id) as any[];
+    expect(rows).toHaveLength(1);
+    expect(rows[0].status).toBe('UNCONFIRMED');
+    expect(rows[0].source).toBe('placement');
+    expect(rows[0].task_id).toBe(t.task.id);
+    expect(rows[0].project_id).toBe('acme');
+    expect(rows[0].start_at).toBe('2026-04-14T10:00:00Z');
+    expect(rows[0].end_at).toBe('2026-04-14T11:00:00.000Z');
+    expect(placed.time_entry_id).toBe(rows[0].id);
   });
 
   it('unplace_task deletes the calendar event and resets task status', async () => {
@@ -187,6 +202,48 @@ describe('MCP tools layer', () => {
     expect(calendar.events).toHaveLength(0);
     expect(result.task.calendar_event_id).toBeNull();
     expect(result.task.status).toBe('NEW');
+
+    // Paired placement time_entry was also deleted
+    const rows = db
+      .prepare(`SELECT id FROM time_entry WHERE task_id = ?`)
+      .all(t.task.id) as any[];
+    expect(rows).toHaveLength(0);
+  });
+
+  it('unplace_task throws when the paired time_entry is already CONFIRMED', async () => {
+    const db = freshDb();
+    createProject(db, {
+      id: 'acme',
+      name: 'Acme Corp',
+      prefix: 'ACME',
+      calendar_id: 'cal-acme',
+    });
+
+    const calendar = new FakeCalendarClient();
+    const tools = buildTools(db, { calendar });
+
+    const t = await getTool(tools, 'create_task').handler({
+      project_id: 'acme',
+      title: 'Report',
+      duration_minutes: 60,
+    });
+    const placed = await getTool(tools, 'place_task').handler({
+      task_id: t.task.id,
+      start: '2026-04-14T10:00:00Z',
+    });
+
+    // Flip the paired time_entry to CONFIRMED to simulate a confirmed
+    // placement.
+    await getTool(tools, 'confirm_placement').handler({
+      time_entry_id: placed.time_entry_id,
+    });
+
+    await expect(
+      getTool(tools, 'unplace_task').handler({ task_id: t.task.id }),
+    ).rejects.toThrow(/CONFIRMED/);
+
+    // Calendar event was NOT deleted because the throw happened first
+    expect(calendar.events).toHaveLength(1);
   });
 
   it('place_task succeeds against LocalCalendarClient (the production default)', async () => {

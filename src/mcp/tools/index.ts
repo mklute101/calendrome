@@ -36,6 +36,7 @@ import {
   skipTimeEntry,
   listPendingReview,
   moveTimeEntry,
+  insertTimeEntry,
 } from '../../time-entry.js';
 import {
   inboxAdd,
@@ -711,12 +712,32 @@ export function buildTools(
           description: task.notes ?? undefined,
         });
 
+        // Insert paired UNCONFIRMED time_entry — this is the row the
+        // confirmation flow operates on. `task.calendar_event_id` is
+        // also still stamped (transitionally) below for backward
+        // compatibility with reads that haven't migrated yet.
+        const timeEntryId = insertTimeEntry(db, {
+          task_id: taskId,
+          project_id: task.project_id,
+          start_at: start,
+          end_at: end,
+          status: 'UNCONFIRMED',
+          source: 'placement',
+          external_id: event.id,
+          notes: task.notes ?? null,
+        });
+
         const updated = updateTask(db, taskId, {
           calendar_event_id: event.id,
           due: start,
         });
         setTaskStatus(db, taskId, 'SCHEDULED');
-        return { task: getTask(db, taskId), event, _previous: updated };
+        return {
+          task: getTask(db, taskId),
+          event,
+          time_entry_id: timeEntryId,
+          _previous: updated,
+        };
       },
     },
     {
@@ -731,6 +752,36 @@ export function buildTools(
         const taskId = requireNumber(args, 'task_id');
         const task = getTask(db, taskId);
         if (!task) throw new Error(`task ${taskId} not found`);
+
+        // Find the paired placement time_entry, if any. Prefer matching
+        // by external_id (the stamped calendar_event_id) and fall back
+        // to (task_id + source='placement' + status='UNCONFIRMED').
+        let pairedEntry: { id: number; status: string } | undefined;
+        if (task.calendar_event_id) {
+          pairedEntry = db
+            .prepare(
+              `SELECT id, status FROM time_entry WHERE external_id = ?`,
+            )
+            .get(task.calendar_event_id) as
+            | { id: number; status: string }
+            | undefined;
+        }
+        if (!pairedEntry) {
+          pairedEntry = db
+            .prepare(
+              `SELECT id, status FROM time_entry
+               WHERE task_id = ? AND source = 'placement' AND status = 'UNCONFIRMED'
+               ORDER BY id DESC LIMIT 1`,
+            )
+            .get(taskId) as { id: number; status: string } | undefined;
+        }
+
+        if (pairedEntry && pairedEntry.status === 'CONFIRMED') {
+          throw new Error(
+            `cannot unplace task ${taskId}: its time_entry is already CONFIRMED`,
+          );
+        }
+
         if (task.calendar_event_id) {
           const project = getProject(db, task.project_id);
           await calendar.deleteEvent({
@@ -738,6 +789,11 @@ export function buildTools(
             event_id: task.calendar_event_id,
           });
         }
+
+        if (pairedEntry) {
+          db.prepare(`DELETE FROM time_entry WHERE id = ?`).run(pairedEntry.id);
+        }
+
         updateTask(db, taskId, { calendar_event_id: null });
         // Only flip status when the task was actually SCHEDULED. For NEW
         // (never placed), IN_PROGRESS, or COMPLETE we leave the status
