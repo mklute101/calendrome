@@ -16,10 +16,8 @@ export interface Task {
   priority: Priority;
   status: TaskStatus;
   duration_minutes: number;
-  time_spent_minutes: number;
   due: string | null;
   snooze_until: string | null;
-  calendar_event_id: string | null;
   depends_on: number | null;
   created_at: string;
   updated_at: string;
@@ -43,7 +41,6 @@ export interface UpdateTaskInput {
   duration_minutes?: number;
   due?: string | null;
   snooze_until?: string | null;
-  calendar_event_id?: string | null;
   depends_on?: number | null;
 }
 

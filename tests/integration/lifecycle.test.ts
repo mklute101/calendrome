@@ -17,8 +17,8 @@ import { insertTimeEntry } from '../../src/time-entry.js';
  * End-to-end integration: create a project, do work, export, check budgets.
  * Time logs are inserted directly with explicit durations to keep the test
  * deterministic without 5-minute sleeps. We seed both `time_log` (legacy
- * surface still used by the budgets module) and a CONFIRMED `time_entry`
- * (the export now reads from there) so the assertion covers both halves.
+ * surface) and a CONFIRMED `time_entry` (the export and budget queries
+ * now read from there via `v_task_time_spent`).
  */
 function insertTimeLog(
   db: any,
@@ -30,9 +30,6 @@ function insertTimeLog(
     `INSERT INTO time_log (task_id, started_at, stopped_at, duration_minutes)
      VALUES (?, ?, ?, ?)`,
   ).run(taskId, startedAt, startedAt, durationMinutes);
-  db.prepare(
-    `UPDATE tasks SET time_spent_minutes = time_spent_minutes + ? WHERE id = ?`,
-  ).run(durationMinutes, taskId);
 
   const start = new Date(startedAt);
   const end = new Date(start.getTime() + durationMinutes * 60000);

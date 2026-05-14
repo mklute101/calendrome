@@ -148,8 +148,9 @@ describe('MCP tools layer', () => {
     expect(event.start).toBe('2026-04-14T10:00:00Z');
     expect(event.end).toBe('2026-04-14T11:00:00.000Z');
 
-    // Task got linked to the event
-    expect(placed.task.calendar_event_id).toBe(event.id);
+    // Task got linked to the event via the paired placement time_entry
+    // (external_id = event.id). `task.calendar_event_id` is no longer
+    // stamped — the time_entry is the canonical link.
     expect(placed.task.status).toBe('SCHEDULED');
 
     // A paired UNCONFIRMED time_entry was inserted (source='placement',
@@ -196,7 +197,6 @@ describe('MCP tools layer', () => {
     });
 
     expect(calendar.events).toHaveLength(0);
-    expect(result.task.calendar_event_id).toBeNull();
     expect(result.task.status).toBe('NEW');
 
     // Paired placement time_entry was also deleted
@@ -270,14 +270,27 @@ describe('MCP tools layer', () => {
 
     expect(placed.task.status).toBe('SCHEDULED');
     expect(placed.task.due).toBe('2026-04-14T10:00:00Z');
-    expect(placed.task.calendar_event_id).toMatch(/^local-[0-9a-f-]{36}$/);
+    // The paired placement time_entry holds the calendar event id
+    // (external_id), which LocalCalendarClient mints as `local-<uuid>`.
+    expect(placed.event.id).toMatch(/^local-[0-9a-f-]{36}$/);
+    const paired = db
+      .prepare(
+        `SELECT external_id FROM time_entry
+         WHERE task_id = ? AND source = 'placement'`,
+      )
+      .get(t.task.id) as { external_id: string };
+    expect(paired.external_id).toBe(placed.event.id);
 
     // unplace_task must not throw against LocalCalendarClient's no-op delete
     const cleared = await getTool(tools, 'unplace_task').handler({
       task_id: t.task.id,
     });
-    expect(cleared.task.calendar_event_id).toBeNull();
     expect(cleared.task.status).toBe('NEW');
+    // And the paired time_entry is gone
+    const remaining = db
+      .prepare(`SELECT id FROM time_entry WHERE task_id = ?`)
+      .all(t.task.id) as any[];
+    expect(remaining).toHaveLength(0);
   });
 
   it('unplace_task is a no-op (no calendar call) when task was never placed', async () => {
