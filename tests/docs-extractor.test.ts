@@ -29,7 +29,7 @@ describe('extract-docs.mjs', () => {
       'create_task',
       'update_task',
       'place_task',
-      'start_task',
+      'log_time',
       'get_week_layout',
       'list_projects',
       'sync_calendar_events',

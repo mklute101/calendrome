@@ -33,8 +33,6 @@ describe('MCP tools layer', () => {
       'update_task',
       'list_tasks',
       'search_tasks',
-      'start_task',
-      'stop_task',
       'complete_task',
       'inbox_add',
       'inbox_list',
@@ -104,7 +102,7 @@ describe('MCP tools layer', () => {
     expect(result.task.project_id).toBe('acme');
   });
 
-  it('start_task / stop_task / complete_task handlers work end-to-end', async () => {
+  it('complete_task handler marks the task COMPLETE', async () => {
     const db = freshDb();
     createProject(db, { id: 'acme', name: 'Acme Corp', prefix: 'ACME' });
     const tools = buildTools(db);
@@ -115,8 +113,6 @@ describe('MCP tools layer', () => {
     });
     const id = created.task.id;
 
-    await getTool(tools, 'start_task').handler({ id });
-    await getTool(tools, 'stop_task').handler({ id });
     const done = await getTool(tools, 'complete_task').handler({ id });
     expect(done.task.status).toBe('COMPLETE');
   });

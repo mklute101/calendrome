@@ -30,7 +30,7 @@ import {
   getTask,
   type CreateTaskInput,
 } from '../../tasks.js';
-import { startTask, stopTask, completeTask, logTime } from '../../time-log.js';
+import { completeTask, logTime } from '../../time-log.js';
 import {
   confirmTimeEntry,
   skipTimeEntry,
@@ -205,8 +205,9 @@ export function buildTools(
      * Tasks are the primary unit of work. A new task starts as an
      * unscheduled item; use `place_task` to put it on the calendar
      * with an actual time. `duration_minutes` is the planned size,
-     * not the time spent — actual time is tracked via `start_task`
-     * / `stop_task`, which write rows to `time_log`.
+     * not the time spent — actual time is tracked via `log_time`
+     * (retroactive) or `place_task` (forward-scheduled), both of which
+     * write rows to `time_entry`.
      *
      * @example
      * create_task({
@@ -216,7 +217,7 @@ export function buildTools(
      *   priority: 'high'
      * })
      *
-     * @see place_task, update_task, start_task
+     * @see place_task, update_task, log_time
      */
     {
       name: 'create_task',
@@ -308,48 +309,6 @@ export function buildTools(
         return { tasks: searchTasks(db, requireString(args, 'query')) };
       },
     },
-    /**
-     * Start a live timer on a task.
-     *
-     * Inserts a `time_log` row with `started_at = now` and no
-     * `stopped_at`. Pair with `stop_task` to close it out. While
-     * a timer is open the task renders as actively in progress on
-     * the timeline view; closed `time_log` rows render as solid
-     * "logged" blocks.
-     *
-     * @example
-     * start_task({ id: 17 })
-     *
-     * @see stop_task, complete_task
-     */
-    {
-      name: 'start_task',
-      description: 'Start the timer on a task',
-      inputSchema: {
-        type: 'object',
-        required: ['id'],
-        properties: { id: { type: 'integer' } },
-      },
-      async handler(args) {
-        const id = requireNumber(args, 'id');
-        const entry = startTask(db, id);
-        return { entry, task: getTask(db, id) };
-      },
-    },
-    {
-      name: 'stop_task',
-      description: 'Stop the timer on a task',
-      inputSchema: {
-        type: 'object',
-        required: ['id'],
-        properties: { id: { type: 'integer' } },
-      },
-      async handler(args) {
-        const id = requireNumber(args, 'id');
-        const entry = stopTask(db, id);
-        return { entry, task: getTask(db, id) };
-      },
-    },
     {
       name: 'complete_task',
       description: 'Complete a task',
@@ -363,23 +322,22 @@ export function buildTools(
       },
     },
     /**
-     * Retroactively log a closed time_log entry for work that already happened.
+     * Retroactively log a CONFIRMED time_entry for work that already happened.
      *
-     * The escape hatch for hours that were never live-timed: meetings,
-     * ad-hoc work, end-of-week timesheet reconciliation, anything off the
-     * calendar. Pair with `start_task`/`stop_task` (the in-flow path) —
-     * `log_time` covers everything the live timer didn't.
+     * The primary entry point for time tracking alongside `place_task`
+     * (forward-scheduled placement). `log_time` covers meetings, ad-hoc
+     * work, end-of-week timesheet reconciliation — anything off the
+     * calendar.
      *
-     * Validates ISO 8601 timestamps, `stopped_at > started_at`, neither
-     * more than 24h in the future, and no overlap with an open timer on
-     * the same task. Bumps `tasks.time_spent_minutes` but leaves
-     * `tasks.status` alone — call `complete_task` separately if appropriate.
+     * Validates ISO 8601 timestamps, `stopped_at > started_at`, and
+     * neither more than 24h in the future. Leaves `tasks.status` alone —
+     * call `complete_task` separately if appropriate.
      *
      * @example
      * log_time({ task_id: 17, started_at: '2026-05-04T09:00:00-05:00',
      *            stopped_at: '2026-05-04T12:00:00-05:00', notes: 'sprint planning' })
      *
-     * @see start_task, stop_task, get_timesheet_summary
+     * @see place_task, complete_task, get_timesheet_summary
      */
     {
       name: 'log_time',

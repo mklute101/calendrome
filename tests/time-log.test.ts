@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { freshDb } from './helpers/db.js';
 import { createProject } from '../src/projects.js';
 import { createTask, getTask } from '../src/tasks.js';
-import { startTask, stopTask, completeTask, logTime } from '../src/time-log.js';
+import { completeTask, logTime } from '../src/time-log.js';
 
 function setup() {
   const db = freshDb();
@@ -11,44 +11,16 @@ function setup() {
 }
 
 describe('time log', () => {
-  it('startTask creates an open log row and sets status IN_PROGRESS', () => {
+  it('completeTask marks the task COMPLETE', () => {
     const db = setup();
     const t = createTask(db, { project_id: 'acme', title: 'X' });
-    const entry = startTask(db, t.id);
-    expect(entry.task_id).toBe(t.id);
-    expect(entry.started_at).toBeTruthy();
-    expect(entry.stopped_at).toBeNull();
-
-    const reread = getTask(db, t.id);
-    expect(reread!.status).toBe('IN_PROGRESS');
-  });
-
-  it('throws when starting an already-running task', () => {
-    const db = setup();
-    const t = createTask(db, { project_id: 'acme', title: 'X' });
-    startTask(db, t.id);
-    expect(() => startTask(db, t.id)).toThrow();
-  });
-
-  it('stopTask closes the row, computes duration, and increments time_spent', async () => {
-    const db = setup();
-    const t = createTask(db, { project_id: 'acme', title: 'X' });
-    startTask(db, t.id);
-    await new Promise((r) => setTimeout(r, 1100));
-    const entry = stopTask(db, t.id);
-    expect(entry.stopped_at).toBeTruthy();
-    expect(entry.duration_minutes).toBeGreaterThanOrEqual(0);
-
-    const reread = getTask(db, t.id);
-    expect(reread!.time_spent_minutes).toBe(entry.duration_minutes);
-  });
-
-  it('completeTask stops the timer if running and marks COMPLETE', () => {
-    const db = setup();
-    const t = createTask(db, { project_id: 'acme', title: 'X' });
-    startTask(db, t.id);
     const done = completeTask(db, t.id);
     expect(done.status).toBe('COMPLETE');
+  });
+
+  it('completeTask throws on unknown task_id', () => {
+    const db = setup();
+    expect(() => completeTask(db, 9999)).toThrow(/not found/);
   });
 
   describe('logTime (retroactive)', () => {
@@ -194,24 +166,5 @@ describe('time log', () => {
         }),
       ).toThrow(/not found/);
     });
-  });
-
-  it('multiple start/stop cycles accumulate time_spent_minutes', async () => {
-    const db = setup();
-    const t = createTask(db, { project_id: 'acme', title: 'X' });
-    startTask(db, t.id);
-    await new Promise((r) => setTimeout(r, 1100));
-    const first = stopTask(db, t.id);
-
-    startTask(db, t.id);
-    await new Promise((r) => setTimeout(r, 1100));
-    const second = stopTask(db, t.id);
-
-    expect(first.duration_minutes).not.toBeNull();
-    expect(second.duration_minutes).not.toBeNull();
-    const reread = getTask(db, t.id);
-    expect(reread!.time_spent_minutes).toBe(
-      first.duration_minutes! + second.duration_minutes!,
-    );
   });
 });

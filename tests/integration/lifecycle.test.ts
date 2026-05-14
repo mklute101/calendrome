@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { freshDb } from '../helpers/db.js';
 import { createProject } from '../../src/projects.js';
 import { createTask } from '../../src/tasks.js';
-import { startTask, stopTask, completeTask } from '../../src/time-log.js';
+import { completeTask } from '../../src/time-log.js';
 import {
   createHabit,
   generateHabitInstances,
@@ -119,14 +119,10 @@ describe('integration: full lifecycle', () => {
     expect(budget.over_budget).toBe(true);
   });
 
-  it('using the real task lifecycle helpers end-to-end', async () => {
+  it('using the real task lifecycle helpers end-to-end', () => {
     const db = freshDb();
     createProject(db, { id: 'acme', name: 'Acme Corp', prefix: 'ACME' });
     const t = createTask(db, { project_id: 'acme', title: 'X' });
-
-    startTask(db, t.id);
-    await new Promise((r) => setTimeout(r, 1100));
-    stopTask(db, t.id);
 
     const done = completeTask(db, t.id);
     expect(done.status).toBe('COMPLETE');
