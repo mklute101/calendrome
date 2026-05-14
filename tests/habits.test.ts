@@ -132,4 +132,135 @@ describe('habits', () => {
     const skipped = skipHabitInstance(db, inst2.id);
     expect(skipped.status).toBe('SKIPPED');
   });
+
+  it('generateHabitInstances creates paired time_entry rows and links via time_entry_id', () => {
+    const db = setup();
+    const h = createHabit(db, {
+      project_id: 'me',
+      title: 'Standup',
+      duration_minutes: 30,
+      days_of_week: '1,2,3,4,5',
+      start_time: '09:00',
+      timezone: 'UTC',
+    });
+
+    generateHabitInstances(db, h.id, '2026-04-13', '2026-04-17');
+
+    const instances = db
+      .prepare(
+        `SELECT id, time_entry_id, scheduled_start, scheduled_end
+           FROM habit_instances WHERE habit_id = ?`,
+      )
+      .all(h.id) as Array<{
+      id: number;
+      time_entry_id: number | null;
+      scheduled_start: string;
+      scheduled_end: string;
+    }>;
+    expect(instances.length).toBe(5);
+    for (const inst of instances) {
+      expect(inst.time_entry_id).not.toBeNull();
+      const te = db
+        .prepare(
+          `SELECT status, source, project_id, start_at, end_at, task_id, notes
+             FROM time_entry WHERE id = ?`,
+        )
+        .get(inst.time_entry_id) as {
+        status: string;
+        source: string;
+        project_id: string | null;
+        start_at: string;
+        end_at: string;
+        task_id: number | null;
+        notes: string | null;
+      };
+      expect(te.status).toBe('UNCONFIRMED');
+      expect(te.source).toBe('habit');
+      expect(te.project_id).toBe('me');
+      expect(te.task_id).toBeNull();
+      expect(te.start_at).toBe(inst.scheduled_start);
+      expect(te.end_at).toBe(inst.scheduled_end);
+      expect(te.notes).toBe('Standup');
+    }
+  });
+
+  it('generateHabitInstances re-run does not create duplicate time_entry rows', () => {
+    const db = setup();
+    const h = createHabit(db, {
+      project_id: 'me',
+      title: 'Standup',
+      duration_minutes: 30,
+      days_of_week: '1',
+      start_time: '09:00',
+      timezone: 'UTC',
+    });
+
+    generateHabitInstances(db, h.id, '2026-04-13', '2026-04-19');
+    const first = db
+      .prepare(`SELECT COUNT(*) AS n FROM time_entry WHERE source = 'habit'`)
+      .get() as { n: number };
+
+    generateHabitInstances(db, h.id, '2026-04-13', '2026-04-19');
+    const second = db
+      .prepare(`SELECT COUNT(*) AS n FROM time_entry WHERE source = 'habit'`)
+      .get() as { n: number };
+
+    expect(first.n).toBe(1);
+    expect(second.n).toBe(1);
+  });
+
+  it('completeHabitInstance confirms the paired time_entry', () => {
+    const db = setup();
+    const h = createHabit(db, {
+      project_id: 'me',
+      title: 'Standup',
+      duration_minutes: 30,
+      days_of_week: '1',
+      start_time: '09:00',
+      timezone: 'UTC',
+    });
+    const [inst] = generateHabitInstances(db, h.id, '2026-04-13', '2026-04-13');
+    const teId = (
+      db
+        .prepare('SELECT time_entry_id FROM habit_instances WHERE id = ?')
+        .get(inst.id) as { time_entry_id: number }
+    ).time_entry_id;
+
+    completeHabitInstance(db, inst.id);
+
+    const te = db
+      .prepare('SELECT status FROM time_entry WHERE id = ?')
+      .get(teId) as { status: string };
+    expect(te.status).toBe('CONFIRMED');
+  });
+
+  it('skipHabitInstance deletes the paired time_entry and clears the sidecar', () => {
+    const db = setup();
+    const h = createHabit(db, {
+      project_id: 'me',
+      title: 'Standup',
+      duration_minutes: 30,
+      days_of_week: '1',
+      start_time: '09:00',
+      timezone: 'UTC',
+    });
+    const [inst] = generateHabitInstances(db, h.id, '2026-04-13', '2026-04-13');
+    const teId = (
+      db
+        .prepare('SELECT time_entry_id FROM habit_instances WHERE id = ?')
+        .get(inst.id) as { time_entry_id: number }
+    ).time_entry_id;
+
+    skipHabitInstance(db, inst.id);
+
+    const teGone = db
+      .prepare('SELECT id FROM time_entry WHERE id = ?')
+      .get(teId);
+    expect(teGone).toBeUndefined();
+
+    const sidecar = db
+      .prepare('SELECT time_entry_id FROM habit_instances WHERE id = ?')
+      .get(inst.id) as { time_entry_id: number | null };
+    expect(sidecar.time_entry_id).toBeNull();
+  });
 });

@@ -1,4 +1,9 @@
 import type { DB } from './db/connection.js';
+import {
+  confirmTimeEntry,
+  insertTimeEntry,
+  skipTimeEntry,
+} from './time-entry.js';
 
 export interface Habit {
   id: number;
@@ -163,26 +168,44 @@ export function generateHabitInstances(
         (habit_id, scheduled_start, scheduled_end)
      VALUES (?, ?, ?)`,
   );
+  const linkTimeEntry = db.prepare(
+    `UPDATE habit_instances SET time_entry_id = ? WHERE id = ?`,
+  );
 
-  for (let t = startMs; t <= endMs; t += 86_400_000) {
-    const dt = new Date(t);
-    if (!days.has(dt.getUTCDay())) continue;
-    const y = dt.getUTCFullYear();
-    const m = dt.getUTCMonth() + 1;
-    const d = dt.getUTCDate();
+  const generateTx = db.transaction(() => {
+    for (let t = startMs; t <= endMs; t += 86_400_000) {
+      const dt = new Date(t);
+      if (!days.has(dt.getUTCDay())) continue;
+      const y = dt.getUTCFullYear();
+      const m = dt.getUTCMonth() + 1;
+      const d = dt.getUTCDate();
 
-    const start = isoUtcMinute(y, m, d, hh, mm);
-    const endDt = new Date(Date.UTC(y, m - 1, d, hh, mm + dur));
-    const end = isoUtcMinute(
-      endDt.getUTCFullYear(),
-      endDt.getUTCMonth() + 1,
-      endDt.getUTCDate(),
-      endDt.getUTCHours(),
-      endDt.getUTCMinutes(),
-    );
+      const start = isoUtcMinute(y, m, d, hh, mm);
+      const endDt = new Date(Date.UTC(y, m - 1, d, hh, mm + dur));
+      const end = isoUtcMinute(
+        endDt.getUTCFullYear(),
+        endDt.getUTCMonth() + 1,
+        endDt.getUTCDate(),
+        endDt.getUTCHours(),
+        endDt.getUTCMinutes(),
+      );
 
-    insert.run(habitId, start, end);
-  }
+      const result = insert.run(habitId, start, end);
+      if (result.changes === 0) continue; // already existed — don't double-write
+      const instanceId = Number(result.lastInsertRowid);
+      const teId = insertTimeEntry(db, {
+        task_id: null,
+        project_id: habit.project_id,
+        start_at: start,
+        end_at: end,
+        status: 'UNCONFIRMED',
+        source: 'habit',
+        notes: habit.title,
+      });
+      linkTimeEntry.run(teId, instanceId);
+    }
+  });
+  generateTx();
 
   return db
     .prepare(
@@ -203,18 +226,36 @@ export function completeHabitInstance(
   db: DB,
   id: number,
 ): HabitInstance {
-  db.prepare(
-    "UPDATE habit_instances SET status = 'COMPLETE', completed_at = datetime('now') WHERE id = ?",
-  ).run(id);
+  const completeTx = db.transaction(() => {
+    db.prepare(
+      "UPDATE habit_instances SET status = 'COMPLETE', completed_at = datetime('now') WHERE id = ?",
+    ).run(id);
+    const row = db
+      .prepare('SELECT time_entry_id FROM habit_instances WHERE id = ?')
+      .get(id) as { time_entry_id: number | null } | undefined;
+    if (row?.time_entry_id != null) {
+      confirmTimeEntry(db, row.time_entry_id, {});
+    }
+  });
+  completeTx();
   return db
     .prepare('SELECT * FROM habit_instances WHERE id = ?')
     .get(id) as HabitInstance;
 }
 
 export function skipHabitInstance(db: DB, id: number): HabitInstance {
-  db.prepare(
-    "UPDATE habit_instances SET status = 'SKIPPED' WHERE id = ?",
-  ).run(id);
+  const skipTx = db.transaction(() => {
+    const row = db
+      .prepare('SELECT time_entry_id FROM habit_instances WHERE id = ?')
+      .get(id) as { time_entry_id: number | null } | undefined;
+    db.prepare(
+      "UPDATE habit_instances SET status = 'SKIPPED', time_entry_id = NULL WHERE id = ?",
+    ).run(id);
+    if (row?.time_entry_id != null) {
+      skipTimeEntry(db, row.time_entry_id);
+    }
+  });
+  skipTx();
   return db
     .prepare('SELECT * FROM habit_instances WHERE id = ?')
     .get(id) as HabitInstance;
