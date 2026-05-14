@@ -382,26 +382,36 @@ export function buildTools(
      */
     {
       name: 'log_time',
-      description: 'Retroactively log a closed time_log entry for completed work',
+      description: 'Retroactively log a CONFIRMED time_entry for completed work',
       inputSchema: {
         type: 'object',
-        required: ['task_id', 'started_at', 'stopped_at'],
+        required: ['started_at', 'stopped_at'],
         properties: {
           task_id: { type: 'integer' },
+          project_id: { type: 'string' },
           started_at: { type: 'string' },
           stopped_at: { type: 'string' },
           notes: { type: ['string', 'null'] },
         },
       },
       async handler(args) {
-        const taskId = requireNumber(args, 'task_id');
+        const taskId = args.task_id === undefined || args.task_id === null
+          ? undefined
+          : Number(args.task_id);
+        const projectId = args.project_id === undefined || args.project_id === null
+          ? undefined
+          : String(args.project_id);
         const entry = logTime(db, {
           task_id: taskId,
+          project_id: projectId,
           started_at: requireString(args, 'started_at'),
           stopped_at: requireString(args, 'stopped_at'),
           notes: (args.notes as string | null | undefined) ?? null,
         });
-        return { entry, task: getTask(db, taskId) };
+        return {
+          entry,
+          task: entry.task_id !== null ? getTask(db, entry.task_id) : null,
+        };
       },
     },
 

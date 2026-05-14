@@ -243,7 +243,7 @@ describe('MCP tools layer', () => {
     expect(calendar.events).toHaveLength(0);
   });
 
-  it('log_time handler inserts a closed entry and returns the updated task', async () => {
+  it('log_time handler inserts a CONFIRMED time_entry and returns the task', async () => {
     const db = freshDb();
     createProject(db, { id: 'acme', name: 'Acme Corp', prefix: 'ACME' });
     const tools = buildTools(db);
@@ -262,9 +262,18 @@ describe('MCP tools layer', () => {
 
     expect(result.entry.duration_minutes).toBe(180);
     expect(result.entry.notes).toBe('with the team');
-    expect(result.task.time_spent_minutes).toBe(180);
+    expect(result.entry.task_id).toBe(t.task.id);
+    expect(result.entry.project_id).toBe('acme');
     // log_time leaves status alone — user calls complete_task separately
     expect(result.task.status).toBe('NEW');
+
+    // Persisted as a CONFIRMED manual time_entry row
+    const row = db
+      .prepare('SELECT status, source, actual_minutes FROM time_entry WHERE id = ?')
+      .get(result.entry.id) as { status: string; source: string; actual_minutes: number };
+    expect(row.status).toBe('CONFIRMED');
+    expect(row.source).toBe('manual');
+    expect(row.actual_minutes).toBe(180);
   });
 
   it('log_time handler propagates validation errors (inverted timestamps)', async () => {

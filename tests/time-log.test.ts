@@ -52,7 +52,7 @@ describe('time log', () => {
   });
 
   describe('logTime (retroactive)', () => {
-    it('inserts a closed row, computes duration, bumps time_spent_minutes', () => {
+    it('inserts a CONFIRMED time_entry row with computed actual_minutes', () => {
       const db = setup();
       const t = createTask(db, { project_id: 'acme', title: 'Sprint planning' });
 
@@ -64,14 +64,70 @@ describe('time log', () => {
       });
 
       expect(entry.task_id).toBe(t.id);
-      expect(entry.stopped_at).toBeTruthy();
+      expect(entry.project_id).toBe('acme');
       expect(entry.duration_minutes).toBe(180);
       expect(entry.notes).toBe('with the team');
 
+      const row = db
+        .prepare('SELECT * FROM time_entry WHERE id = ?')
+        .get(entry.id) as {
+          task_id: number | null;
+          project_id: string | null;
+          actual_minutes: number;
+          status: string;
+          source: string;
+          confirmed_at: string | null;
+          notes: string | null;
+        };
+      expect(row.task_id).toBe(t.id);
+      expect(row.project_id).toBe('acme');
+      expect(row.actual_minutes).toBe(180);
+      expect(row.status).toBe('CONFIRMED');
+      expect(row.source).toBe('manual');
+      expect(row.confirmed_at).toBeTruthy();
+      expect(row.notes).toBe('with the team');
+
+      // Status is independent of time_entry inserts
       const reread = getTask(db, t.id);
-      expect(reread!.time_spent_minutes).toBe(180);
-      // Status is independent of time_log inserts
       expect(reread!.status).toBe('NEW');
+    });
+
+    it('allows task_id omitted with project_id supplied (project-only retro)', () => {
+      const db = setup();
+
+      const entry = logTime(db, {
+        project_id: 'acme',
+        started_at: '2026-05-04T09:00:00Z',
+        stopped_at: '2026-05-04T10:00:00Z',
+        notes: 'admin',
+      });
+
+      expect(entry.task_id).toBeNull();
+      expect(entry.project_id).toBe('acme');
+      expect(entry.duration_minutes).toBe(60);
+
+      const row = db
+        .prepare('SELECT task_id, project_id, status, source FROM time_entry WHERE id = ?')
+        .get(entry.id) as {
+          task_id: number | null;
+          project_id: string | null;
+          status: string;
+          source: string;
+        };
+      expect(row.task_id).toBeNull();
+      expect(row.project_id).toBe('acme');
+      expect(row.status).toBe('CONFIRMED');
+      expect(row.source).toBe('manual');
+    });
+
+    it('rejects when neither task_id nor project_id supplied', () => {
+      const db = setup();
+      expect(() =>
+        logTime(db, {
+          started_at: '2026-05-04T09:00:00Z',
+          stopped_at: '2026-05-04T10:00:00Z',
+        }),
+      ).toThrow(/either task_id or project_id/);
     });
 
     it('rejects inverted timestamps (stopped_at <= started_at)', () => {
@@ -94,48 +150,6 @@ describe('time log', () => {
           stopped_at: '2026-05-04T10:00:00Z',
         }),
       ).toThrow(/strictly after/);
-    });
-
-    it('rejects entries that overlap an open timer on the same task', () => {
-      const db = setup();
-      const t = createTask(db, { project_id: 'acme', title: 'X' });
-
-      // Live timer running from "now"
-      startTask(db, t.id);
-
-      // Retro entry that ends in the future overlaps the open timer
-      const future = new Date(Date.now() + 60 * 60 * 1000).toISOString();
-      const past = new Date(Date.now() - 60 * 60 * 1000).toISOString();
-      expect(() =>
-        logTime(db, {
-          task_id: t.id,
-          started_at: past,
-          stopped_at: future,
-        }),
-      ).toThrow(/open timer/);
-    });
-
-    it('allows retro entries that end before an open timer started', () => {
-      const db = setup();
-      const t = createTask(db, { project_id: 'acme', title: 'X' });
-
-      // Open timer started "now". A retro entry from yesterday ending
-      // before the timer started is fine — they don't overlap.
-      startTask(db, t.id);
-
-      const yesterdayStart = new Date(
-        Date.now() - 25 * 60 * 60 * 1000,
-      ).toISOString();
-      const yesterdayEnd = new Date(
-        Date.now() - 22 * 60 * 60 * 1000,
-      ).toISOString();
-
-      const entry = logTime(db, {
-        task_id: t.id,
-        started_at: yesterdayStart,
-        stopped_at: yesterdayEnd,
-      });
-      expect(entry.duration_minutes).toBe(180);
     });
 
     it('rejects timestamps more than 24h in the future', () => {
@@ -179,42 +193,6 @@ describe('time log', () => {
           stopped_at: '2026-05-04T10:00:00Z',
         }),
       ).toThrow(/not found/);
-    });
-
-    it('multiple non-overlapping retro entries accumulate time_spent_minutes', () => {
-      const db = setup();
-      const t = createTask(db, { project_id: 'acme', title: 'X' });
-
-      logTime(db, {
-        task_id: t.id,
-        started_at: '2026-05-04T09:00:00Z',
-        stopped_at: '2026-05-04T10:30:00Z',
-      });
-      logTime(db, {
-        task_id: t.id,
-        started_at: '2026-05-04T13:00:00Z',
-        stopped_at: '2026-05-04T14:15:00Z',
-      });
-
-      const reread = getTask(db, t.id);
-      expect(reread!.time_spent_minutes).toBe(90 + 75);
-    });
-
-    it('logged entries surface in get_timesheet_summary', async () => {
-      const db = setup();
-      const t = createTask(db, { project_id: 'acme', title: 'Sprint planning' });
-
-      logTime(db, {
-        task_id: t.id,
-        started_at: '2026-05-04T09:00:00Z',
-        stopped_at: '2026-05-04T12:00:00Z',
-      });
-
-      const { getTimesheetSummary } = await import('../src/timesheet.js');
-      const summary = getTimesheetSummary(db, '2026-05-04', '2026-05-04');
-      const acme = summary.by_project.find((p) => p.project === 'ACME');
-      expect(acme?.total_hours).toBe(3);
-      expect(summary.grand_total_hours).toBe(3);
     });
   });
 
