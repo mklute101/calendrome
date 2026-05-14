@@ -161,15 +161,6 @@ describe('calendar-sync', () => {
     expect(row.notes).toBe('Standup (moved)');     // updated
   });
 
-  it('still writes to legacy calendar_events table (transitional)', () => {
-    const db = freshDb();
-    syncCalendarEvents(db, [
-      { id: 'evt-1', calendar_id: 'cal-a', summary: 'X', start: '2026-05-13T09:00:00Z', end: '2026-05-13T10:00:00Z' },
-    ]);
-    const row = db.prepare(`SELECT id FROM calendar_events WHERE id = 'evt-1'`).get() as any;
-    expect(row).toBeDefined();
-  });
-
   it('deleteCalendarEventsInRange removes UNCONFIRMED gcal-sync time_entry rows but preserves CONFIRMED ones', () => {
     const db = freshDb();
     syncCalendarEvents(db, [
@@ -180,7 +171,6 @@ describe('calendar-sync', () => {
 
     deleteCalendarEventsInRange(db, '2026-05-13T00:00:00Z', '2026-05-13T23:59:59Z');
 
-    expect(db.prepare(`SELECT id FROM calendar_events`).all()).toEqual([]);
     const survivors = db.prepare(`SELECT external_id, status FROM time_entry WHERE source='gcal-sync'`).all();
     expect(survivors).toEqual([{ external_id: 'evt-conf', status: 'CONFIRMED' }]);
   });

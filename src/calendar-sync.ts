@@ -31,23 +31,11 @@ export interface CalendarEvent {
   synced_at: string;
 }
 
-function computeDurationMinutes(start: string, end: string): number {
-  const ms = Date.parse(end) - Date.parse(start);
-  return Math.round(ms / 60_000);
-}
-
 export function syncCalendarEvents(
   db: DB,
   events: CalendarEventInput[],
 ): { upserted: number; deleted: number } {
-  const upsertLegacy = db.prepare(`
-    INSERT OR REPLACE INTO calendar_events
-      (id, calendar_id, project_id, summary, start, end, duration_minutes, is_meeting, synced_at)
-    VALUES
-      (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
-  `);
-
-  // Dual-write into the unified time_entry table. On conflict (existing
+  // Write into the unified time_entry table. On conflict (existing
   // external_id), update only the sync-driven fields and leave confirmation
   // state (status, confirmed_at, actual_minutes, task_id) untouched.
   const upsertTimeEntry = db.prepare(`
@@ -67,17 +55,6 @@ export function syncCalendarEvents(
   let upserted = 0;
   const txn = db.transaction(() => {
     for (const e of events) {
-      const duration = computeDurationMinutes(e.start, e.end);
-      upsertLegacy.run(
-        e.id,
-        e.calendar_id,
-        e.project_id ?? null,
-        e.summary,
-        e.start,
-        e.end,
-        duration,
-        e.is_meeting ? 1 : 0,
-      );
       upsertTimeEntry.run(
         e.project_id ?? null,
         e.start,
@@ -99,24 +76,19 @@ export function deleteCalendarEventsInRange(
   from: string,
   to: string,
 ): number {
-  const txn = db.transaction(() => {
-    // Remove UNCONFIRMED gcal-sync time_entry rows in range. CONFIRMED rows
-    // are historical — once a user has confirmed the time, the row outlives
-    // the calendar event it originated from.
-    db.prepare(`
+  // Remove UNCONFIRMED gcal-sync time_entry rows in range. CONFIRMED rows
+  // are historical — once a user has confirmed the time, the row outlives
+  // the calendar event it originated from.
+  return db
+    .prepare(`
       DELETE FROM time_entry
        WHERE source = 'gcal-sync'
          AND status = 'UNCONFIRMED'
          AND external_id IS NOT NULL
          AND start_at >= ?
          AND start_at <= ?
-    `).run(from, to);
-
-    return db
-      .prepare(`DELETE FROM calendar_events WHERE start >= ? AND start <= ?`)
-      .run(from, to).changes;
-  });
-  return txn() as number;
+    `)
+    .run(from, to).changes as number;
 }
 
 export function listCalendarEvents(
@@ -124,11 +96,28 @@ export function listCalendarEvents(
   from: string,
   to: string,
 ): CalendarEvent[] {
+  // Reads gcal-sync rows from the unified time_entry table and projects
+  // them into the legacy CalendarEvent shape so existing consumers (GUI
+  // timeline, planner skill) keep working unchanged.
   return db
     .prepare(
-      `SELECT * FROM calendar_events
-       WHERE start >= ? AND start <= ?
-       ORDER BY start`,
+      `SELECT
+         te.external_id                                       AS id,
+         COALESCE(p.calendar_id, '')                          AS calendar_id,
+         te.project_id                                        AS project_id,
+         COALESCE(te.notes, '')                               AS summary,
+         te.start_at                                          AS start,
+         te.end_at                                            AS end,
+         CAST(ROUND((julianday(te.end_at) - julianday(te.start_at)) * 24 * 60) AS INTEGER) AS duration_minutes,
+         te.is_meeting                                        AS is_meeting,
+         te.synced_at                                         AS synced_at
+       FROM time_entry te
+       LEFT JOIN projects p ON p.id = te.project_id
+       WHERE te.source = 'gcal-sync'
+         AND te.external_id IS NOT NULL
+         AND te.start_at >= ?
+         AND te.start_at <= ?
+       ORDER BY te.start_at`,
     )
     .all(from, to) as CalendarEvent[];
 }
