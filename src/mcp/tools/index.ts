@@ -31,6 +31,7 @@ import {
   type CreateTaskInput,
 } from '../../tasks.js';
 import { startTask, stopTask, completeTask, logTime } from '../../time-log.js';
+import { confirmTimeEntry, skipTimeEntry } from '../../time-entry.js';
 import {
   inboxAdd,
   inboxList,
@@ -731,6 +732,50 @@ export function buildTools(
           setTaskStatus(db, taskId, 'NEW');
         }
         return { task: getTask(db, taskId) };
+      },
+    },
+    {
+      name: 'confirm_placement',
+      description:
+        'Flip an UNCONFIRMED time_entry to CONFIRMED. Optional ' +
+        'actual_minutes override (when work took longer/shorter than ' +
+        'placed), optional project_id reassignment, optional notes.',
+      inputSchema: {
+        type: 'object',
+        required: ['time_entry_id'],
+        properties: {
+          time_entry_id: { type: 'integer' },
+          actual_minutes: { type: 'integer' },
+          project_id: { type: 'string' },
+          notes: { type: 'string' },
+        },
+      },
+      async handler(args) {
+        const timeEntryId = requireNumber(args, 'time_entry_id');
+        confirmTimeEntry(db, timeEntryId, {
+          actual_minutes: args?.actual_minutes,
+          project_id: args?.project_id,
+          notes: args?.notes,
+        });
+        return { confirmed: true, time_entry_id: timeEntryId };
+      },
+    },
+    {
+      name: 'skip_placement',
+      description:
+        'Delete an UNCONFIRMED time_entry (it did not happen). Rejects ' +
+        'CONFIRMED entries and gcal-sync sourced entries.',
+      inputSchema: {
+        type: 'object',
+        required: ['time_entry_id'],
+        properties: {
+          time_entry_id: { type: 'integer' },
+        },
+      },
+      async handler(args) {
+        const timeEntryId = requireNumber(args, 'time_entry_id');
+        skipTimeEntry(db, timeEntryId);
+        return { skipped: true, time_entry_id: timeEntryId };
       },
     },
 

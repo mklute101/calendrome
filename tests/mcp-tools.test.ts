@@ -50,6 +50,8 @@ describe('MCP tools layer', () => {
       'get_timesheet_summary',
       'place_task',
       'unplace_task',
+      'confirm_placement',
+      'skip_placement',
       'log_time',
       'sync_calendar_events',
       'list_categories',
