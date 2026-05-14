@@ -96,7 +96,8 @@ If projects exist, format and present:
 | `/week` | Run the weekly planning session — fetch calendar, tasks, budgets and plan the week |
 | Create a project | `create_project { id, name, prefix, weekly_budget_minutes }` |
 | Create a task | `create_task { project_id, title, priority, duration_minutes }` |
-| Start/stop a task | `start_task { task_id }` / `stop_task { task_id }` — tracks time |
+| Block time for a task | `place_task { task_id, start }` — creates placement + UNCONFIRMED time entry; confirm via `/calendrome:today` |
+| Log past time | `log_time { task_id?, project_id?, started_at, stopped_at }` — retro entry |
 | Complete a task | `complete_task { task_id }` |
 | Check budgets | `get_all_budgets { week_start }` or `get_project_budget { project_id, week_start }` |
 | Export timesheet | `export_timesheet { from, to, format: "csv" | "markdown" }` |
