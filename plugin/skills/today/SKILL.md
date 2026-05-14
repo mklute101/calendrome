@@ -27,6 +27,59 @@ When the user mentions a non-default timezone ("8pm Rio", "7pm Berlin", "3pm loc
 
 ## Phase 1: Morning Brief
 
+### Step 0 — Yesterday's pending review
+
+Before today's plan, close out yesterday. Call:
+
+```
+mcp__calendrome__list_pending_review({
+  from: <yesterday 00:00 in calendar_timezone>,
+  to:   <yesterday 23:59 in calendar_timezone>,
+  category: 'work'
+})
+```
+
+If the list is empty, skip to Step 1.
+
+Otherwise render a compact bullet list (title, planned hours, time range) and ask **one** freeform question. Example:
+
+```
+Yesterday has 4 entries waiting for review:
+  · A2-151 WebKit hotfix       2.0h placed (09:00–11:00)
+  · ATN Internal Meeting       0.5h placed (14:00–14:30)
+  · Beehiiv feed (A2-150)      2.0h placed (11:00–13:00)
+  · SAN PR review              1.0h placed (15:00–16:00)
+
+How'd yesterday actually go?
+```
+
+Then wait for the user's single sentence.
+
+#### Resolving the sentence
+
+Read the sentence, map each phrase to one of the listed entries (or a brand-new entry), and fire all MCP calls **in parallel in one turn**:
+
+- **Amended duration** ("4h on the WebKit thing") → `confirm_placement(id, { actual_minutes: 240 })`
+- **As-placed / "as planned"** ("the rest as placed", "standup as scheduled") → `confirm_placement(id)` with no amendment
+- **Skipped / didn't happen** ("skip the meeting", "we cancelled standup") → `skip_placement(id)`
+- **New work not on the list** ("I also spent an hour on the dashboard bug") → `log_time({ task_id?, project_id, started_at, stopped_at, notes? })`. Round to 15-minute increments.
+- **Reschedule** ("the PR review actually ran 16:00–17:00") → `move_placement(id, new_start_at, { new_end_at? })`, then `confirm_placement` if duration was also amended.
+
+#### Edge cases (be explicit)
+
+1. **"Everything was as planned"** / "all good" / "as placed" → call `confirm_placement(id)` for every UNCONFIRMED entry, no amendments.
+2. **Partial coverage** — the sentence names some entries but not all. For the leftovers, ask **one** targeted question covering them together: "You didn't mention the standup or the PR review — confirm both as-placed, or skip either?" — NEVER walk through them one by one.
+3. **New work mentioned** — fire `log_time` for the new entry in the same parallel batch alongside the confirms/skips. If the user didn't name a project, infer from prefix or ask in the leftover question.
+4. **Unaccounted-for entry** — same as #2. One question, group the leftovers.
+
+After all calls resolve, summarize back briefly:
+
+```
+Logged: 7.5h across 3 projects (A2 5h, SAN 1h, ATN 1.5h skipped). Ready for today.
+```
+
+Then proceed to Step 1.
+
 ### Step 1 — Fetch today's calendar
 
 Call Google Calendar `list_events`:
@@ -100,7 +153,7 @@ Format:
 After presenting:
 
 > "Anything else you need before diving in? Otherwise let me know when you:
-> - **Start or finish** a task (I'll update Jira)
+> - **Finish** a task (I'll transition Jira)
 > - **Need a time block** (say what you're working on and how long)
 > - **Want to wrap up** for the day"
 
@@ -131,16 +184,55 @@ Defer to `/calendrome:block` for the actual placement, OR inline:
 - Working past a scheduled task's end time → gentle nudge
 
 ### Jira status updates
-User mentions starting a ticket → offer to transition To Do → In Progress.
+User mentions starting a ticket → offer to transition To Do → In Progress. (Calendrome has no live timer — time is captured retroactively via `log_time` or by confirming placements during the EOD wrap.)
 
 ## Phase 3: End-of-Day Wrap
 
 Triggered by "wrap up", "done for today", "EOD", "calling it a day", or `/calendrome:today wrap`.
 
-1. **Summarize the day**: completed tasks/tickets with status changes, blocks created, anything still in progress.
-2. **Flag pending updates**: tickets worked on but not transitioned.
-3. **Optional timesheet log**: if the user logged real work that wasn't auto-tracked, offer to call `mcp__calendrome__log_time` for the relevant intervals (round to 15-minute increments — see `feedback_time_log_increments` convention).
-4. End with a brief wrap message.
+Same list-then-one-sentence pattern as the morning brief — just scoped to **today's** placements that have already started.
+
+### Step 1 — Pull today's pending entries
+
+```
+mcp__calendrome__list_pending_review({
+  from: <today 00:00 in calendar_timezone>,
+  to:   <now in calendar_timezone>,
+  category: 'work'
+})
+```
+
+### Step 2 — Render and ask one question
+
+```
+Today so far — 3 entries waiting to be confirmed:
+  · A2-151 WebKit hotfix    2.0h placed (09:00–11:00)
+  · Standup                 0.5h placed (11:00–11:30)
+  · Beehiiv feed (A2-150)   2.0h placed (13:00–15:00)
+
+How'd today actually go?
+```
+
+### Step 3 — Resolve the sentence in parallel
+
+Use the exact same mapping rules as Phase 1 Step 0:
+
+- amended → `confirm_placement(id, { actual_minutes })`
+- as-placed → `confirm_placement(id)`
+- skipped → `skip_placement(id)`
+- new work → `log_time({...})` (15-minute increments — see `feedback_time_log_increments` convention)
+- reschedule → `move_placement(...)` then `confirm_placement` if needed
+
+Apply the same four edge cases (everything-as-planned, partial coverage, new work, unaccounted-for entry).
+
+### Step 4 — Jira + summary
+
+After placements resolve:
+
+1. **Flag pending Jira transitions**: tickets worked on today that haven't moved status — offer to transition.
+2. **Summarize**: "Logged 7.0h. Open: A2-151 still In Progress. See you tomorrow."
+
+Catching up before bed means tomorrow's morning brief starts with a clean slate.
 
 ## Edge cases
 
