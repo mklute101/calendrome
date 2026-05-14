@@ -4,11 +4,38 @@ import { runMigration } from '../scripts/migrate-to-time-entry.js';
 
 /**
  * Seed a DB that still has the legacy tables (time_log, calendar_events)
- * AND the new time_entry table. The current migrate() in src/db/migrate.ts
- * leaves both in place — schema.sql cleanup is Task 19.
+ * AND the new time_entry table. The post-cleanup schema (Task 19) no
+ * longer ships the legacy tables, so this fixture re-creates them inline
+ * to exercise the one-shot migrator the way a real user DB would look
+ * before the script runs.
  */
 function seededLegacyDb() {
   const db = freshDb();
+  // Recreate the legacy shape on top of the post-cleanup schema.
+  db.exec(`
+    CREATE TABLE time_log (
+      id               INTEGER PRIMARY KEY AUTOINCREMENT,
+      task_id          INTEGER NOT NULL REFERENCES tasks(id),
+      started_at       TEXT NOT NULL,
+      stopped_at       TEXT,
+      duration_minutes INTEGER,
+      notes            TEXT,
+      harvest_entry_id INTEGER
+    );
+    CREATE TABLE calendar_events (
+      id              TEXT PRIMARY KEY,
+      calendar_id     TEXT NOT NULL,
+      project_id      TEXT REFERENCES projects(id),
+      summary         TEXT NOT NULL,
+      start           TEXT NOT NULL,
+      end             TEXT NOT NULL,
+      duration_minutes INTEGER NOT NULL,
+      is_meeting      INTEGER NOT NULL DEFAULT 0,
+      synced_at       TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    ALTER TABLE tasks ADD COLUMN time_spent_minutes INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE tasks ADD COLUMN calendar_event_id TEXT;
+  `);
   db.exec(`INSERT INTO projects (id, name, prefix) VALUES ('A', 'A', 'A')`);
   db.exec(`INSERT INTO tasks (id, project_id, title) VALUES (1, 'A', 't')`);
   db.exec(`

@@ -15,10 +15,9 @@ import { insertTimeEntry } from '../../src/time-entry.js';
 
 /**
  * End-to-end integration: create a project, do work, export, check budgets.
- * Time logs are inserted directly with explicit durations to keep the test
- * deterministic without 5-minute sleeps. We seed both `time_log` (legacy
- * surface) and a CONFIRMED `time_entry` (the export and budget queries
- * now read from there via `v_task_time_spent`).
+ * Time entries are inserted directly with explicit durations to keep the
+ * test deterministic without 5-minute sleeps. The export and budget
+ * queries read CONFIRMED `time_entry` rows via `v_task_time_spent`.
  */
 function insertTimeLog(
   db: any,
@@ -26,11 +25,6 @@ function insertTimeLog(
   startedAt: string,
   durationMinutes: number,
 ) {
-  db.prepare(
-    `INSERT INTO time_log (task_id, started_at, stopped_at, duration_minutes)
-     VALUES (?, ?, ?, ?)`,
-  ).run(taskId, startedAt, startedAt, durationMinutes);
-
   const start = new Date(startedAt);
   const end = new Date(start.getTime() + durationMinutes * 60000);
   const task = db

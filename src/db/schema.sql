@@ -30,10 +30,8 @@ CREATE TABLE IF NOT EXISTS tasks (
   priority          TEXT NOT NULL DEFAULT 'LOW',
   status            TEXT NOT NULL DEFAULT 'NEW',
   duration_minutes  INTEGER NOT NULL DEFAULT 30,
-  time_spent_minutes INTEGER NOT NULL DEFAULT 0,
   due               TEXT,
   snooze_until      TEXT,
-  calendar_event_id TEXT,
   depends_on        INTEGER REFERENCES tasks(id),
   created_at        TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at        TEXT NOT NULL DEFAULT (datetime('now'))
@@ -45,16 +43,6 @@ CREATE TABLE IF NOT EXISTS inbox (
   notes       TEXT,
   processed   INTEGER NOT NULL DEFAULT 0,
   created_at  TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE TABLE IF NOT EXISTS time_log (
-  id               INTEGER PRIMARY KEY AUTOINCREMENT,
-  task_id          INTEGER NOT NULL REFERENCES tasks(id),
-  started_at       TEXT NOT NULL,
-  stopped_at       TEXT,
-  duration_minutes INTEGER,
-  notes            TEXT,
-  harvest_entry_id INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS habits (
@@ -80,18 +68,6 @@ CREATE TABLE IF NOT EXISTS habit_instances (
   completed_at      TEXT,
   time_entry_id     INTEGER REFERENCES time_entry(id),
   UNIQUE(habit_id, scheduled_start)
-);
-
-CREATE TABLE IF NOT EXISTS calendar_events (
-  id              TEXT PRIMARY KEY,
-  calendar_id     TEXT NOT NULL,
-  project_id      TEXT REFERENCES projects(id),
-  summary         TEXT NOT NULL,
-  start           TEXT NOT NULL,
-  end             TEXT NOT NULL,
-  duration_minutes INTEGER NOT NULL,
-  is_meeting      INTEGER NOT NULL DEFAULT 0,
-  synced_at       TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 -- Categories: top-level scheduling windows. Every project belongs to one.

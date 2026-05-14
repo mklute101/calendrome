@@ -112,13 +112,30 @@ app.get('/api/week', (req, res) => {
       )
       .all(start + 'T00:00:00', end + 'T23:59:59') as any[];
 
+    // Project CONFIRMED, manual time_entry rows into the legacy time_logs
+    // shape the dashboard expects (`started_at`, `duration_minutes`,
+    // `task_title`, `project_id`). The unified `time_entry` table is now
+    // the source of truth; the legacy `time_log` table is gone.
     const timeLogs = db
       .prepare(
-        `SELECT tl.*, t.title as task_title, t.project_id
-         FROM time_log tl
-         JOIN tasks t ON t.id = tl.task_id
-         WHERE DATE(tl.started_at) >= ? AND DATE(tl.started_at) <= ?
-         ORDER BY tl.started_at`,
+        `SELECT
+           te.id                                         AS id,
+           te.task_id                                    AS task_id,
+           te.start_at                                   AS started_at,
+           te.end_at                                     AS stopped_at,
+           COALESCE(
+             te.actual_minutes,
+             CAST(ROUND((julianday(te.end_at) - julianday(te.start_at)) * 24 * 60) AS INTEGER)
+           )                                             AS duration_minutes,
+           te.notes                                      AS notes,
+           t.title                                       AS task_title,
+           COALESCE(te.project_id, t.project_id)         AS project_id
+         FROM time_entry te
+         LEFT JOIN tasks t ON t.id = te.task_id
+         WHERE te.status = 'CONFIRMED'
+           AND te.source = 'manual'
+           AND DATE(te.start_at) >= ? AND DATE(te.start_at) <= ?
+         ORDER BY te.start_at`,
       )
       .all(start, end) as any[];
 
