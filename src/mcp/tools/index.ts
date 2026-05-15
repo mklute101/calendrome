@@ -37,6 +37,7 @@ import {
   listPendingReview,
   moveTimeEntry,
   insertTimeEntry,
+  deleteTimeEntry,
 } from '../../time-entry.js';
 import {
   inboxAdd,
@@ -859,6 +860,45 @@ export function buildTools(
         const timeEntryId = requireNumber(args, 'time_entry_id');
         skipTimeEntry(db, timeEntryId);
         return { skipped: true, time_entry_id: timeEntryId };
+      },
+    },
+    /**
+     * Hard-delete a `time_entry` row to correct bad/duplicate entries.
+     *
+     * The corrective primitive that pairs with `log_time` — covers
+     * mis-attributed entries, bad durations, double-logs, and reclassified
+     * work that `confirm_placement` / `skip_placement` cannot fix because
+     * they only operate on UNCONFIRMED rows.
+     *
+     * Refuses entries with `harvest_entry_id` set (already pushed to
+     * Harvest) unless `force: true` — pass that flag to delete anyway
+     * and accept Harvest desync. `gcal-sync` rows are deletable, but
+     * note they reappear on the next `sync_calendar_events` unless
+     * the underlying Google Calendar event is also removed.
+     *
+     * @example
+     * delete_time_entry({ id: 142 })
+     * delete_time_entry({ id: 142, force: true })
+     *
+     * @see log_time, skip_placement, confirm_placement, move_placement
+     */
+    {
+      name: 'delete_time_entry',
+      description:
+        'Hard-delete a time_entry row (corrects mis-logged or duplicate ' +
+        'entries). Refuses rows already pushed to Harvest unless force is true.',
+      inputSchema: {
+        type: 'object',
+        required: ['id'],
+        properties: {
+          id: { type: 'integer' },
+          force: { type: 'boolean' },
+        },
+      },
+      async handler(args) {
+        const id = requireNumber(args, 'id');
+        const force = Boolean(args?.force);
+        return deleteTimeEntry(db, id, { force });
       },
     },
     /**

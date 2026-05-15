@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { freshDb } from './helpers/db.js';
-import { insertTimeEntry, confirmTimeEntry, skipTimeEntry, listPendingReview, moveTimeEntry } from '../src/time-entry.js';
+import { insertTimeEntry, confirmTimeEntry, skipTimeEntry, listPendingReview, moveTimeEntry, deleteTimeEntry } from '../src/time-entry.js';
 
 describe('insertTimeEntry', () => {
   it('inserts an UNCONFIRMED placement entry', () => {
@@ -191,6 +191,86 @@ describe('skipTimeEntry', () => {
   it('throws if the time_entry id does not exist', () => {
     const db = freshDb();
     expect(() => skipTimeEntry(db, 9999)).toThrow();
+  });
+});
+
+describe('deleteTimeEntry', () => {
+  it('deletes a CONFIRMED manual entry (which skipTimeEntry refuses)', () => {
+    const db = freshDb();
+    db.prepare(`INSERT INTO projects (id, name, prefix) VALUES ('TEST', 'T', 'TEST')`).run();
+    const id = insertTimeEntry(db, {
+      project_id: 'TEST',
+      start_at: '2026-05-13T09:00:00Z',
+      end_at: '2026-05-13T10:00:00Z',
+      actual_minutes: 60,
+      status: 'CONFIRMED',
+      confirmed_at: '2026-05-13T10:00:00Z',
+      source: 'manual',
+    });
+    const result = deleteTimeEntry(db, id);
+    expect(result.deleted).toBe(true);
+    expect(result.entry.id).toBe(id);
+    expect(result.entry.actual_minutes).toBe(60);
+    const row = db.prepare(`SELECT id FROM time_entry WHERE id = ?`).get(id);
+    expect(row).toBeUndefined();
+  });
+
+  it('deletes a gcal-sync entry (caller knows it may reappear on next sync)', () => {
+    const db = freshDb();
+    const id = insertTimeEntry(db, {
+      start_at: '2026-05-13T09:00:00Z',
+      end_at: '2026-05-13T10:00:00Z',
+      status: 'UNCONFIRMED',
+      source: 'gcal-sync',
+      external_id: 'gcal-evt-1',
+    });
+    expect(() => deleteTimeEntry(db, id)).not.toThrow();
+    const row = db.prepare(`SELECT id FROM time_entry WHERE id = ?`).get(id);
+    expect(row).toBeUndefined();
+  });
+
+  it('refuses entries already pushed to Harvest', () => {
+    const db = freshDb();
+    db.prepare(`INSERT INTO projects (id, name, prefix) VALUES ('TEST', 'T', 'TEST')`).run();
+    const id = insertTimeEntry(db, {
+      project_id: 'TEST',
+      start_at: '2026-05-13T09:00:00Z',
+      end_at: '2026-05-13T10:00:00Z',
+      actual_minutes: 60,
+      status: 'CONFIRMED',
+      confirmed_at: '2026-05-13T10:00:00Z',
+      source: 'manual',
+      harvest_entry_id: 9876,
+    });
+    expect(() => deleteTimeEntry(db, id)).toThrow(/Harvest/i);
+    // Row still exists
+    const row = db.prepare(`SELECT id FROM time_entry WHERE id = ?`).get(id);
+    expect(row).toBeDefined();
+  });
+
+  it('force: true deletes a Harvest-pushed entry', () => {
+    const db = freshDb();
+    db.prepare(`INSERT INTO projects (id, name, prefix) VALUES ('TEST', 'T', 'TEST')`).run();
+    const id = insertTimeEntry(db, {
+      project_id: 'TEST',
+      start_at: '2026-05-13T09:00:00Z',
+      end_at: '2026-05-13T10:00:00Z',
+      actual_minutes: 60,
+      status: 'CONFIRMED',
+      confirmed_at: '2026-05-13T10:00:00Z',
+      source: 'manual',
+      harvest_entry_id: 9876,
+    });
+    const result = deleteTimeEntry(db, id, { force: true });
+    expect(result.deleted).toBe(true);
+    expect(result.entry.harvest_entry_id).toBe(9876);
+    const row = db.prepare(`SELECT id FROM time_entry WHERE id = ?`).get(id);
+    expect(row).toBeUndefined();
+  });
+
+  it('throws if the time_entry id does not exist', () => {
+    const db = freshDb();
+    expect(() => deleteTimeEntry(db, 9999)).toThrow(/not found/i);
   });
 });
 

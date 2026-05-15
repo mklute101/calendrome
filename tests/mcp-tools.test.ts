@@ -53,6 +53,7 @@ describe('MCP tools layer', () => {
       'list_pending_review',
       'move_placement',
       'log_time',
+      'delete_time_entry',
       'sync_calendar_events',
       'list_categories',
       'create_category',
@@ -340,6 +341,61 @@ describe('MCP tools layer', () => {
     expect(row.status).toBe('CONFIRMED');
     expect(row.source).toBe('manual');
     expect(row.actual_minutes).toBe(180);
+  });
+
+  it('delete_time_entry handler deletes a logged entry and returns its row', async () => {
+    const db = freshDb();
+    createProject(db, { id: 'acme', name: 'Acme Corp', prefix: 'ACME' });
+    const tools = buildTools(db);
+
+    const t = await getTool(tools, 'create_task').handler({
+      project_id: 'acme',
+      title: 'Misattributed work',
+    });
+    const logged = await getTool(tools, 'log_time').handler({
+      task_id: t.task.id,
+      started_at: '2026-05-04T09:00:00Z',
+      stopped_at: '2026-05-04T10:00:00Z',
+    });
+
+    const result = await getTool(tools, 'delete_time_entry').handler({
+      id: logged.entry.id,
+    });
+    expect(result.deleted).toBe(true);
+    expect(result.entry.id).toBe(logged.entry.id);
+
+    const row = db
+      .prepare('SELECT id FROM time_entry WHERE id = ?')
+      .get(logged.entry.id);
+    expect(row).toBeUndefined();
+  });
+
+  it('delete_time_entry refuses Harvest-pushed entries without force', async () => {
+    const db = freshDb();
+    createProject(db, { id: 'acme', name: 'Acme Corp', prefix: 'ACME' });
+    const tools = buildTools(db);
+
+    const t = await getTool(tools, 'create_task').handler({
+      project_id: 'acme',
+      title: 'Already pushed',
+    });
+    const logged = await getTool(tools, 'log_time').handler({
+      task_id: t.task.id,
+      started_at: '2026-05-04T09:00:00Z',
+      stopped_at: '2026-05-04T10:00:00Z',
+    });
+    db.prepare('UPDATE time_entry SET harvest_entry_id = ? WHERE id = ?')
+      .run(12345, logged.entry.id);
+
+    await expect(
+      getTool(tools, 'delete_time_entry').handler({ id: logged.entry.id }),
+    ).rejects.toThrow(/Harvest/i);
+
+    const result = await getTool(tools, 'delete_time_entry').handler({
+      id: logged.entry.id,
+      force: true,
+    });
+    expect(result.deleted).toBe(true);
   });
 
   it('log_time handler propagates validation errors (inverted timestamps)', async () => {

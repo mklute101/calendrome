@@ -85,6 +85,50 @@ export function skipTimeEntry(db: DB, id: number): void {
   db.prepare(`DELETE FROM time_entry WHERE id = ?`).run(id);
 }
 
+export interface DeleteTimeEntryOptions {
+  force?: boolean;
+}
+
+export interface DeleteTimeEntryResult {
+  deleted: boolean;
+  entry: TimeEntryRow;
+}
+
+/**
+ * Hard-delete a `time_entry` row, regardless of status or source.
+ *
+ * The corrective primitive for retroactive time tracking: mis-attributed
+ * entries, bad durations, double-logs, reclassified work. Removes the row
+ * outright — task time totals come from the `v_task_time_spent` view, so
+ * no cached counter needs adjusting.
+ *
+ * Guard: refuses entries with `harvest_entry_id` set (already pushed to
+ * Harvest) unless `force: true` is passed. Callers using `force` accept
+ * responsibility for Harvest desync.
+ *
+ * Note on `gcal-sync` source: rows mirroring a Google Calendar event will
+ * reappear on the next `sync_calendar_events` call unless the underlying
+ * calendar event is also deleted. The function permits the delete anyway —
+ * useful for transient cleanup — but the caller should be aware.
+ */
+export function deleteTimeEntry(
+  db: DB,
+  id: number,
+  opts: DeleteTimeEntryOptions = {},
+): DeleteTimeEntryResult {
+  const row = db.prepare(`SELECT * FROM time_entry WHERE id = ?`)
+    .get(id) as TimeEntryRow | undefined;
+  if (!row) throw new Error(`time_entry ${id} not found`);
+  if (row.harvest_entry_id !== null && !opts.force) {
+    throw new Error(
+      `time_entry ${id} is already pushed to Harvest (harvest_entry_id=${row.harvest_entry_id}). ` +
+      `Void it in Harvest first, or pass force: true to delete anyway and accept Harvest desync.`,
+    );
+  }
+  db.prepare(`DELETE FROM time_entry WHERE id = ?`).run(id);
+  return { deleted: true, entry: row };
+}
+
 export interface TimeEntryRow {
   id: number;
   task_id: number | null;
