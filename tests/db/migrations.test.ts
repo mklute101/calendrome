@@ -21,7 +21,7 @@ describe('database migrations', () => {
       'projects',
       'tasks',
       'inbox',
-      'time_log',
+      'time_entry',
       'time_policies',
       'habits',
       'habit_instances',
@@ -30,6 +30,9 @@ describe('database migrations', () => {
     ]) {
       expect(tableNames).toContain(t);
     }
+    // Legacy tables removed in Task 19 — verify they're not present on fresh installs.
+    expect(tableNames).not.toContain('time_log');
+    expect(tableNames).not.toContain('calendar_events');
   });
 
   it('seeds work and personal categories', () => {
@@ -97,15 +100,16 @@ describe('database migrations', () => {
         'priority',
         'status',
         'duration_minutes',
-        'time_spent_minutes',
         'due',
         'snooze_until',
-        'calendar_event_id',
         'depends_on',
         'created_at',
         'updated_at',
       ]),
     );
+    // Legacy columns removed in Task 19.
+    expect(names).not.toContain('time_spent_minutes');
+    expect(names).not.toContain('calendar_event_id');
   });
 
   it('creates expected columns on habits and habit_instances', () => {

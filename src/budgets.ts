@@ -23,6 +23,15 @@ function weekRange(weekStart: string): { startIso: string; endIso: string } {
   };
 }
 
+/**
+ * Per-project weekly budget rollup. Reads exclusively from `time_entry`:
+ *   - CONFIRMED rows in the week range count as `spent_minutes`
+ *   - UNCONFIRMED rows in the week range count as `scheduled_minutes`
+ *
+ * Minute totals prefer `actual_minutes` when present, falling back to
+ * the wall-clock span between `start_at` and `end_at`. This mirrors the
+ * `v_task_time_spent` view's accounting and the timesheet exporter.
+ */
 export function getProjectBudget(
   db: DB,
   projectId: string,
@@ -35,45 +44,25 @@ export function getProjectBudget(
     .get(projectId) as { weekly_budget_minutes: number | null } | undefined;
   const allocated = project?.weekly_budget_minutes ?? null;
 
-  const spentRow = db
-    .prepare(
-      `SELECT COALESCE(SUM(time_log.duration_minutes), 0) AS spent
-         FROM time_log
-         JOIN tasks ON tasks.id = time_log.task_id
-        WHERE tasks.project_id = ?
-          AND time_log.started_at >= ?
-          AND time_log.started_at <= ?`,
-    )
-    .get(projectId, startIso, endIso) as { spent: number };
+  const minutesExpr = `COALESCE(
+    te.actual_minutes,
+    CAST(ROUND((julianday(te.end_at) - julianday(te.start_at)) * 24 * 60) AS INTEGER)
+  )`;
 
-  const habitRow = db
+  const row = db
     .prepare(
-      `SELECT COALESCE(SUM(
-          (julianday(habit_instances.scheduled_end)
-           - julianday(habit_instances.scheduled_start)) * 24 * 60
-        ), 0) AS scheduled
-         FROM habit_instances
-         JOIN habits ON habits.id = habit_instances.habit_id
-        WHERE habits.project_id = ?
-          AND habit_instances.scheduled_start >= ?
-          AND habit_instances.scheduled_start <= ?`,
+      `SELECT
+         COALESCE(SUM(CASE WHEN te.status = 'CONFIRMED'   THEN ${minutesExpr} ELSE 0 END), 0) AS spent,
+         COALESCE(SUM(CASE WHEN te.status = 'UNCONFIRMED' THEN ${minutesExpr} ELSE 0 END), 0) AS scheduled
+         FROM time_entry te
+        WHERE te.project_id = ?
+          AND te.start_at >= ?
+          AND te.start_at <= ?`,
     )
-    .get(projectId, startIso, endIso) as { scheduled: number };
+    .get(projectId, startIso, endIso) as { spent: number; scheduled: number };
 
-  const taskRow = db
-    .prepare(
-      `SELECT COALESCE(SUM(duration_minutes), 0) AS scheduled
-         FROM tasks
-        WHERE project_id = ?
-          AND calendar_event_id IS NOT NULL
-          AND due IS NOT NULL
-          AND due >= ?
-          AND due <= ?`,
-    )
-    .get(projectId, startIso, endIso) as { scheduled: number };
-
-  const spent_minutes = Math.round(spentRow.spent);
-  const scheduled_minutes = Math.round(habitRow.scheduled + taskRow.scheduled);
+  const spent_minutes = Math.round(row.spent);
+  const scheduled_minutes = Math.round(row.scheduled);
 
   const remaining_minutes =
     allocated === null ? null : allocated - (spent_minutes + scheduled_minutes);

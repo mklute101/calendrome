@@ -2,21 +2,55 @@ import { describe, it, expect } from 'vitest';
 import { freshDb } from './helpers/db.js';
 import { createProject } from '../src/projects.js';
 import { createTask } from '../src/tasks.js';
+import { insertTimeEntry } from '../src/time-entry.js';
 import {
   exportTimesheet,
   getTimesheetSummary,
 } from '../src/timesheet.js';
 
-function insertTimeLog(
+function seedConfirmed(
   db: any,
-  taskId: number,
+  taskId: number | null,
+  projectId: string | null,
   startedAt: string,
   durationMinutes: number,
+  notes: string | null = null,
 ) {
-  db.prepare(
-    `INSERT INTO time_log (task_id, started_at, stopped_at, duration_minutes)
-     VALUES (?, ?, ?, ?)`,
-  ).run(taskId, startedAt, startedAt, durationMinutes);
+  const start = new Date(startedAt);
+  const end = new Date(start.getTime() + durationMinutes * 60000);
+  return insertTimeEntry(db, {
+    task_id: taskId,
+    project_id: projectId,
+    start_at: start.toISOString(),
+    end_at: end.toISOString(),
+    actual_minutes: durationMinutes,
+    status: 'CONFIRMED',
+    confirmed_at: end.toISOString(),
+    source: 'manual',
+    notes,
+  });
+}
+
+function seedUnconfirmed(
+  db: any,
+  taskId: number | null,
+  projectId: string | null,
+  startedAt: string,
+  durationMinutes: number,
+  notes: string | null = null,
+) {
+  const start = new Date(startedAt);
+  const end = new Date(start.getTime() + durationMinutes * 60000);
+  return insertTimeEntry(db, {
+    task_id: taskId,
+    project_id: projectId,
+    start_at: start.toISOString(),
+    end_at: end.toISOString(),
+    actual_minutes: durationMinutes,
+    status: 'UNCONFIRMED',
+    source: 'placement',
+    notes,
+  });
 }
 
 describe('timesheet export', () => {
@@ -32,9 +66,9 @@ describe('timesheet export', () => {
     const t1 = createTask(db, { project_id: 'acme', title: 'Report' });
     const t2 = createTask(db, { project_id: 'acme', title: 'Memo' });
 
-    insertTimeLog(db, t1.id, '2026-04-14T09:00:00Z', 75); // 1.25h
-    insertTimeLog(db, t2.id, '2026-04-14T11:00:00Z', 30); // 0.5h
-    insertTimeLog(db, t1.id, '2026-04-15T09:00:00Z', 60); // 1h
+    seedConfirmed(db, t1.id, 'acme', '2026-04-14T09:00:00Z', 75); // 1.25h
+    seedConfirmed(db, t2.id, 'acme', '2026-04-14T11:00:00Z', 30); // 0.5h
+    seedConfirmed(db, t1.id, 'acme', '2026-04-15T09:00:00Z', 60); // 1h
 
     const csv = exportTimesheet(db, '2026-04-13', '2026-04-19');
     const lines = csv.trim().split('\n');
@@ -50,11 +84,25 @@ describe('timesheet export', () => {
     const db = freshDb();
     createProject(db, { id: 'acme', name: 'Acme Corp', prefix: 'ACME' });
     const t = createTask(db, { project_id: 'acme', title: 'X' });
-    insertTimeLog(db, t.id, '2026-04-12T09:00:00Z', 60);
-    insertTimeLog(db, t.id, '2026-04-20T09:00:00Z', 60);
+    seedConfirmed(db, t.id, 'acme', '2026-04-12T09:00:00Z', 60);
+    seedConfirmed(db, t.id, 'acme', '2026-04-20T09:00:00Z', 60);
 
     const csv = exportTimesheet(db, '2026-04-13', '2026-04-19');
     expect(csv.trim().split('\n').length).toBe(1); // header only
+  });
+
+  it('excludes UNCONFIRMED time_entry rows by default', () => {
+    const db = freshDb();
+    createProject(db, { id: 'acme', name: 'Acme Corp', prefix: 'ACME' });
+    const t = createTask(db, { project_id: 'acme', title: 'Report' });
+
+    seedConfirmed(db, t.id, 'acme', '2026-04-14T09:00:00Z', 60);
+    seedUnconfirmed(db, t.id, 'acme', '2026-04-15T09:00:00Z', 60);
+
+    const csv = exportTimesheet(db, '2026-04-13', '2026-04-19');
+    const lines = csv.trim().split('\n');
+    expect(lines.length).toBe(2); // header + the one CONFIRMED row
+    expect(lines).toContain('2026-04-14,ACME,1,Report,');
   });
 
   it('quotes notes containing commas', () => {
@@ -65,7 +113,7 @@ describe('timesheet export', () => {
       title: 'Plain title',
       notes: 'note with, comma',
     });
-    insertTimeLog(db, t.id, '2026-04-14T09:00:00Z', 60);
+    seedConfirmed(db, t.id, 'acme', '2026-04-14T09:00:00Z', 60);
 
     const csv = exportTimesheet(db, '2026-04-13', '2026-04-19');
     expect(csv).toContain('"note with, comma"');
@@ -80,9 +128,9 @@ describe('timesheet export with totals', () => {
     const t1 = createTask(db, { project_id: 'acme', title: 'Report' });
     const t2 = createTask(db, { project_id: 'acme', title: 'Memo' });
     const t3 = createTask(db, { project_id: 'glbx', title: 'Pitch deck' });
-    insertTimeLog(db, t1.id, '2026-04-14T09:00:00Z', 90); // 1.5h ACME
-    insertTimeLog(db, t2.id, '2026-04-14T11:00:00Z', 30); // 0.5h ACME
-    insertTimeLog(db, t3.id, '2026-04-15T10:00:00Z', 120); // 2h GLBX
+    seedConfirmed(db, t1.id, 'acme', '2026-04-14T09:00:00Z', 90); // 1.5h ACME
+    seedConfirmed(db, t2.id, 'acme', '2026-04-14T11:00:00Z', 30); // 0.5h ACME
+    seedConfirmed(db, t3.id, 'glbx', '2026-04-15T10:00:00Z', 120); // 2h GLBX
     return db;
   }
 
@@ -135,7 +183,7 @@ describe('timesheet export with totals', () => {
       title: 'a | b',
       notes: 'foo | bar',
     });
-    insertTimeLog(db, t.id, '2026-04-14T09:00:00Z', 60);
+    seedConfirmed(db, t.id, 'acme', '2026-04-14T09:00:00Z', 60);
     const md = exportTimesheet(db, '2026-04-13', '2026-04-19', {
       format: 'markdown',
     });
@@ -155,6 +203,64 @@ describe('timesheet export with totals', () => {
   });
 });
 
+describe('timesheet category filter', () => {
+  function setup() {
+    const db = freshDb();
+    createProject(db, {
+      id: 'acme',
+      name: 'Acme Corp',
+      prefix: 'ACME',
+      category_id: 'work',
+    });
+    createProject(db, {
+      id: 'gym',
+      name: 'Gym',
+      prefix: 'GYM',
+      category_id: 'personal',
+    });
+    const tw = createTask(db, { project_id: 'acme', title: 'Report' });
+    const tp = createTask(db, { project_id: 'gym', title: 'Lift' });
+    seedConfirmed(db, tw.id, 'acme', '2026-04-14T09:00:00Z', 60); // 1h work
+    seedConfirmed(db, tp.id, 'gym', '2026-04-14T18:00:00Z', 60); // 1h personal
+    return db;
+  }
+
+  it('defaults to work category only', () => {
+    const db = setup();
+    const csv = exportTimesheet(db, '2026-04-13', '2026-04-19');
+    expect(csv).toContain('ACME');
+    expect(csv).not.toContain('GYM');
+  });
+
+  it('categories=["personal"] returns only personal-category rows', () => {
+    const db = setup();
+    const csv = exportTimesheet(db, '2026-04-13', '2026-04-19', {
+      categories: ['personal'],
+    });
+    expect(csv).not.toContain('ACME');
+    expect(csv).toContain('GYM');
+  });
+
+  it('categories=["work", "personal"] returns both', () => {
+    const db = setup();
+    const csv = exportTimesheet(db, '2026-04-13', '2026-04-19', {
+      categories: ['work', 'personal'],
+    });
+    expect(csv).toContain('ACME');
+    expect(csv).toContain('GYM');
+  });
+
+  it('excludes rows whose time_entry has no project_id', () => {
+    const db = setup();
+    // unattached entry — no project, no category → always excluded
+    seedConfirmed(db, null, null, '2026-04-14T12:00:00Z', 30, 'orphan');
+    const csv = exportTimesheet(db, '2026-04-13', '2026-04-19', {
+      categories: ['work', 'personal'],
+    });
+    expect(csv).not.toContain('orphan');
+  });
+});
+
 describe('getTimesheetSummary', () => {
   function setup() {
     const db = freshDb();
@@ -163,9 +269,9 @@ describe('getTimesheetSummary', () => {
     const t1 = createTask(db, { project_id: 'acme', title: 'Report' });
     const t2 = createTask(db, { project_id: 'acme', title: 'Memo' });
     const t3 = createTask(db, { project_id: 'glbx', title: 'Pitch deck' });
-    insertTimeLog(db, t1.id, '2026-04-14T09:00:00Z', 90); // 1.5h
-    insertTimeLog(db, t2.id, '2026-04-14T11:00:00Z', 30); // 0.5h
-    insertTimeLog(db, t3.id, '2026-04-15T10:00:00Z', 120); // 2h
+    seedConfirmed(db, t1.id, 'acme', '2026-04-14T09:00:00Z', 90); // 1.5h
+    seedConfirmed(db, t2.id, 'acme', '2026-04-14T11:00:00Z', 30); // 0.5h
+    seedConfirmed(db, t3.id, 'glbx', '2026-04-15T10:00:00Z', 120); // 2h
     return db;
   }
 
@@ -202,12 +308,33 @@ describe('getTimesheetSummary', () => {
     createProject(db, { id: 'a', name: 'A', prefix: 'ALPHA' });
     const tz = createTask(db, { project_id: 'z', title: 'x' });
     const ta = createTask(db, { project_id: 'a', title: 'y' });
-    insertTimeLog(db, tz.id, '2026-04-14T09:00:00Z', 60);
-    insertTimeLog(db, ta.id, '2026-04-14T09:00:00Z', 60);
+    seedConfirmed(db, tz.id, 'z', '2026-04-14T09:00:00Z', 60);
+    seedConfirmed(db, ta.id, 'a', '2026-04-14T09:00:00Z', 60);
     const summary = getTimesheetSummary(db, '2026-04-13', '2026-04-19');
     expect(summary.by_project.map((p) => p.project)).toEqual([
       'ALPHA',
       'ZETA',
     ]);
+  });
+
+  it('include_unconfirmed exposes a separate unconfirmed section', () => {
+    const db = freshDb();
+    createProject(db, { id: 'acme', name: 'Acme Corp', prefix: 'ACME' });
+    const t = createTask(db, { project_id: 'acme', title: 'Report' });
+    seedConfirmed(db, t.id, 'acme', '2026-04-14T09:00:00Z', 60); // 1h confirmed
+    seedUnconfirmed(db, t.id, 'acme', '2026-04-15T09:00:00Z', 90); // 1.5h unconfirmed
+
+    const plain = getTimesheetSummary(db, '2026-04-13', '2026-04-19');
+    expect(plain.unconfirmed).toBeUndefined();
+    expect(plain.grand_total_hours).toBe(1);
+
+    const with_u = getTimesheetSummary(db, '2026-04-13', '2026-04-19', {
+      include_unconfirmed: true,
+    });
+    expect(with_u.grand_total_hours).toBe(1); // confirmed only
+    expect(with_u.unconfirmed).toBeDefined();
+    expect(with_u.unconfirmed!.grand_total_hours).toBe(1.5);
+    expect(with_u.unconfirmed!.rows).toHaveLength(1);
+    expect(with_u.unconfirmed!.rows[0].status).toBe('UNCONFIRMED');
   });
 });

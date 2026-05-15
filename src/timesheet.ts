@@ -6,6 +6,7 @@ interface QueryRow {
   minutes: number;
   title: string;
   notes: string | null;
+  status: string;
 }
 
 export interface TimesheetRow {
@@ -14,6 +15,10 @@ export interface TimesheetRow {
   hours: number;
   task: string;
   notes: string | null;
+}
+
+export interface UnconfirmedRow extends TimesheetRow {
+  status: 'UNCONFIRMED';
 }
 
 export interface ProjectTotal {
@@ -25,9 +30,34 @@ export interface TimesheetSummary {
   rows: TimesheetRow[];
   by_project: ProjectTotal[];
   grand_total_hours: number;
+  /**
+   * Present only when `include_unconfirmed: true` is passed. UNCONFIRMED
+   * time_entry rows in the same range — surfaced so the planner can see
+   * drift between what's scheduled and what's been confirmed.
+   */
+  unconfirmed?: {
+    rows: UnconfirmedRow[];
+    grand_total_hours: number;
+  };
 }
 
-export interface ExportOptions {
+export interface SummaryOptions {
+  /**
+   * Filter rows by their project's category. Default `['work']`. Pass
+   * `['personal']` for personal hours only, `['work', 'personal']` for
+   * everything categorized. Projects with no category, and time_entry
+   * rows with no project, are always excluded from a category-filtered
+   * export — they don't belong to either bucket.
+   */
+  categories?: string[];
+  /**
+   * Include UNCONFIRMED entries as a separate section on the summary.
+   * Default false (CONFIRMED only).
+   */
+  include_unconfirmed?: boolean;
+}
+
+export interface ExportOptions extends SummaryOptions {
   format?: 'csv' | 'markdown';
   includeTotals?: boolean;
 }
@@ -51,38 +81,71 @@ function formatHours(minutes: number): number {
   return Number((minutes / 60).toFixed(4));
 }
 
-function query(db: DB, fromDate: string, toDate: string): QueryRow[] {
+function query(
+  db: DB,
+  fromDate: string,
+  toDate: string,
+  categories: string[],
+  status: 'CONFIRMED' | 'UNCONFIRMED',
+): QueryRow[] {
+  if (categories.length === 0) return [];
+  const placeholders = categories.map(() => '?').join(',');
+  // task_id is optional on time_entry, so LEFT JOIN tasks. project_id
+  // is similarly nullable; INNER JOIN projects ensures only categorized
+  // rows surface in a category-filtered export.
+  const sql = `SELECT
+        DATE(te.start_at) AS date,
+        p.prefix          AS prefix,
+        COALESCE(t.title, te.notes, '') AS title,
+        COALESCE(t.notes, te.notes)     AS notes,
+        SUM(
+          COALESCE(
+            te.actual_minutes,
+            CAST(ROUND((julianday(te.end_at) - julianday(te.start_at)) * 24 * 60) AS INTEGER)
+          )
+        ) AS minutes,
+        te.status         AS status
+       FROM time_entry te
+       LEFT JOIN tasks    t ON t.id = te.task_id
+       INNER JOIN projects p ON p.id = te.project_id
+      WHERE te.status = ?
+        AND DATE(te.start_at) >= ?
+        AND DATE(te.start_at) <= ?
+        AND p.category_id IN (${placeholders})
+      GROUP BY date, COALESCE(t.id, te.id)
+      ORDER BY date, COALESCE(t.id, te.id)`;
   return db
-    .prepare(
-      `SELECT
-          DATE(time_log.started_at) AS date,
-          projects.prefix          AS prefix,
-          tasks.title              AS title,
-          tasks.notes              AS notes,
-          SUM(time_log.duration_minutes) AS minutes
-         FROM time_log
-         JOIN tasks    ON tasks.id = time_log.task_id
-         JOIN projects ON projects.id = tasks.project_id
-        WHERE DATE(time_log.started_at) >= ?
-          AND DATE(time_log.started_at) <= ?
-          AND time_log.duration_minutes IS NOT NULL
-        GROUP BY date, tasks.id
-        ORDER BY date, tasks.id`,
-    )
-    .all(fromDate, toDate) as QueryRow[];
+    .prepare(sql)
+    .all(status, fromDate, toDate, ...categories) as QueryRow[];
+}
+
+function rowsToTimesheetRows(rows: QueryRow[]): TimesheetRow[] {
+  return rows.map((r) => ({
+    date: r.date,
+    project: r.prefix,
+    hours: formatHours(r.minutes),
+    task: r.title,
+    notes: r.notes,
+  }));
 }
 
 /**
  * Structured timesheet data: flat rows plus per-project totals and a
  * grand total. MCP callers and the daily/weekly planner skills should
  * prefer this over the stringified CSV/Markdown.
+ *
+ * Reads from `time_entry` filtered to `status = 'CONFIRMED'`. Defaults
+ * to the `work` category — personal entries are excluded unless the
+ * caller asks for them via `categories`.
  */
 export function getTimesheetSummary(
   db: DB,
   fromDate: string,
   toDate: string,
+  options: SummaryOptions = {},
 ): TimesheetSummary {
-  const rows = query(db, fromDate, toDate);
+  const categories = options.categories ?? ['work'];
+  const rows = query(db, fromDate, toDate, categories, 'CONFIRMED');
 
   const byProject = new Map<string, number>();
   let grandMinutes = 0;
@@ -98,17 +161,32 @@ export function getTimesheetSummary(
       total_hours: formatHours(minutes),
     }));
 
-  return {
-    rows: rows.map((r) => ({
-      date: r.date,
-      project: r.prefix,
-      hours: formatHours(r.minutes),
-      task: r.title,
-      notes: r.notes,
-    })),
+  const summary: TimesheetSummary = {
+    rows: rowsToTimesheetRows(rows),
     by_project,
     grand_total_hours: formatHours(grandMinutes),
   };
+
+  if (options.include_unconfirmed) {
+    const unconfirmedRows = query(
+      db,
+      fromDate,
+      toDate,
+      categories,
+      'UNCONFIRMED',
+    );
+    let unconfirmedMinutes = 0;
+    for (const r of unconfirmedRows) unconfirmedMinutes += r.minutes;
+    summary.unconfirmed = {
+      rows: rowsToTimesheetRows(unconfirmedRows).map((r) => ({
+        ...r,
+        status: 'UNCONFIRMED' as const,
+      })),
+      grand_total_hours: formatHours(unconfirmedMinutes),
+    };
+  }
+
+  return summary;
 }
 
 function renderCsv(summary: TimesheetSummary, includeTotals: boolean): string {
@@ -162,6 +240,8 @@ function renderMarkdown(summary: TimesheetSummary): string {
  * contract — existing consumers keep working). Pass `{ format: 'markdown' }`
  * to get a GitHub-flavored table, or `{ includeTotals: true }` to append
  * per-project subtotals and a grand total to the CSV.
+ *
+ * Reads CONFIRMED `time_entry` rows. Defaults to `categories: ['work']`.
  */
 export function exportTimesheet(
   db: DB,
@@ -169,7 +249,9 @@ export function exportTimesheet(
   toDate: string,
   options: ExportOptions = {},
 ): string {
-  const summary = getTimesheetSummary(db, fromDate, toDate);
+  const summary = getTimesheetSummary(db, fromDate, toDate, {
+    categories: options.categories,
+  });
   if (options.format === 'markdown') {
     return renderMarkdown(summary);
   }

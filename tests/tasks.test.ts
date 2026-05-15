@@ -32,7 +32,6 @@ describe('tasks', () => {
     expect(t.priority).toBe('LOW');
     expect(t.status).toBe('NEW');
     expect(t.duration_minutes).toBe(30);
-    expect(t.time_spent_minutes).toBe(0);
     expect(t.project_id).toBe('acme');
     expect(t.title).toBe('Write report');
   });

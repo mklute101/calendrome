@@ -33,8 +33,6 @@ describe('MCP tools layer', () => {
       'update_task',
       'list_tasks',
       'search_tasks',
-      'start_task',
-      'stop_task',
       'complete_task',
       'inbox_add',
       'inbox_list',
@@ -50,6 +48,10 @@ describe('MCP tools layer', () => {
       'get_timesheet_summary',
       'place_task',
       'unplace_task',
+      'confirm_placement',
+      'skip_placement',
+      'list_pending_review',
+      'move_placement',
       'log_time',
       'sync_calendar_events',
       'list_categories',
@@ -100,7 +102,7 @@ describe('MCP tools layer', () => {
     expect(result.task.project_id).toBe('acme');
   });
 
-  it('start_task / stop_task / complete_task handlers work end-to-end', async () => {
+  it('complete_task handler marks the task COMPLETE', async () => {
     const db = freshDb();
     createProject(db, { id: 'acme', name: 'Acme Corp', prefix: 'ACME' });
     const tools = buildTools(db);
@@ -111,8 +113,6 @@ describe('MCP tools layer', () => {
     });
     const id = created.task.id;
 
-    await getTool(tools, 'start_task').handler({ id });
-    await getTool(tools, 'stop_task').handler({ id });
     const done = await getTool(tools, 'complete_task').handler({ id });
     expect(done.task.status).toBe('COMPLETE');
   });
@@ -148,9 +148,25 @@ describe('MCP tools layer', () => {
     expect(event.start).toBe('2026-04-14T10:00:00Z');
     expect(event.end).toBe('2026-04-14T11:00:00.000Z');
 
-    // Task got linked to the event
-    expect(placed.task.calendar_event_id).toBe(event.id);
+    // Task got linked to the event via the paired placement time_entry
+    // (external_id = event.id). `task.calendar_event_id` is no longer
+    // stamped — the time_entry is the canonical link.
     expect(placed.task.status).toBe('SCHEDULED');
+
+    // A paired UNCONFIRMED time_entry was inserted (source='placement',
+    // external_id=event.id). This is the row the confirmation flow
+    // operates on.
+    const rows = db
+      .prepare(`SELECT * FROM time_entry WHERE external_id = ?`)
+      .all(event.id) as any[];
+    expect(rows).toHaveLength(1);
+    expect(rows[0].status).toBe('UNCONFIRMED');
+    expect(rows[0].source).toBe('placement');
+    expect(rows[0].task_id).toBe(t.task.id);
+    expect(rows[0].project_id).toBe('acme');
+    expect(rows[0].start_at).toBe('2026-04-14T10:00:00Z');
+    expect(rows[0].end_at).toBe('2026-04-14T11:00:00.000Z');
+    expect(placed.time_entry_id).toBe(rows[0].id);
   });
 
   it('unplace_task deletes the calendar event and resets task status', async () => {
@@ -181,8 +197,49 @@ describe('MCP tools layer', () => {
     });
 
     expect(calendar.events).toHaveLength(0);
-    expect(result.task.calendar_event_id).toBeNull();
     expect(result.task.status).toBe('NEW');
+
+    // Paired placement time_entry was also deleted
+    const rows = db
+      .prepare(`SELECT id FROM time_entry WHERE task_id = ?`)
+      .all(t.task.id) as any[];
+    expect(rows).toHaveLength(0);
+  });
+
+  it('unplace_task throws when the paired time_entry is already CONFIRMED', async () => {
+    const db = freshDb();
+    createProject(db, {
+      id: 'acme',
+      name: 'Acme Corp',
+      prefix: 'ACME',
+      calendar_id: 'cal-acme',
+    });
+
+    const calendar = new FakeCalendarClient();
+    const tools = buildTools(db, { calendar });
+
+    const t = await getTool(tools, 'create_task').handler({
+      project_id: 'acme',
+      title: 'Report',
+      duration_minutes: 60,
+    });
+    const placed = await getTool(tools, 'place_task').handler({
+      task_id: t.task.id,
+      start: '2026-04-14T10:00:00Z',
+    });
+
+    // Flip the paired time_entry to CONFIRMED to simulate a confirmed
+    // placement.
+    await getTool(tools, 'confirm_placement').handler({
+      time_entry_id: placed.time_entry_id,
+    });
+
+    await expect(
+      getTool(tools, 'unplace_task').handler({ task_id: t.task.id }),
+    ).rejects.toThrow(/CONFIRMED/);
+
+    // Calendar event was NOT deleted because the throw happened first
+    expect(calendar.events).toHaveLength(1);
   });
 
   it('place_task succeeds against LocalCalendarClient (the production default)', async () => {
@@ -213,14 +270,27 @@ describe('MCP tools layer', () => {
 
     expect(placed.task.status).toBe('SCHEDULED');
     expect(placed.task.due).toBe('2026-04-14T10:00:00Z');
-    expect(placed.task.calendar_event_id).toMatch(/^local-[0-9a-f-]{36}$/);
+    // The paired placement time_entry holds the calendar event id
+    // (external_id), which LocalCalendarClient mints as `local-<uuid>`.
+    expect(placed.event.id).toMatch(/^local-[0-9a-f-]{36}$/);
+    const paired = db
+      .prepare(
+        `SELECT external_id FROM time_entry
+         WHERE task_id = ? AND source = 'placement'`,
+      )
+      .get(t.task.id) as { external_id: string };
+    expect(paired.external_id).toBe(placed.event.id);
 
     // unplace_task must not throw against LocalCalendarClient's no-op delete
     const cleared = await getTool(tools, 'unplace_task').handler({
       task_id: t.task.id,
     });
-    expect(cleared.task.calendar_event_id).toBeNull();
     expect(cleared.task.status).toBe('NEW');
+    // And the paired time_entry is gone
+    const remaining = db
+      .prepare(`SELECT id FROM time_entry WHERE task_id = ?`)
+      .all(t.task.id) as any[];
+    expect(remaining).toHaveLength(0);
   });
 
   it('unplace_task is a no-op (no calendar call) when task was never placed', async () => {
@@ -239,7 +309,7 @@ describe('MCP tools layer', () => {
     expect(calendar.events).toHaveLength(0);
   });
 
-  it('log_time handler inserts a closed entry and returns the updated task', async () => {
+  it('log_time handler inserts a CONFIRMED time_entry and returns the task', async () => {
     const db = freshDb();
     createProject(db, { id: 'acme', name: 'Acme Corp', prefix: 'ACME' });
     const tools = buildTools(db);
@@ -258,9 +328,18 @@ describe('MCP tools layer', () => {
 
     expect(result.entry.duration_minutes).toBe(180);
     expect(result.entry.notes).toBe('with the team');
-    expect(result.task.time_spent_minutes).toBe(180);
+    expect(result.entry.task_id).toBe(t.task.id);
+    expect(result.entry.project_id).toBe('acme');
     // log_time leaves status alone — user calls complete_task separately
     expect(result.task.status).toBe('NEW');
+
+    // Persisted as a CONFIRMED manual time_entry row
+    const row = db
+      .prepare('SELECT status, source, actual_minutes FROM time_entry WHERE id = ?')
+      .get(result.entry.id) as { status: string; source: string; actual_minutes: number };
+    expect(row.status).toBe('CONFIRMED');
+    expect(row.source).toBe('manual');
+    expect(row.actual_minutes).toBe(180);
   });
 
   it('log_time handler propagates validation errors (inverted timestamps)', async () => {

@@ -21,6 +21,68 @@ If settings are missing, point the user to `/calendrome:onboard` and stop.
 
 ## Workflow
 
+### Step 0 — Gather step: reconcile last week's drift
+
+Before any new-week planning happens, surface anything from the prior
+week that's still sitting unconfirmed. The user gets one sentence to
+reconcile it; then we move on.
+
+Call:
+
+```
+mcp__calendrome__list_pending_review {
+  from: "<last Monday ISO date>",
+  to:   "<this Monday ISO date>",
+  category: "work"
+}
+```
+
+(The range is the previous Mon–Sun, exclusive of this Monday.)
+
+**If the result is empty:** brief acknowledgement and continue —
+
+> "Last week is fully reconciled — moving on."
+
+**If non-empty:** render the entries grouped by day, then ask for one
+sentence:
+
+```
+### Unconfirmed from last week
+**Tue 2026-05-06**
+- 09:00–11:00 (120m) — ACME-42 Fix login bug [pending]
+- 14:00–15:00 (60m)  — GLBX-7 Oak help [pending]
+
+**Fri 2026-05-09**
+- 10:00–12:00 (120m) — ACME-51 Refactor auth [pending]
+- 13:00–14:00 (60m)  — GLBX-9 Standup notes [pending]
+```
+
+> "Any of last week need reconciling before we plan this week?"
+
+Accept one freeform sentence and fan it out to the appropriate calls.
+Typical phrasings:
+
+- *"All good as-placed."* → `confirm_placement` for every entry, no
+  amendments.
+- *"Friday was a wash, skip everything."* → `skip_placement` for each
+  Friday entry.
+- *"Tuesday was actually all Oak help, log 8h on that."* → confirm or
+  skip the Tuesday entries as appropriate, then
+  `log_time { project_id: "glbx", started_at, stopped_at, notes }` for
+  the 8h Oak block.
+- *"ACME-42 was actually 90 minutes."* →
+  `confirm_placement(<id>, { actual_minutes: 90 })`.
+
+Tools you'll reach for here:
+
+- `mcp__calendrome__confirm_placement(time_entry_id, { actual_minutes?, project_id?, notes? })`
+- `mcp__calendrome__skip_placement(time_entry_id)`
+- `mcp__calendrome__log_time({ task_id?, project_id?, started_at, stopped_at, notes? })`
+- `mcp__calendrome__move_placement(time_entry_id, new_start_at, { new_end_at? })`
+
+After the fan-out, confirm what was done in one line and proceed to
+Step 1.
+
 ### Step 1 — Fetch data (parallel)
 
 **Google Calendar** — this week Mon–Fri:

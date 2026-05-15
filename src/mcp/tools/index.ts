@@ -30,7 +30,14 @@ import {
   getTask,
   type CreateTaskInput,
 } from '../../tasks.js';
-import { startTask, stopTask, completeTask, logTime } from '../../time-log.js';
+import { completeTask, logTime } from '../../time-log.js';
+import {
+  confirmTimeEntry,
+  skipTimeEntry,
+  listPendingReview,
+  moveTimeEntry,
+  insertTimeEntry,
+} from '../../time-entry.js';
 import {
   inboxAdd,
   inboxList,
@@ -198,8 +205,9 @@ export function buildTools(
      * Tasks are the primary unit of work. A new task starts as an
      * unscheduled item; use `place_task` to put it on the calendar
      * with an actual time. `duration_minutes` is the planned size,
-     * not the time spent — actual time is tracked via `start_task`
-     * / `stop_task`, which write rows to `time_log`.
+     * not the time spent — actual time is tracked via `log_time`
+     * (retroactive) or `place_task` (forward-scheduled), both of which
+     * write rows to `time_entry`.
      *
      * @example
      * create_task({
@@ -209,7 +217,7 @@ export function buildTools(
      *   priority: 'high'
      * })
      *
-     * @see place_task, update_task, start_task
+     * @see place_task, update_task, log_time
      */
     {
       name: 'create_task',
@@ -301,48 +309,6 @@ export function buildTools(
         return { tasks: searchTasks(db, requireString(args, 'query')) };
       },
     },
-    /**
-     * Start a live timer on a task.
-     *
-     * Inserts a `time_log` row with `started_at = now` and no
-     * `stopped_at`. Pair with `stop_task` to close it out. While
-     * a timer is open the task renders as actively in progress on
-     * the timeline view; closed `time_log` rows render as solid
-     * "logged" blocks.
-     *
-     * @example
-     * start_task({ id: 17 })
-     *
-     * @see stop_task, complete_task
-     */
-    {
-      name: 'start_task',
-      description: 'Start the timer on a task',
-      inputSchema: {
-        type: 'object',
-        required: ['id'],
-        properties: { id: { type: 'integer' } },
-      },
-      async handler(args) {
-        const id = requireNumber(args, 'id');
-        const entry = startTask(db, id);
-        return { entry, task: getTask(db, id) };
-      },
-    },
-    {
-      name: 'stop_task',
-      description: 'Stop the timer on a task',
-      inputSchema: {
-        type: 'object',
-        required: ['id'],
-        properties: { id: { type: 'integer' } },
-      },
-      async handler(args) {
-        const id = requireNumber(args, 'id');
-        const entry = stopTask(db, id);
-        return { entry, task: getTask(db, id) };
-      },
-    },
     {
       name: 'complete_task',
       description: 'Complete a task',
@@ -356,46 +322,55 @@ export function buildTools(
       },
     },
     /**
-     * Retroactively log a closed time_log entry for work that already happened.
+     * Retroactively log a CONFIRMED time_entry for work that already happened.
      *
-     * The escape hatch for hours that were never live-timed: meetings,
-     * ad-hoc work, end-of-week timesheet reconciliation, anything off the
-     * calendar. Pair with `start_task`/`stop_task` (the in-flow path) —
-     * `log_time` covers everything the live timer didn't.
+     * The primary entry point for time tracking alongside `place_task`
+     * (forward-scheduled placement). `log_time` covers meetings, ad-hoc
+     * work, end-of-week timesheet reconciliation — anything off the
+     * calendar.
      *
-     * Validates ISO 8601 timestamps, `stopped_at > started_at`, neither
-     * more than 24h in the future, and no overlap with an open timer on
-     * the same task. Bumps `tasks.time_spent_minutes` but leaves
-     * `tasks.status` alone — call `complete_task` separately if appropriate.
+     * Validates ISO 8601 timestamps, `stopped_at > started_at`, and
+     * neither more than 24h in the future. Leaves `tasks.status` alone —
+     * call `complete_task` separately if appropriate.
      *
      * @example
      * log_time({ task_id: 17, started_at: '2026-05-04T09:00:00-05:00',
      *            stopped_at: '2026-05-04T12:00:00-05:00', notes: 'sprint planning' })
      *
-     * @see start_task, stop_task, get_timesheet_summary
+     * @see place_task, complete_task, get_timesheet_summary
      */
     {
       name: 'log_time',
-      description: 'Retroactively log a closed time_log entry for completed work',
+      description: 'Retroactively log a CONFIRMED time_entry for completed work',
       inputSchema: {
         type: 'object',
-        required: ['task_id', 'started_at', 'stopped_at'],
+        required: ['started_at', 'stopped_at'],
         properties: {
           task_id: { type: 'integer' },
+          project_id: { type: 'string' },
           started_at: { type: 'string' },
           stopped_at: { type: 'string' },
           notes: { type: ['string', 'null'] },
         },
       },
       async handler(args) {
-        const taskId = requireNumber(args, 'task_id');
+        const taskId = args.task_id === undefined || args.task_id === null
+          ? undefined
+          : Number(args.task_id);
+        const projectId = args.project_id === undefined || args.project_id === null
+          ? undefined
+          : String(args.project_id);
         const entry = logTime(db, {
           task_id: taskId,
+          project_id: projectId,
           started_at: requireString(args, 'started_at'),
           stopped_at: requireString(args, 'stopped_at'),
           notes: (args.notes as string | null | undefined) ?? null,
         });
-        return { entry, task: getTask(db, taskId) };
+        return {
+          entry,
+          task: entry.task_id !== null ? getTask(db, entry.task_id) : null,
+        };
       },
     },
 
@@ -597,8 +572,8 @@ export function buildTools(
     // -------- layout & placement --------
     /**
      * Return everything that lives on the calendar in a date range —
-     * scheduled tasks (those with a `calendar_event_id`), habit
-     * instances, and synced calendar events — grouped for display.
+     * scheduled tasks (those with a paired placement `time_entry`),
+     * habit instances, and synced calendar events — grouped for display.
      *
      * Used by the planner skill to reason about what's already on
      * the calendar before suggesting new placements. `from`/`to` are
@@ -625,11 +600,21 @@ export function buildTools(
       async handler(args) {
         const from = requireString(args, 'from');
         const to = requireString(args, 'to');
+        // A task is "on the calendar" iff it has a paired placement
+        // time_entry (UNCONFIRMED = still scheduled, CONFIRMED = done).
+        // Pre-filter task ids by the time_entry table, then list+filter.
+        const placedRows = db
+          .prepare(
+            `SELECT DISTINCT task_id FROM time_entry
+              WHERE source = 'placement' AND task_id IS NOT NULL`,
+          )
+          .all() as { task_id: number }[];
+        const placedTaskIds = new Set(placedRows.map((r) => r.task_id));
         const tasks = listTasks(db, {
           project_id: args.project_id,
         }).filter(
           (t) =>
-            t.calendar_event_id !== null &&
+            placedTaskIds.has(t.id) &&
             t.due !== null &&
             t.due >= `${from}T00:00:00Z` &&
             t.due <= `${to}T23:59:59Z`,
@@ -655,15 +640,22 @@ export function buildTools(
      * Place a task on the calendar at a specific start time.
      *
      * Creates a calendar event via the configured `CalendarClient`
-     * (real Google Calendar in production, the stub in tests),
-     * stamps the event id back onto the task, sets the task's `due`
-     * to the start time, and flips status to `SCHEDULED`. The
-     * event's end is computed from the task's `duration_minutes`.
+     * (real Google Calendar in production, the stub in tests) and
+     * inserts a paired UNCONFIRMED `time_entry` row that becomes
+     * the canonical link between task and event. The event's end
+     * is computed from the task's `duration_minutes`, the task's
+     * `due` is set to the start time, and status flips to
+     * `SCHEDULED`.
+     *
+     * The UNCONFIRMED time_entry is what the day-end review flow
+     * operates on — call `confirm_placement` once the work happened
+     * (optionally adjusting `actual_minutes`), or `skip_placement`
+     * if it didn't.
      *
      * @example
      * place_task({ task_id: 17, start: '2026-05-04T07:00:00-05:00' })
      *
-     * @see create_task, unplace_task, get_week_layout
+     * @see create_task, unplace_task, confirm_placement, skip_placement, move_placement, get_week_layout
      */
     {
       name: 'place_task',
@@ -695,14 +687,48 @@ export function buildTools(
           description: task.notes ?? undefined,
         });
 
-        const updated = updateTask(db, taskId, {
-          calendar_event_id: event.id,
-          due: start,
+        // Insert paired UNCONFIRMED time_entry — this is the row the
+        // confirmation flow operates on. The time_entry's `external_id`
+        // (= event.id) is now the canonical link between task and
+        // calendar event; we no longer stamp `task.calendar_event_id`.
+        const timeEntryId = insertTimeEntry(db, {
+          task_id: taskId,
+          project_id: task.project_id,
+          start_at: start,
+          end_at: end,
+          status: 'UNCONFIRMED',
+          source: 'placement',
+          external_id: event.id,
+          notes: task.notes ?? null,
         });
+
+        const updated = updateTask(db, taskId, { due: start });
         setTaskStatus(db, taskId, 'SCHEDULED');
-        return { task: getTask(db, taskId), event, _previous: updated };
+        return {
+          task: getTask(db, taskId),
+          event,
+          time_entry_id: timeEntryId,
+          _previous: updated,
+        };
       },
     },
+    /**
+     * Remove a task's calendar event and its paired UNCONFIRMED
+     * time_entry, then reset the task to `NEW`.
+     *
+     * The paired placement `time_entry` is the source of truth for
+     * "is this task placed?" — `unplace_task` deletes both the
+     * Google Calendar event and that row. Refuses to run if the
+     * paired entry is already CONFIRMED (you logged real work
+     * against it — use `update_task` instead). Only flips status
+     * when the task was actually `SCHEDULED`; IN_PROGRESS and
+     * COMPLETE are left alone.
+     *
+     * @example
+     * unplace_task({ task_id: 17 })
+     *
+     * @see place_task, confirm_placement, skip_placement, move_placement
+     */
     {
       name: 'unplace_task',
       description: "Remove a task's calendar event and reset its status",
@@ -715,14 +741,37 @@ export function buildTools(
         const taskId = requireNumber(args, 'task_id');
         const task = getTask(db, taskId);
         if (!task) throw new Error(`task ${taskId} not found`);
-        if (task.calendar_event_id) {
+
+        // Find the paired placement time_entry, if any. The time_entry
+        // is now the sole source of truth for "is this task placed?".
+        const pairedEntry = db
+          .prepare(
+            `SELECT id, status, external_id FROM time_entry
+             WHERE task_id = ? AND source = 'placement'
+             ORDER BY id DESC LIMIT 1`,
+          )
+          .get(taskId) as
+          | { id: number; status: string; external_id: string | null }
+          | undefined;
+
+        if (pairedEntry && pairedEntry.status === 'CONFIRMED') {
+          throw new Error(
+            `cannot unplace task ${taskId}: its time_entry is already CONFIRMED`,
+          );
+        }
+
+        if (pairedEntry && pairedEntry.external_id) {
           const project = getProject(db, task.project_id);
           await calendar.deleteEvent({
             calendar_id: project?.calendar_id ?? null,
-            event_id: task.calendar_event_id,
+            event_id: pairedEntry.external_id,
           });
         }
-        updateTask(db, taskId, { calendar_event_id: null });
+
+        if (pairedEntry) {
+          db.prepare(`DELETE FROM time_entry WHERE id = ?`).run(pairedEntry.id);
+        }
+
         // Only flip status when the task was actually SCHEDULED. For NEW
         // (never placed), IN_PROGRESS, or COMPLETE we leave the status
         // alone — unplacing the calendar event shouldn't yank a task out
@@ -733,14 +782,196 @@ export function buildTools(
         return { task: getTask(db, taskId) };
       },
     },
+    /**
+     * Confirm that an UNCONFIRMED placement actually happened.
+     *
+     * Flips a placement `time_entry` from `UNCONFIRMED` to
+     * `CONFIRMED` — the gate that lets the row count toward
+     * timesheets and Harvest pushes. Idempotent on already-
+     * CONFIRMED entries (no-op). Optional overrides:
+     *
+     * - `actual_minutes`: adjust duration when the work took
+     *   longer or shorter than the placed slot. The row's `end_at`
+     *   is rewritten to `start_at + actual_minutes`.
+     * - `project_id`: reassign to a different project (e.g. the
+     *   meeting was for ACME, not GLBX).
+     * - `notes`: append context for the timesheet line.
+     *
+     * @example
+     * confirm_placement({ time_entry_id: 91, actual_minutes: 45 })
+     *
+     * @see place_task, skip_placement, list_pending_review, move_placement
+     */
+    {
+      name: 'confirm_placement',
+      description:
+        'Flip an UNCONFIRMED time_entry to CONFIRMED. Optional ' +
+        'actual_minutes override (when work took longer/shorter than ' +
+        'placed), optional project_id reassignment, optional notes.',
+      inputSchema: {
+        type: 'object',
+        required: ['time_entry_id'],
+        properties: {
+          time_entry_id: { type: 'integer' },
+          actual_minutes: { type: 'integer' },
+          project_id: { type: 'string' },
+          notes: { type: 'string' },
+        },
+      },
+      async handler(args) {
+        const timeEntryId = requireNumber(args, 'time_entry_id');
+        confirmTimeEntry(db, timeEntryId, {
+          actual_minutes: args?.actual_minutes,
+          project_id: args?.project_id,
+          notes: args?.notes,
+        });
+        return { confirmed: true, time_entry_id: timeEntryId };
+      },
+    },
+    /**
+     * Delete an UNCONFIRMED placement that did not actually happen.
+     *
+     * The opposite of `confirm_placement`. Removes the
+     * `time_entry` row entirely so it never lands in a timesheet.
+     * Refuses to delete CONFIRMED entries (use the GUI or a manual
+     * SQL fix — losing confirmed hours should be deliberate) and
+     * refuses to delete entries from the `gcal-sync` source (those
+     * are mirrored from Google Calendar — delete the event there).
+     *
+     * @example
+     * skip_placement({ time_entry_id: 91 })
+     *
+     * @see confirm_placement, list_pending_review, unplace_task
+     */
+    {
+      name: 'skip_placement',
+      description:
+        'Delete an UNCONFIRMED time_entry (it did not happen). Rejects ' +
+        'CONFIRMED entries and gcal-sync sourced entries.',
+      inputSchema: {
+        type: 'object',
+        required: ['time_entry_id'],
+        properties: {
+          time_entry_id: { type: 'integer' },
+        },
+      },
+      async handler(args) {
+        const timeEntryId = requireNumber(args, 'time_entry_id');
+        skipTimeEntry(db, timeEntryId);
+        return { skipped: true, time_entry_id: timeEntryId };
+      },
+    },
+    /**
+     * List past UNCONFIRMED time_entries that need review.
+     *
+     * The feed the day/week wrap-up flow walks through to confirm
+     * or skip each placement. Returns only entries whose end is in
+     * the past — future placements aren't reviewable yet. Filters
+     * to work-category projects by default so personal placements
+     * don't clutter timesheet reconciliation; pass `category:
+     * 'personal'` or omit to broaden.
+     *
+     * @example
+     * list_pending_review({ from: '2026-05-04', to: '2026-05-10' })
+     *
+     * @see confirm_placement, skip_placement, move_placement, get_timesheet_summary
+     */
+    {
+      name: 'list_pending_review',
+      description:
+        'List past UNCONFIRMED time_entries that need confirmation or ' +
+        'skip. Defaults to work-category entries only.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          from: { type: 'string' },
+          to: { type: 'string' },
+          category: { type: 'string' },
+        },
+      },
+      async handler(args) {
+        return {
+          rows: listPendingReview(db, {
+            from: args?.from,
+            to: args?.to,
+            category: args?.category,
+          }),
+        };
+      },
+    },
+    /**
+     * Reschedule an UNCONFIRMED placement to a new time.
+     *
+     * For when the calendar shifts and a planned slot needs to
+     * move before it's confirmed. Preserves the entry's duration
+     * by default — pass `new_end_at` to also change the length.
+     * Updates the paired Google Calendar event when one exists.
+     *
+     * Refuses to move:
+     * - CONFIRMED entries (real work has been logged — editing
+     *   the timestamp would rewrite history)
+     * - `gcal-sync` sourced entries (mirrored from Google
+     *   Calendar — move the event there)
+     * - manual `log_time` entries (no calendar event to update)
+     *
+     * @example
+     * move_placement({ time_entry_id: 91, new_start_at: '2026-05-05T14:00:00-05:00' })
+     *
+     * @see place_task, confirm_placement, skip_placement, list_pending_review
+     */
+    {
+      name: 'move_placement',
+      description:
+        'Reschedule an UNCONFIRMED placement or habit entry. Preserves ' +
+        'duration by default.',
+      inputSchema: {
+        type: 'object',
+        required: ['time_entry_id', 'new_start_at'],
+        properties: {
+          time_entry_id: { type: 'integer' },
+          new_start_at: { type: 'string' },
+          new_end_at: { type: 'string' },
+        },
+      },
+      async handler(args) {
+        const id = requireNumber(args, 'time_entry_id');
+        moveTimeEntry(db, id, requireString(args, 'new_start_at'), {
+          new_end_at: args?.new_end_at,
+        });
+        return { moved: true, time_entry_id: id };
+      },
+    },
 
     // -------- timesheet --------
+    /**
+     * Render a timesheet for a date range from CONFIRMED time_entry rows.
+     *
+     * Reads CONFIRMED placements, manual `log_time` entries, and
+     * confirmed gcal-sync rows — UNCONFIRMED entries are never
+     * included (use `list_pending_review` to clear them first).
+     * `format` is `csv` (default) or `markdown`. `include_totals`
+     * appends per-project subtotals and a grand total; markdown
+     * always includes totals.
+     *
+     * `categories` defaults to `["work"]` so personal hours stay
+     * out of client timesheets; pass `["personal"]` or both to
+     * widen.
+     *
+     * @example
+     * export_timesheet({ from: '2026-05-04', to: '2026-05-10', format: 'markdown' })
+     *
+     * @see get_timesheet_summary, harvest_push_timesheet, log_time
+     */
     {
       name: 'export_timesheet',
       description:
-        'Render a timesheet for a date range. `format` is "csv" (default) ' +
-        'or "markdown". `include_totals` appends per-project subtotals and ' +
-        'a grand total row (markdown always includes totals).',
+        'Render a timesheet for a date range from CONFIRMED time_entry ' +
+        'rows. `format` is "csv" (default) or "markdown". `include_totals` ' +
+        'appends per-project subtotals and a grand total row (markdown ' +
+        'always includes totals). `categories` filters by project category ' +
+        '— defaults to `["work"]` so personal hours stay out of client ' +
+        'timesheets; pass `["personal"]` or `["work", "personal"]` to ' +
+        'include them.',
       inputSchema: {
         type: 'object',
         required: ['from', 'to'],
@@ -749,11 +980,19 @@ export function buildTools(
           to: { type: 'string' },
           format: { type: 'string', enum: ['csv', 'markdown'] },
           include_totals: { type: 'boolean' },
+          categories: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Project categories to include. Default ["work"].',
+          },
         },
       },
       async handler(args) {
         const format =
           args?.format === 'markdown' ? 'markdown' : 'csv';
+        const categories = Array.isArray(args?.categories)
+          ? (args!.categories as string[])
+          : undefined;
         const rendered = exportTimesheet(
           db,
           requireString(args, 'from'),
@@ -761,6 +1000,7 @@ export function buildTools(
           {
             format,
             includeTotals: args?.include_totals === true,
+            categories,
           },
         );
         // Keep the legacy `csv` key on the response for backwards
@@ -768,46 +1008,123 @@ export function buildTools(
         return { format, [format === 'markdown' ? 'markdown' : 'csv']: rendered };
       },
     },
+    /**
+     * Structured timesheet data for planner-skill reasoning.
+     *
+     * Prefer this over `export_timesheet` when a skill needs to
+     * reason about the numbers (drift checks, budget rollups,
+     * pre-flight Harvest checks) instead of just rendering them.
+     * Returns rows plus per-project totals plus a grand total in
+     * decimal hours.
+     *
+     * `categories` defaults to `["work"]`. Pass
+     * `include_unconfirmed: true` to surface a separate
+     * `unconfirmed` section listing UNCONFIRMED entries in the
+     * same range — useful for catching drift before a Harvest
+     * push.
+     *
+     * @example
+     * get_timesheet_summary({ from: '2026-05-04', to: '2026-05-10', include_unconfirmed: true })
+     *
+     * @see export_timesheet, list_pending_review, harvest_push_timesheet
+     */
     {
       name: 'get_timesheet_summary',
       description:
-        'Structured timesheet data for a date range: rows plus ' +
-        'per-project totals plus grand total (in hours). Prefer this ' +
-        'over export_timesheet when a planner skill needs to reason ' +
-        'about the numbers instead of just display them.',
+        'Structured timesheet data for a date range from CONFIRMED ' +
+        'time_entry rows: rows plus per-project totals plus grand total ' +
+        '(in hours). Prefer this over export_timesheet when a planner ' +
+        'skill needs to reason about the numbers instead of just display ' +
+        'them. `categories` filters by project category — defaults to ' +
+        '`["work"]`. Pass `include_unconfirmed: true` to surface a ' +
+        'separate `unconfirmed` section listing UNCONFIRMED entries in ' +
+        'the same range — useful for catching drift before a Harvest push.',
       inputSchema: {
         type: 'object',
         required: ['from', 'to'],
         properties: {
           from: { type: 'string' },
           to: { type: 'string' },
+          categories: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Project categories to include. Default ["work"].',
+          },
+          include_unconfirmed: {
+            type: 'boolean',
+            description:
+              'Include UNCONFIRMED entries as a separate section. Default false.',
+          },
         },
       },
       async handler(args) {
+        const categories = Array.isArray(args?.categories)
+          ? (args!.categories as string[])
+          : undefined;
         return {
           summary: getTimesheetSummary(
             db,
             requireString(args, 'from'),
             requireString(args, 'to'),
+            {
+              categories,
+              include_unconfirmed: args?.include_unconfirmed === true,
+            },
           ),
         };
       },
     },
 
     // -------- harvest --------
+    /**
+     * Push CONFIRMED time_entry rows to Harvest for a date range.
+     *
+     * Requires `HARVEST_TOKEN` and `HARVEST_ACCOUNT_ID` env vars,
+     * and per-project `harvest_project_id` + `harvest_task_id`
+     * mappings. Skips entries already pushed (`harvest_entry_id`
+     * set) so the call is safe to retry.
+     *
+     * Pre-flight: refuses to push if any UNCONFIRMED entry exists
+     * in the range — the planner should run `list_pending_review`
+     * and confirm or skip each row first. Pass `force: true` to
+     * override (rare; use when an UNCONFIRMED row is intentionally
+     * being deferred).
+     *
+     * `categories` defaults to `["work"]` so personal hours never
+     * leak unless explicitly opted in.
+     *
+     * @example
+     * harvest_push_timesheet({ from: '2026-05-04', to: '2026-05-10' })
+     *
+     * @see get_timesheet_summary, list_pending_review, harvest_list_projects
+     */
     {
       name: 'harvest_push_timesheet',
       description:
-        'Push time_log entries to Harvest for a date range. Requires ' +
-        'HARVEST_TOKEN and HARVEST_ACCOUNT_ID env vars. Skips entries ' +
-        'already pushed (harvest_entry_id set). Projects must have ' +
-        'harvest_project_id and harvest_task_id mapped.',
+        'Push CONFIRMED time_entry rows to Harvest for a date range. ' +
+        'Requires HARVEST_TOKEN and HARVEST_ACCOUNT_ID env vars. Skips ' +
+        'entries already pushed (harvest_entry_id set). Projects must ' +
+        'have harvest_project_id and harvest_task_id mapped. ' +
+        '`categories` defaults to `["work"]` — personal hours never ' +
+        'leak unless explicitly opted in. Refuses to push if any ' +
+        'UNCONFIRMED entries exist in the range (the planner should ' +
+        'confirm or skip them first); pass `force: true` to override.',
       inputSchema: {
         type: 'object',
         required: ['from', 'to'],
         properties: {
           from: { type: 'string' },
           to: { type: 'string' },
+          categories: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Project categories to push. Default ["work"].',
+          },
+          force: {
+            type: 'boolean',
+            description:
+              'Skip the UNCONFIRMED-entry pre-flight check. Default false.',
+          },
         },
       },
       async handler(args) {
@@ -819,11 +1136,18 @@ export function buildTools(
           );
         }
         const client = new HarvestClient({ token, accountId });
+        const categories = Array.isArray(args?.categories)
+          ? (args!.categories as string[])
+          : undefined;
         return harvestPushTimesheet(
           db,
           client,
           requireString(args, 'from'),
           requireString(args, 'to'),
+          {
+            categories,
+            force: args?.force === true,
+          },
         );
       },
     },
@@ -849,6 +1173,25 @@ export function buildTools(
     },
 
     // -------- calendar sync --------
+    /**
+     * Import external calendar events into Calendrome.
+     *
+     * Upserts each event into the unified `time_entry` table with
+     * source `gcal-sync`. Re-sync is idempotent and **preserves
+     * confirmation state** — if you already confirmed an event
+     * for the timesheet, re-syncing won't kick it back to
+     * UNCONFIRMED. Project assignment is matched by uppercase
+     * prefix on the event summary (e.g. `[ACME] Sprint planning`).
+     *
+     * If `clear_range` is provided, existing gcal-sync events in
+     * that range are deleted first — used by the weekly planner
+     * to keep the mirror tight against Google Calendar.
+     *
+     * @example
+     * sync_calendar_events({ events: [...], clear_range: { from: '2026-05-04', to: '2026-05-10' } })
+     *
+     * @see list_pending_review, confirm_placement, get_week_layout
+     */
     {
       name: 'sync_calendar_events',
       description:

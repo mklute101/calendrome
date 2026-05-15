@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { freshDb } from '../helpers/db.js';
 import { createProject } from '../../src/projects.js';
 import { createTask } from '../../src/tasks.js';
-import { startTask, stopTask, completeTask } from '../../src/time-log.js';
+import { completeTask } from '../../src/time-log.js';
 import {
   createHabit,
   generateHabitInstances,
@@ -11,11 +11,13 @@ import {
 } from '../../src/habits.js';
 import { getProjectBudget } from '../../src/budgets.js';
 import { exportTimesheet } from '../../src/timesheet.js';
+import { insertTimeEntry } from '../../src/time-entry.js';
 
 /**
  * End-to-end integration: create a project, do work, export, check budgets.
- * Time logs are inserted directly with explicit durations to keep the test
- * deterministic without 5-minute sleeps.
+ * Time entries are inserted directly with explicit durations to keep the
+ * test deterministic without 5-minute sleeps. The export and budget
+ * queries read CONFIRMED `time_entry` rows via `v_task_time_spent`.
  */
 function insertTimeLog(
   db: any,
@@ -23,13 +25,21 @@ function insertTimeLog(
   startedAt: string,
   durationMinutes: number,
 ) {
-  db.prepare(
-    `INSERT INTO time_log (task_id, started_at, stopped_at, duration_minutes)
-     VALUES (?, ?, ?, ?)`,
-  ).run(taskId, startedAt, startedAt, durationMinutes);
-  db.prepare(
-    `UPDATE tasks SET time_spent_minutes = time_spent_minutes + ? WHERE id = ?`,
-  ).run(durationMinutes, taskId);
+  const start = new Date(startedAt);
+  const end = new Date(start.getTime() + durationMinutes * 60000);
+  const task = db
+    .prepare('SELECT project_id FROM tasks WHERE id = ?')
+    .get(taskId) as { project_id: string };
+  insertTimeEntry(db, {
+    task_id: taskId,
+    project_id: task.project_id,
+    start_at: start.toISOString(),
+    end_at: end.toISOString(),
+    actual_minutes: durationMinutes,
+    status: 'CONFIRMED',
+    confirmed_at: end.toISOString(),
+    source: 'manual',
+  });
 }
 
 describe('integration: full lifecycle', () => {
@@ -100,14 +110,10 @@ describe('integration: full lifecycle', () => {
     expect(budget.over_budget).toBe(true);
   });
 
-  it('using the real task lifecycle helpers end-to-end', async () => {
+  it('using the real task lifecycle helpers end-to-end', () => {
     const db = freshDb();
     createProject(db, { id: 'acme', name: 'Acme Corp', prefix: 'ACME' });
     const t = createTask(db, { project_id: 'acme', title: 'X' });
-
-    startTask(db, t.id);
-    await new Promise((r) => setTimeout(r, 1100));
-    stopTask(db, t.id);
 
     const done = completeTask(db, t.id);
     expect(done.status).toBe('COMPLETE');

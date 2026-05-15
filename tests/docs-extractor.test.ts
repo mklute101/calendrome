@@ -29,7 +29,7 @@ describe('extract-docs.mjs', () => {
       'create_task',
       'update_task',
       'place_task',
-      'start_task',
+      'log_time',
       'get_week_layout',
       'list_projects',
       'sync_calendar_events',
@@ -69,14 +69,17 @@ describe('extract-docs.mjs', () => {
       expect.arrayContaining([
         'projects',
         'tasks',
-        'time_log',
+        'time_entry',
         'habits',
         'habit_instances',
-        'calendar_events',
         'inbox',
         'time_policies',
       ]),
     );
+    // Legacy tables removed in Task 19; assert they no longer appear so
+    // the extractor stays in sync with the post-cleanup schema.
+    expect(names).not.toContain('time_log');
+    expect(names).not.toContain('calendar_events');
     const tasks = docs.tables.find((t: any) => t.name === 'tasks');
     expect(tasks.columns.find((c: any) => c.name === 'id')?.primaryKey).toBe(
       true,
