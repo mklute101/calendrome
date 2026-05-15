@@ -263,4 +263,72 @@ describe('habits', () => {
       .get(inst.id) as { time_entry_id: number | null };
     expect(sidecar.time_entry_id).toBeNull();
   });
+
+  it('converts start_time from habit timezone to UTC (CDT example, issue #27)', () => {
+    const db = setup();
+    // 2026-05-04 is a Monday; America/Chicago is on CDT (UTC-5).
+    const h = createHabit(db, {
+      project_id: 'me',
+      title: 'Lunch',
+      duration_minutes: 60,
+      days_of_week: '1',
+      start_time: '11:30',
+      timezone: 'America/Chicago',
+    });
+    const [inst] = generateHabitInstances(db, h.id, '2026-05-04', '2026-05-04');
+    expect(inst.scheduled_start).toBe('2026-05-04T16:30:00Z');
+    expect(inst.scheduled_end).toBe('2026-05-04T17:30:00Z');
+  });
+
+  it('uses winter offset for habits in CST (UTC-6)', () => {
+    const db = setup();
+    // 2026-01-05 is a Monday; America/Chicago is on CST (UTC-6).
+    const h = createHabit(db, {
+      project_id: 'me',
+      title: 'Lunch',
+      duration_minutes: 60,
+      days_of_week: '1',
+      start_time: '11:30',
+      timezone: 'America/Chicago',
+    });
+    const [inst] = generateHabitInstances(db, h.id, '2026-01-05', '2026-01-05');
+    expect(inst.scheduled_start).toBe('2026-01-05T17:30:00Z');
+    expect(inst.scheduled_end).toBe('2026-01-05T18:30:00Z');
+  });
+
+  it('handles DST transitions across the range (spring forward 2026-03-08)', () => {
+    const db = setup();
+    // 2026-03-02 (Mon, CST -6) and 2026-03-09 (Mon, CDT -5) — different UTC times,
+    // same 09:00 local wall clock.
+    const h = createHabit(db, {
+      project_id: 'me',
+      title: 'Standup',
+      duration_minutes: 30,
+      days_of_week: '1',
+      start_time: '09:00',
+      timezone: 'America/Chicago',
+    });
+    const instances = generateHabitInstances(db, h.id, '2026-03-02', '2026-03-09');
+    expect(instances).toHaveLength(2);
+    expect(instances[0].scheduled_start).toBe('2026-03-02T15:00:00Z'); // CST
+    expect(instances[1].scheduled_start).toBe('2026-03-09T14:00:00Z'); // CDT
+  });
+
+  it('selects weekdays by local date even when UTC time crosses midnight', () => {
+    const h_db = setup();
+    // 23:00 America/Chicago = 04:00 UTC next calendar day.
+    // Friday-only habit. 2026-05-08 is a Friday locally; UTC equivalent is Saturday 04:00.
+    const h = createHabit(h_db, {
+      project_id: 'me',
+      title: 'Late check-in',
+      duration_minutes: 30,
+      days_of_week: '5',
+      start_time: '23:00',
+      timezone: 'America/Chicago',
+    });
+    const instances = generateHabitInstances(h_db, h.id, '2026-05-04', '2026-05-10');
+    expect(instances).toHaveLength(1);
+    // Expect Friday local → Saturday 04:00 UTC during CDT
+    expect(instances[0].scheduled_start).toBe('2026-05-09T04:00:00Z');
+  });
 });
