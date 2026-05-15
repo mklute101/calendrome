@@ -414,101 +414,93 @@
   }
   .msg.assistant .who { color: var(--text); }
 
-  /* === CONNECTOR DIAGRAM === */
-  .connector {
+  /* === STACK DIAGRAM (connector) === */
+  .stack {
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: 12px;
-    padding: 50px 30px;
-    position: relative;
-    min-height: 460px;
+    padding: 28px 24px;
     display: flex;
-    align-items: center;
-    justify-content: center;
-    overflow: hidden;
+    flex-direction: column;
+    gap: 14px;
   }
-  .connector svg {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-    pointer-events: none;
-  }
-  .hub {
-    background: var(--bg);
-    border: 2px solid var(--accent);
-    border-radius: 12px;
-    padding: 18px 26px;
-    text-align: center;
-    z-index: 2;
-    box-shadow: 0 0 40px color-mix(in srgb, var(--accent) 35%, transparent);
-    min-width: 180px;
-  }
-  .hub .who {
-    font-size: 0.65rem;
+  .tier { width: 100%; }
+  .tier-label {
+    font-size: 0.62rem;
     color: var(--text-muted);
     text-transform: uppercase;
     letter-spacing: 0.12em;
-    margin-bottom: 6px;
+    margin-bottom: 10px;
     font-weight: 600;
   }
-  .hub .name {
-    font-weight: 700;
-    font-size: 1.15rem;
-    color: var(--accent);
+  .tile-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 8px;
   }
-  .hub .meta {
-    font-size: 0.72rem;
+  .tile {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 9px 10px;
+    text-align: center;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    transition: color 0.15s, border-color 0.15s;
+  }
+  .tile:hover { color: var(--text); border-color: color-mix(in srgb, var(--accent) 60%, var(--border)); }
+  .tile.placeholder {
+    color: var(--accent-2);
+    border-style: dashed;
+    border-color: color-mix(in srgb, var(--accent-2) 40%, var(--border));
+  }
+  .tier-flow {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    font-style: italic;
+    padding: 4px 0;
+  }
+  .flow-arrow {
+    color: var(--accent);
+    font-size: 1.1rem;
+    line-height: 1;
+    letter-spacing: 0.2em;
+    font-style: normal;
+    opacity: 0.7;
+  }
+  .tier-card {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px 22px;
+    text-align: center;
+  }
+  .tier-card strong {
+    display: block;
+    font-size: 1.15rem;
+    margin-top: 2px;
+  }
+  .tier-card .meta {
+    display: block;
+    font-size: 0.75rem;
     color: var(--text-muted);
     margin-top: 4px;
   }
-  .spoke {
-    position: absolute;
-    background: var(--surface-2);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 10px 14px;
-    min-width: 150px;
-    text-align: center;
-    z-index: 2;
-    font-size: 0.85rem;
-    font-weight: 600;
+  .tier-card.calendrome-card {
+    border: 2px solid var(--accent);
+    box-shadow: 0 0 35px color-mix(in srgb, var(--accent) 25%, transparent);
   }
-  .spoke .label {
-    font-size: 0.6rem;
-    color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.1em;
-    margin-bottom: 4px;
-    font-weight: 600;
-  }
-  .spoke .meta {
-    display: block;
-    font-size: 0.7rem;
-    color: var(--text-muted);
-    font-weight: 400;
-    margin-top: 3px;
-  }
-  .spoke.tl { top: 10%; left: 6%; }
-  .spoke.tr { top: 10%; right: 6%; }
-  .spoke.bl { bottom: 10%; left: 6%; }
-  .spoke.br { bottom: 10%; right: 6%; }
-  .spoke.calendrome {
-    border-color: var(--accent);
-    box-shadow: 0 0 20px color-mix(in srgb, var(--accent) 20%, transparent);
-  }
-  .spoke.calendrome .label { color: var(--accent); }
+  .tier-card.calendrome-card strong { color: var(--accent); }
+  .tier-card.calendrome-card .tier-label { color: var(--accent); }
 
-  @media (max-width: 760px) {
-    .connector {
-      min-height: auto;
-      flex-direction: column;
-      gap: 14px;
-      padding: 30px 18px;
-    }
-    .connector svg { display: none; }
-    .spoke { position: static; min-width: 0; width: 100%; }
-    .hub { width: 100%; }
+  @media (max-width: 600px) {
+    .stack { padding: 20px 14px; }
+    .tile-grid { grid-template-columns: repeat(auto-fit, minmax(95px, 1fr)); gap: 6px; }
+    .tile { font-size: 0.74rem; padding: 7px 6px; }
   }
 
   .own-grid {
@@ -643,7 +635,6 @@
 <header class="site">
   <div class="container">
     <div class="logo">
-      <span class="mark"><span></span><span></span><span></span><span></span></span>
       Calendrome
       <span class="beta-badge">BETA</span>
     </div>
@@ -667,7 +658,7 @@
     </div>
     <div class="beta-callout">
       <div class="tag">BETA</div>
-      <p><strong>This is an early beta.</strong> You install it locally, it spins up a SQLite file on your machine, and you experiment with it from Claude Code. Nothing leaves your laptop. Things will change. Bugs are expected. Feedback is welcome.</p>
+      <p><strong>Current state, plainly.</strong> This is a tool purpose-built for my needs — that's why Harvest IDs and Jira-shaped tasks are baked into the schema. Generalizing the connector story for <em>your</em> stack is figured-out-as-I-go. It runs locally, the database is one SQLite file, nothing leaves your laptop. Install it, kick it around, tell me what breaks.</p>
     </div>
   </div>
 </section>
@@ -733,7 +724,7 @@
         <p>Even when client work drops, it still somehow takes all week — unless you budget deliberately. Without explicit hour caps, low-priority work absorbs every gap.</p>
         <p>Calendrome makes hour budgets visible so you can see the drift and push back.</p>
         <div class="answer">
-          <strong>How:</strong> YNAB-style weekly hour caps per project. Soft warnings, not hard blocks — you decide what to do about overages.
+          <strong>How:</strong> Envelope budgeting, but for time. Allocate hours to each project at the start of the week — soft warnings when you blow the cap, never hard blocks. Same idea that works for money, applied to an even more precious resource — time.
         </div>
       </div>
       <div class="visual">
@@ -766,31 +757,31 @@
     <div class="principle">
       <div class="text">
         <div class="number">PRINCIPLE 03</div>
-        <h3>Claiming time should be one sentence.</h3>
-        <p>The thing every other tool gets wrong is making <em>"Tuesday night I'm doing nothing"</em> into a settings exercise — recurring rules, calendar overlays, working hours panels.</p>
-        <p>In Calendrome that's one MCP call from a single conversational sentence. Same for reopening time.</p>
+        <h3>Plans break. Adjustment should be cheap.</h3>
+        <p>Settings panels can't anticipate every situation. Fires show up. Tuesdays disappear. Sometimes you didn't plan ahead at all and just need to map out what actually happened so the budgets stay honest.</p>
+        <p>Calendrome makes both directions equally cheap — claiming time before it's spent and logging it after the fact. One sentence either way.</p>
         <div class="answer">
-          <strong>How:</strong> The friction floor for adjusting your own schedule is a complete sentence. Never a click path.
+          <strong>How:</strong> <code>block_time</code> for "I'm not doing X this week," <code>log_time</code> for "this is what actually happened." Both are conversational MCP calls — never a settings page or a bunch of clicks.
         </div>
       </div>
       <div class="visual">
         <div class="transcript">
           <div class="msg user">
             <div class="who">YOU</div>
-            Tuesday night I'm doing nothing.
+            Forgot to track yesterday — staging caught fire and I spent 2 hours on it. Log it under ACME.
           </div>
           <div class="msg tool">
-            <div class="who">→ calendrome.block_time</div>
+            <div class="who">→ calendrome.log_time</div>
 <pre>{
-  "category_id": "work",
-  "start": "2026-05-12T18:00:00",
-  "end":   "2026-05-12T23:00:00",
-  "reason": "off"
+  "project_id": "acme",
+  "started_at": "2026-05-08T14:00:00",
+  "duration_minutes": 120,
+  "task_title": "Staging incident — debug + recovery"
 }</pre>
           </div>
           <div class="msg assistant">
             <div class="who">CLAUDE</div>
-            Done — Tuesday 6pm to 11pm is now off-limits for work scheduling.
+            Logged 2h to ACME on Thursday afternoon. Budget bar updated.
           </div>
         </div>
       </div>
@@ -802,59 +793,54 @@
 <section class="alt" id="connector">
   <div class="container">
     <div class="section-eyebrow">Architecture</div>
-    <h2 class="section-title">Claude Code is the connector.</h2>
-    <p class="section-lede">Calendrome doesn't reach out to anything on its own. It's a quiet local SQLite database with an MCP interface. Claude Code is what stitches it together with the rest of your stack.</p>
+    <h2 class="section-title">Calendrome is the foundation. Claude Code is the connector.</h2>
+    <p class="section-lede">Calendrome holds the truth — your tasks, budgets, and time logs in a local SQLite file. Claude Code sits on top, fluent in MCP, and reaches out to whatever tools you actually use. Add a tool to your stack and Claude can talk to it; Calendrome doesn't need to know.</p>
 
-    <div class="connector">
-      <svg viewBox="0 0 1000 500" preserveAspectRatio="none" aria-hidden="true">
-        <defs>
-          <linearGradient id="lineGrad" x1="50%" y1="50%" x2="100%" y2="0%">
-            <stop offset="0%" style="stop-color:#58a6ff;stop-opacity:0.7"/>
-            <stop offset="100%" style="stop-color:#58a6ff;stop-opacity:0.05"/>
-          </linearGradient>
-        </defs>
-        <line x1="500" y1="250" x2="170" y2="80"  stroke="url(#lineGrad)" stroke-width="1.5" stroke-dasharray="5 5"/>
-        <line x1="500" y1="250" x2="830" y2="80"  stroke="url(#lineGrad)" stroke-width="1.5" stroke-dasharray="5 5"/>
-        <line x1="500" y1="250" x2="170" y2="420" stroke="url(#lineGrad)" stroke-width="1.5" stroke-dasharray="5 5"/>
-        <line x1="500" y1="250" x2="830" y2="420" stroke="url(#lineGrad)" stroke-width="1.5" stroke-dasharray="5 5"/>
-      </svg>
-
-      <div class="spoke tl">
-        <div class="label">External</div>
-        Google Calendar
-        <span class="meta">events · meetings</span>
-      </div>
-      <div class="spoke tr">
-        <div class="label">External</div>
-        Jira
-        <span class="meta">tickets → tasks</span>
-      </div>
-      <div class="spoke calendrome bl">
-        <div class="label">Local</div>
-        Calendrome
-        <span class="meta">SQLite · MCP</span>
-      </div>
-      <div class="spoke br">
-        <div class="label">External</div>
-        Harvest
-        <span class="meta">time logs out</span>
+    <div class="stack">
+      <div class="tier tier-tools">
+        <div class="tier-label">Whatever's in your stack</div>
+        <div class="tile-grid">
+          <div class="tile">Gmail</div>
+          <div class="tile">Linear</div>
+          <div class="tile">Slack</div>
+          <div class="tile">Jira</div>
+          <div class="tile">Google Calendar</div>
+          <div class="tile">Harvest</div>
+          <div class="tile">Notion</div>
+          <div class="tile">GitHub</div>
+          <div class="tile placeholder">+ your tools</div>
+        </div>
       </div>
 
-      <div class="hub">
-        <div class="who">Hub</div>
-        <div class="name">Claude Code</div>
-        <div class="meta">plans · connects · logs</div>
+      <div class="tier-flow"><span class="flow-arrow">↕</span><span>Claude pulls tasks in, pushes time logs back out</span><span class="flow-arrow">↕</span></div>
+
+      <div class="tier tier-claude">
+        <div class="tier-card">
+          <div class="tier-label">Connector layer</div>
+          <strong>Claude Code</strong>
+          <span class="meta">plans · routes · reasons across MCP servers</span>
+        </div>
+      </div>
+
+      <div class="tier-flow"><span class="flow-arrow">↕</span><span>MCP — local stdio</span><span class="flow-arrow">↕</span></div>
+
+      <div class="tier tier-calendrome">
+        <div class="tier-card calendrome-card">
+          <div class="tier-label">Source of truth · local</div>
+          <strong>Calendrome</strong>
+          <span class="meta">SQLite · tasks · budgets · time logs · availability</span>
+        </div>
       </div>
     </div>
 
     <div class="own-grid">
       <div class="ba-card">
         <div class="label">What Calendrome owns</div>
-        <p>Tasks, projects, weekly hour budgets, time logs, availability windows, habit instances. The single source of truth for what you actually intend to do this week — stored in a SQLite file on your laptop you can <code>rm</code> any time.</p>
+        <p>Tasks, projects, weekly hour budgets, time logs, availability windows, habit instances. The single source of truth for what you actually intend to do this week — one SQLite file on your laptop you can <code>rm</code> any time.</p>
       </div>
       <div class="ba-card">
         <div class="label">What Claude does</div>
-        <p>Pulls Jira tickets, places events on Google Calendar, pushes time logs to Harvest. Calendrome stays local and dumb on purpose — Claude is the smart, networked, reasoning part that ties everything together.</p>
+        <p>Pulls tasks from wherever they live, places events on whichever calendar you use, pushes time logs to whichever timesheet you have to fill in. Calendrome stays local and dumb on purpose — Claude is the smart, networked layer that knows how to talk to everything else.</p>
       </div>
     </div>
   </div>
