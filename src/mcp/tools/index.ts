@@ -640,15 +640,22 @@ export function buildTools(
      * Place a task on the calendar at a specific start time.
      *
      * Creates a calendar event via the configured `CalendarClient`
-     * (real Google Calendar in production, the stub in tests),
-     * stamps the event id back onto the task, sets the task's `due`
-     * to the start time, and flips status to `SCHEDULED`. The
-     * event's end is computed from the task's `duration_minutes`.
+     * (real Google Calendar in production, the stub in tests) and
+     * inserts a paired UNCONFIRMED `time_entry` row that becomes
+     * the canonical link between task and event. The event's end
+     * is computed from the task's `duration_minutes`, the task's
+     * `due` is set to the start time, and status flips to
+     * `SCHEDULED`.
+     *
+     * The UNCONFIRMED time_entry is what the day-end review flow
+     * operates on — call `confirm_placement` once the work happened
+     * (optionally adjusting `actual_minutes`), or `skip_placement`
+     * if it didn't.
      *
      * @example
      * place_task({ task_id: 17, start: '2026-05-04T07:00:00-05:00' })
      *
-     * @see create_task, unplace_task, get_week_layout
+     * @see create_task, unplace_task, confirm_placement, skip_placement, move_placement, get_week_layout
      */
     {
       name: 'place_task',
@@ -705,6 +712,23 @@ export function buildTools(
         };
       },
     },
+    /**
+     * Remove a task's calendar event and its paired UNCONFIRMED
+     * time_entry, then reset the task to `NEW`.
+     *
+     * The paired placement `time_entry` is the source of truth for
+     * "is this task placed?" — `unplace_task` deletes both the
+     * Google Calendar event and that row. Refuses to run if the
+     * paired entry is already CONFIRMED (you logged real work
+     * against it — use `update_task` instead). Only flips status
+     * when the task was actually `SCHEDULED`; IN_PROGRESS and
+     * COMPLETE are left alone.
+     *
+     * @example
+     * unplace_task({ task_id: 17 })
+     *
+     * @see place_task, confirm_placement, skip_placement, move_placement
+     */
     {
       name: 'unplace_task',
       description: "Remove a task's calendar event and reset its status",
@@ -758,6 +782,26 @@ export function buildTools(
         return { task: getTask(db, taskId) };
       },
     },
+    /**
+     * Confirm that an UNCONFIRMED placement actually happened.
+     *
+     * Flips a placement `time_entry` from `UNCONFIRMED` to
+     * `CONFIRMED` — the gate that lets the row count toward
+     * timesheets and Harvest pushes. Idempotent on already-
+     * CONFIRMED entries (no-op). Optional overrides:
+     *
+     * - `actual_minutes`: adjust duration when the work took
+     *   longer or shorter than the placed slot. The row's `end_at`
+     *   is rewritten to `start_at + actual_minutes`.
+     * - `project_id`: reassign to a different project (e.g. the
+     *   meeting was for ACME, not GLBX).
+     * - `notes`: append context for the timesheet line.
+     *
+     * @example
+     * confirm_placement({ time_entry_id: 91, actual_minutes: 45 })
+     *
+     * @see place_task, skip_placement, list_pending_review, move_placement
+     */
     {
       name: 'confirm_placement',
       description:
@@ -784,6 +828,21 @@ export function buildTools(
         return { confirmed: true, time_entry_id: timeEntryId };
       },
     },
+    /**
+     * Delete an UNCONFIRMED placement that did not actually happen.
+     *
+     * The opposite of `confirm_placement`. Removes the
+     * `time_entry` row entirely so it never lands in a timesheet.
+     * Refuses to delete CONFIRMED entries (use the GUI or a manual
+     * SQL fix — losing confirmed hours should be deliberate) and
+     * refuses to delete entries from the `gcal-sync` source (those
+     * are mirrored from Google Calendar — delete the event there).
+     *
+     * @example
+     * skip_placement({ time_entry_id: 91 })
+     *
+     * @see confirm_placement, list_pending_review, unplace_task
+     */
     {
       name: 'skip_placement',
       description:
@@ -802,6 +861,21 @@ export function buildTools(
         return { skipped: true, time_entry_id: timeEntryId };
       },
     },
+    /**
+     * List past UNCONFIRMED time_entries that need review.
+     *
+     * The feed the day/week wrap-up flow walks through to confirm
+     * or skip each placement. Returns only entries whose end is in
+     * the past — future placements aren't reviewable yet. Filters
+     * to work-category projects by default so personal placements
+     * don't clutter timesheet reconciliation; pass `category:
+     * 'personal'` or omit to broaden.
+     *
+     * @example
+     * list_pending_review({ from: '2026-05-04', to: '2026-05-10' })
+     *
+     * @see confirm_placement, skip_placement, move_placement, get_timesheet_summary
+     */
     {
       name: 'list_pending_review',
       description:
@@ -825,6 +899,26 @@ export function buildTools(
         };
       },
     },
+    /**
+     * Reschedule an UNCONFIRMED placement to a new time.
+     *
+     * For when the calendar shifts and a planned slot needs to
+     * move before it's confirmed. Preserves the entry's duration
+     * by default — pass `new_end_at` to also change the length.
+     * Updates the paired Google Calendar event when one exists.
+     *
+     * Refuses to move:
+     * - CONFIRMED entries (real work has been logged — editing
+     *   the timestamp would rewrite history)
+     * - `gcal-sync` sourced entries (mirrored from Google
+     *   Calendar — move the event there)
+     * - manual `log_time` entries (no calendar event to update)
+     *
+     * @example
+     * move_placement({ time_entry_id: 91, new_start_at: '2026-05-05T14:00:00-05:00' })
+     *
+     * @see place_task, confirm_placement, skip_placement, list_pending_review
+     */
     {
       name: 'move_placement',
       description:
@@ -849,6 +943,25 @@ export function buildTools(
     },
 
     // -------- timesheet --------
+    /**
+     * Render a timesheet for a date range from CONFIRMED time_entry rows.
+     *
+     * Reads CONFIRMED placements, manual `log_time` entries, and
+     * confirmed gcal-sync rows — UNCONFIRMED entries are never
+     * included (use `list_pending_review` to clear them first).
+     * `format` is `csv` (default) or `markdown`. `include_totals`
+     * appends per-project subtotals and a grand total; markdown
+     * always includes totals.
+     *
+     * `categories` defaults to `["work"]` so personal hours stay
+     * out of client timesheets; pass `["personal"]` or both to
+     * widen.
+     *
+     * @example
+     * export_timesheet({ from: '2026-05-04', to: '2026-05-10', format: 'markdown' })
+     *
+     * @see get_timesheet_summary, harvest_push_timesheet, log_time
+     */
     {
       name: 'export_timesheet',
       description:
@@ -895,6 +1008,26 @@ export function buildTools(
         return { format, [format === 'markdown' ? 'markdown' : 'csv']: rendered };
       },
     },
+    /**
+     * Structured timesheet data for planner-skill reasoning.
+     *
+     * Prefer this over `export_timesheet` when a skill needs to
+     * reason about the numbers (drift checks, budget rollups,
+     * pre-flight Harvest checks) instead of just rendering them.
+     * Returns rows plus per-project totals plus a grand total in
+     * decimal hours.
+     *
+     * `categories` defaults to `["work"]`. Pass
+     * `include_unconfirmed: true` to surface a separate
+     * `unconfirmed` section listing UNCONFIRMED entries in the
+     * same range — useful for catching drift before a Harvest
+     * push.
+     *
+     * @example
+     * get_timesheet_summary({ from: '2026-05-04', to: '2026-05-10', include_unconfirmed: true })
+     *
+     * @see export_timesheet, list_pending_review, harvest_push_timesheet
+     */
     {
       name: 'get_timesheet_summary',
       description:
@@ -943,6 +1076,28 @@ export function buildTools(
     },
 
     // -------- harvest --------
+    /**
+     * Push CONFIRMED time_entry rows to Harvest for a date range.
+     *
+     * Requires `HARVEST_TOKEN` and `HARVEST_ACCOUNT_ID` env vars,
+     * and per-project `harvest_project_id` + `harvest_task_id`
+     * mappings. Skips entries already pushed (`harvest_entry_id`
+     * set) so the call is safe to retry.
+     *
+     * Pre-flight: refuses to push if any UNCONFIRMED entry exists
+     * in the range — the planner should run `list_pending_review`
+     * and confirm or skip each row first. Pass `force: true` to
+     * override (rare; use when an UNCONFIRMED row is intentionally
+     * being deferred).
+     *
+     * `categories` defaults to `["work"]` so personal hours never
+     * leak unless explicitly opted in.
+     *
+     * @example
+     * harvest_push_timesheet({ from: '2026-05-04', to: '2026-05-10' })
+     *
+     * @see get_timesheet_summary, list_pending_review, harvest_list_projects
+     */
     {
       name: 'harvest_push_timesheet',
       description:
@@ -1018,6 +1173,25 @@ export function buildTools(
     },
 
     // -------- calendar sync --------
+    /**
+     * Import external calendar events into Calendrome.
+     *
+     * Upserts each event into the unified `time_entry` table with
+     * source `gcal-sync`. Re-sync is idempotent and **preserves
+     * confirmation state** — if you already confirmed an event
+     * for the timesheet, re-syncing won't kick it back to
+     * UNCONFIRMED. Project assignment is matched by uppercase
+     * prefix on the event summary (e.g. `[ACME] Sprint planning`).
+     *
+     * If `clear_range` is provided, existing gcal-sync events in
+     * that range are deleted first — used by the weekly planner
+     * to keep the mirror tight against Google Calendar.
+     *
+     * @example
+     * sync_calendar_events({ events: [...], clear_range: { from: '2026-05-04', to: '2026-05-10' } })
+     *
+     * @see list_pending_review, confirm_placement, get_week_layout
+     */
     {
       name: 'sync_calendar_events',
       description:
