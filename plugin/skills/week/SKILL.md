@@ -160,11 +160,13 @@ After the view:
 > - Flag tickets to defer or delegate
 > - Dig deeper into any task that needs more context"
 
-#### When the user blocks time, do the 3-step dance
+#### When the user blocks time, place through calendrome
+
+Calendrome owns placement — **never** call `mcp__claude_ai_Google_Calendar__create_event` directly. The calendar event is synced from calendrome's placement.
 
 Given: "block 2 hours for ACME-42 on Tuesday 9am"
 
-1. **Create the calendrome task** (skip if it exists):
+1. **Find or create the calendrome task** (skip create if it exists):
 ```
 mcp__calendrome__create_task {
   project_id: "<resolved from project_prefixes>",
@@ -175,34 +177,20 @@ mcp__calendrome__create_task {
 ```
 Capture the returned `task.id`.
 
-2. **Create the calendar event**:
+2. **Place it** at the requested start time:
 ```
-mcp__claude_ai_Google_Calendar__create_event {
-  calendarId: "<calendar_id>",
-  summary: "ACME Fix login bug",
-  start: { dateTime: "...", timeZone: "<calendar_timezone>" },
-  end:   { dateTime: "...", timeZone: "<calendar_timezone>" }
+mcp__calendrome__place_task {
+  task_id: <task_id>,
+  start: "<Tuesday 09:00 ISO with calendar_timezone offset>"
 }
 ```
-Capture the returned `event.id`.
-
-3. **Link them**:
-```
-mcp__calendrome__update_task {
-  id: <task_id>,
-  calendar_event_id: "<event_id>",
-  due: "<event start ISO>"
-}
-```
+This creates the calendar placement and a paired UNCONFIRMED `time_entry` sized to the task's duration. The GCal event is synced from calendrome.
 
 After each placement, recompute the budget and show the updated remaining hours so the user sees the impact immediately.
 
-#### Removing a block (reverse the dance)
+#### Removing a block
 
-1. `mcp__claude_ai_Google_Calendar__delete_event`
-2. `mcp__calendrome__update_task { id, calendar_event_id: null }`
-
-Or use `mcp__calendrome__unplace_task { task_id }` if the calendrome calendar client is configured.
+`mcp__calendrome__unplace_task { task_id }` — calendrome owns the lifecycle, including removing the synced GCal event. Do not call `mcp__claude_ai_Google_Calendar__delete_event` directly.
 
 ### Step 5 — End-of-week timesheet (Friday or on request)
 
