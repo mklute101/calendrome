@@ -509,7 +509,7 @@ function renderCompact(days) {
     }
     for (const tl of d.logs) {
       const c = getColor(tl.project_id);
-      body.innerHTML += `<div class="block logged" style="--c:${c}"><div class="title">${tl.task_title}</div><div class="meta">${fmtHours(tl.duration_minutes)} logged at ${fmtTime(tl.started_at)}</div></div>`;
+      body.innerHTML += `<div class="block logged" style="--c:${c}"><div class="title">${tl.task_title ?? tl.notes ?? '(untitled)'}</div><div class="meta">${fmtHours(tl.duration_minutes)} logged at ${fmtTime(tl.started_at)}</div></div>`;
     }
     if (!d.meetings.length && !d.habits.length && !d.tasks.length && !d.logs.length) {
       body.innerHTML += '<div class="empty">No items</div>';
@@ -604,7 +604,7 @@ function renderTimeline(days) {
       const height = durationToPx(log.duration_minutes);
       if (top < 0 || top >= totalHeight) continue;
       dayHtml += `<div class="timeline-block logged" style="--c:${c};top:${top}px;height:${height}px">
-        <div class="title">${log.task_title}</div>
+        <div class="title">${log.task_title ?? log.notes ?? '(untitled)'}</div>
         ${height > 30 ? `<div class="meta">${fmtHours(log.duration_minutes)} logged</div>` : ''}
       </div>`;
     }
