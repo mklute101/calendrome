@@ -578,7 +578,10 @@ export function buildTools(
      *
      * Used by the planner skill to reason about what's already on
      * the calendar before suggesting new placements. `from`/`to` are
-     * ISO date strings (YYYY-MM-DD).
+     * ISO date strings (YYYY-MM-DD). The response includes the
+     * placement rows themselves (`placements`: time_entry id,
+     * start/end, status) so callers can confirm/move/skip without a
+     * second lookup.
      *
      * @example
      * get_week_layout({ from: '2026-05-04', to: '2026-05-10' })
@@ -603,23 +606,28 @@ export function buildTools(
         const to = requireString(args, 'to');
         // A task is "on the calendar" iff it has a paired placement
         // time_entry (UNCONFIRMED = still scheduled, CONFIRMED = done).
-        // Pre-filter task ids by the time_entry table, then list+filter.
-        const placedRows = db
+        // The time_entry's start_at — not task.due, which is a pure
+        // deadline field — says when the task sits in the week (#79).
+        const placements = db
           .prepare(
-            `SELECT DISTINCT task_id FROM time_entry
-              WHERE source = 'placement' AND task_id IS NOT NULL`,
+            `SELECT id AS time_entry_id, task_id, start_at, end_at, status
+               FROM time_entry
+              WHERE source = 'placement' AND task_id IS NOT NULL
+                AND DATE(start_at) >= ? AND DATE(start_at) <= ?
+              ORDER BY start_at`,
           )
-          .all() as { task_id: number }[];
-        const placedTaskIds = new Set(placedRows.map((r) => r.task_id));
+          .all(from, to) as {
+          time_entry_id: number;
+          task_id: number;
+          start_at: string;
+          end_at: string;
+          status: string;
+        }[];
+        const placedTaskIds = new Set(placements.map((r) => r.task_id));
         const tasks = listTasks(db, {
           project_id: args.project_id,
-        }).filter(
-          (t) =>
-            placedTaskIds.has(t.id) &&
-            t.due !== null &&
-            t.due >= `${from}T00:00:00Z` &&
-            t.due <= `${to}T23:59:59Z`,
-        );
+        }).filter((t) => placedTaskIds.has(t.id));
+        const taskIds = new Set(tasks.map((t) => t.id));
         const habits = db
           .prepare(
             `SELECT habit_instances.* FROM habit_instances
@@ -634,7 +642,13 @@ export function buildTools(
               ? [`${from}T00:00:00Z`, `${to}T23:59:59Z`, args.project_id]
               : [`${from}T00:00:00Z`, `${to}T23:59:59Z`]),
           );
-        return { tasks, habit_instances: habits };
+        return {
+          tasks,
+          habit_instances: habits,
+          // Honor the project_id filter: only placements whose task
+          // survived the filter above.
+          placements: placements.filter((p) => taskIds.has(p.task_id)),
+        };
       },
     },
     /**
@@ -644,9 +658,10 @@ export function buildTools(
      * (real Google Calendar in production, the stub in tests) and
      * inserts a paired UNCONFIRMED `time_entry` row that becomes
      * the canonical link between task and event. The event's end
-     * is computed from the task's `duration_minutes`, the task's
-     * `due` is set to the start time, and status flips to
-     * `SCHEDULED`.
+     * is computed from the task's `duration_minutes` and status
+     * flips to `SCHEDULED`. The task's `due` is never touched —
+     * it is a pure deadline field; the time_entry alone says where
+     * the task sits on the calendar (#79).
      *
      * The UNCONFIRMED time_entry is what the day-end review flow
      * operates on — call `confirm_placement` once the work happened
@@ -703,13 +718,11 @@ export function buildTools(
           notes: task.notes ?? null,
         });
 
-        const updated = updateTask(db, taskId, { due: start });
         setTaskStatus(db, taskId, 'SCHEDULED');
         return {
           task: getTask(db, taskId),
           event,
           time_entry_id: timeEntryId,
-          _previous: updated,
         };
       },
     },

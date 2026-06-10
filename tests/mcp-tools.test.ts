@@ -270,7 +270,8 @@ describe('MCP tools layer', () => {
     });
 
     expect(placed.task.status).toBe('SCHEDULED');
-    expect(placed.task.due).toBe('2026-04-14T10:00:00Z');
+    // due is a pure deadline field — placement must not write it (#79)
+    expect(placed.task.due).toBeNull();
     // The paired placement time_entry holds the calendar event id
     // (external_id), which LocalCalendarClient mints as `local-<uuid>`.
     expect(placed.event.id).toMatch(/^local-[0-9a-f-]{36}$/);
@@ -576,6 +577,54 @@ describe('MCP tools layer', () => {
     });
     expect(result.override.available).toBe(1);
     expect(result.override.category_id).toBe('personal');
+  });
+
+  it('get_week_layout positions tasks by placement time_entry, not task.due (#79)', async () => {
+    const db = freshDb();
+    createProject(db, { id: 'acme', name: 'Acme Corp', prefix: 'ACME' });
+    const tools = buildTools(db, { calendar: new FakeCalendarClient() });
+
+    const placedTask = await getTool(tools, 'create_task').handler({
+      project_id: 'acme',
+      title: 'Placed this week',
+      duration_minutes: 60,
+    });
+    const placed = await getTool(tools, 'place_task').handler({
+      task_id: placedTask.task.id,
+      start: '2026-06-16T10:00:00Z',
+    });
+    // Deadline inside the week but never placed — must not show up as
+    // "on the calendar".
+    await getTool(tools, 'create_task').handler({
+      project_id: 'acme',
+      title: 'Deadline only',
+      duration_minutes: 60,
+      due: '2026-06-17T17:00:00Z',
+    });
+    // Placed outside the requested range.
+    const nextWeek = await getTool(tools, 'create_task').handler({
+      project_id: 'acme',
+      title: 'Placed next week',
+      duration_minutes: 60,
+    });
+    await getTool(tools, 'place_task').handler({
+      task_id: nextWeek.task.id,
+      start: '2026-06-23T10:00:00Z',
+    });
+
+    const layout = await getTool(tools, 'get_week_layout').handler({
+      from: '2026-06-15',
+      to: '2026-06-21',
+    });
+    const titles = layout.tasks.map((t: any) => t.title);
+    expect(titles).toEqual(['Placed this week']);
+    expect(layout.placements).toHaveLength(1);
+    expect(layout.placements[0]).toMatchObject({
+      time_entry_id: placed.time_entry_id,
+      task_id: placedTask.task.id,
+      start_at: '2026-06-16T10:00:00Z',
+      status: 'UNCONFIRMED',
+    });
   });
 
   // Story 1: screen-share filter — when sharing your screen at work, the
