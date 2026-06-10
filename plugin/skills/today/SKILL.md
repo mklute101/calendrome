@@ -172,12 +172,16 @@ Stay engaged through the day. Respond to these patterns:
 ### Quick calendar block
 "I'm going to work on X", "next hour on Y":
 
-Defer to `/calendrome:block` for the actual placement, OR inline:
-1. Parse activity + duration (default 30 min)
-2. Apply prefix from `project_prefixes` if context matches (case-insensitive substring against `name`)
-3. Get current time in `<calendar_timezone>`
-4. Call `mcp__claude_ai_Google_Calendar__create_event`
-5. Confirm: "Blocked: [title] [HH:MM]–[HH:MM]"
+Calendrome owns placement — **never** call `mcp__claude_ai_Google_Calendar__create_event` directly. Either defer to `/calendrome:block`, or inline the same workflow:
+
+1. Parse activity + duration (default 30 min).
+2. Apply prefix from `project_prefixes` if context matches (case-insensitive substring against `name`).
+3. Find or create the task in the matched project:
+   - `mcp__calendrome__search_tasks { query }` to locate an existing task.
+   - If none, `mcp__calendrome__create_task { project_id, title, duration_minutes }` and capture `task.id`.
+4. Get current time in `<calendar_timezone>`.
+5. Call `mcp__calendrome__place_task { task_id, start }` — this creates the placement and the paired UNCONFIRMED `time_entry`. The GCal event is synced from calendrome, not authored here.
+6. Confirm: "Placed: [title] [HH:MM]–[HH:MM] — confirm in tomorrow's /calendrome:today."
 
 ### Schedule awareness
 - Meeting in next 15 min → "Heads up: [meeting] in [X] minutes"
