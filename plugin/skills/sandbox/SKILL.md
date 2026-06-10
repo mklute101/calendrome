@@ -25,7 +25,7 @@ Both servers (`src/mcp/server.ts` and `src/gui/server.ts`) already honor these e
 
 ### Step 1: Read settings
 
-Read `.claude/calendrome.local.md` to find `calendrome_repo_path`. If no settings file exists, ask the user where calendrome is installed.
+Read `~/.claude/calendrome.local.md` to find `calendrome_repo_path`. If no settings file exists, ask the user where calendrome is installed.
 
 ### Step 2: Decide DB target
 

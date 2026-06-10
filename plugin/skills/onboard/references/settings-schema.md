@@ -1,6 +1,6 @@
 # Calendrome Settings Schema
 
-The settings file lives at `.claude/calendrome.local.md` (project-local) and is consumed by all calendrome plugin skills. YAML frontmatter holds the values; the markdown body is free-form notes.
+The settings file lives at `~/.claude/calendrome.local.md` (global — exactly one per user, never project-local) and is consumed by all calendrome plugin skills. YAML frontmatter holds the values; the markdown body is free-form notes.
 
 ## Full template
 
@@ -67,4 +67,4 @@ Other skills only **read** the file (`Read` tool). They never modify it. If a re
 
 ## Privacy
 
-This file is per-user, project-local, and intended to live outside version control. Add `.claude/*.local.md` to `.gitignore` (the plugin assumes this).
+This file is per-user and lives in the home directory, outside any repo — it can never land in version control.

@@ -14,7 +14,7 @@ Lightweight read-only dashboard over the calendrome MCP. Two output paths:
 
 ## Step 1: Check state
 
-Read settings: `.claude/calendrome.local.md` (use defaults if missing).
+Read settings: `~/.claude/calendrome.local.md` (use defaults if missing).
 
 Run these calendrome MCP tools in parallel:
 
@@ -74,5 +74,5 @@ Otherwise → **Status dashboard**:
 
 ## Edge cases
 
-- Settings file missing but MCP reachable: show dashboard normally; mention "No `.claude/calendrome.local.md` found — run `/calendrome:onboard` to write one."
+- Settings file missing but MCP reachable: show dashboard normally; mention "No `~/.claude/calendrome.local.md` found — run `/calendrome:onboard` to write one."
 - Settings file present but MCP unreachable: surface the MCP error first; settings-only output is not useful.

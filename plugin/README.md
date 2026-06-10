@@ -16,7 +16,7 @@ Calendar-as-source-of-truth task scheduling, exposed to Claude Code as a set of 
 
 ## Settings
 
-Per-user configuration lives in `.claude/calendrome.local.md` (created and edited by `/calendrome:onboard`). Includes Atlassian IDs, calendar ID/timezone, JIRA project keys, and the prefix → calendrome project ID mapping.
+Per-user configuration lives in `~/.claude/calendrome.local.md` (created and edited by `/calendrome:onboard`). Includes Atlassian IDs, calendar ID/timezone, JIRA project keys, and the prefix → calendrome project ID mapping.
 
 ## Installation
 
