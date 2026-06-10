@@ -7,11 +7,11 @@ allowed-tools: Read, Bash
 
 # Daily Working Session
 
-Three phases: morning brief, active assistance, end-of-day wrap. Read settings from `.claude/calendrome.local.md` before doing anything.
+Three phases: morning brief, active assistance, end-of-day wrap. Read settings from `~/.claude/calendrome.local.md` before doing anything.
 
 ## Settings used
 
-From `.claude/calendrome.local.md` frontmatter:
+From `~/.claude/calendrome.local.md` frontmatter:
 
 - `atlassian_cloud_id`, `atlassian_account_id` — for Jira queries
 - `calendar_timezone`, `calendar_id` — for calendar queries

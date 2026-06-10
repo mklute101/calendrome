@@ -7,7 +7,7 @@ allowed-tools: Read, Bash
 
 # Weekly Planning Session
 
-Start-of-week planning that unifies calendar + Jira + calendrome budgets, then helps the user commit time. Read settings from `.claude/calendrome.local.md` before doing anything.
+Start-of-week planning that unifies calendar + Jira + calendrome budgets, then helps the user commit time. Read settings from `~/.claude/calendrome.local.md` before doing anything.
 
 ## Settings used
 

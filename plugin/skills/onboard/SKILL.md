@@ -1,6 +1,6 @@
 ---
 name: onboard
-description: First-run guided setup for calendrome and re-onboarding workflows. Use when the user runs `/calendrome:onboard`, says they want to "set up calendrome", "configure calendrome", "add a new client to calendrome", "reset calendrome", or wants to "demo calendrome to someone". Walks through MCP install, connection-first discovery (Jira/Harvest/Google Calendar), category/project/budget setup, and writes the user's `.claude/calendrome.local.md` settings file.
+description: First-run guided setup for calendrome and re-onboarding workflows. Use when the user runs `/calendrome:onboard`, says they want to "set up calendrome", "configure calendrome", "add a new client to calendrome", "reset calendrome", or wants to "demo calendrome to someone". Walks through MCP install, connection-first discovery (Jira/Harvest/Google Calendar), category/project/budget setup, and writes the user's `~/.claude/calendrome.local.md` settings file.
 argument-hint: "(no args)"
 allowed-tools: Read, Write, Edit, Bash
 ---
@@ -15,7 +15,7 @@ The flow is **state-aware**: detect what's already configured, then branch.
 
 Run these checks in parallel before talking to the user:
 
-1. **Settings file**: Does `.claude/calendrome.local.md` exist in the current project? (Read it if so.)
+1. **Settings file**: Does `~/.claude/calendrome.local.md` exist? (Read it if so.) Also check for a legacy project-local `.claude/calendrome.local.md` in the current directory — if one exists and the global file doesn't, offer to move it to `~/.claude/calendrome.local.md` before anything else.
 2. **MCP configuration**: Read `~/.claude.json` and check for a `calendrome` entry under `mcpServers`. Note the path it points to (e.g. the `args[]` value ending in `dist/src/mcp/server.js`) and whether that path still exists on disk.
 3. **Source directory**: If the settings file (from step 1) has `calendrome_repo_path`, check that path. Otherwise check the default (`~/dev/tools/calendrome`) plus any path inferred from the MCP config (step 2). Record: source-present? and `dist/src/mcp/server.js` built?
 4. **Calendrome state** (only if MCP is wired and reachable): Call `mcp__calendrome__list_projects` and `mcp__calendrome__list_categories`. Project count > 0 means there's real configuration.
@@ -148,7 +148,7 @@ Ask the user to confirm. For each integration the user confirms is active, prepa
 
 ### Step 3 — Write settings file
 
-Create `.claude/calendrome.local.md` in the user's current project directory (or wherever they prefer for cross-project use; default: project-local).
+Create `~/.claude/calendrome.local.md` — global, exactly one per user. Settings are never project-local: there's one calendar, one set of clients, one Harvest account, regardless of cwd.
 
 For each integration, ask only the questions that integration needs:
 
@@ -222,7 +222,7 @@ Calendrome is already configured.
 
 Current state:
 - Projects: 4 (acme, glbx, hobby, internal)
-- Settings file: .claude/calendrome.local.md
+- Settings file: ~/.claude/calendrome.local.md
 - MCP: wired
 
 What would you like to do?
@@ -239,7 +239,7 @@ Run only Phase 2 step 5 for a single new project. Append to `project_prefixes` i
 
 ### Option 2 — Edit settings
 
-Open `.claude/calendrome.local.md` and walk the user through each field. Use the Edit tool to apply changes.
+Open `~/.claude/calendrome.local.md` and walk the user through each field. Use the Edit tool to apply changes.
 
 ### Option 3 — Full reset
 
@@ -262,7 +262,7 @@ This spins up a throwaway calendrome instance on an alt port + alt DB, pre-seede
 
 - **Never edit `~/.claude.json` directly.** Use `claude mcp add` and `claude mcp remove` for MCP registration changes — they edit the file safely and survive Claude Code upgrades. Never write to `~/.claude.json` with the Edit or Write tools.
 - **Never delete the calendrome DB without two confirmations.**
-- **Never write PII into the plugin repo itself** — only into the user's project-local settings file.
+- **Never write PII into the plugin repo itself** — only into the user's global settings file (`~/.claude/calendrome.local.md`).
 - **Skip steps with explanation** when their preconditions are already met. Do not re-ask questions whose answers are already in the settings file.
 - **Stop at the restart boundary in Step 1f.** MCP changes don't hot-load. Continuing past it in the same session will fail in confusing ways.
 

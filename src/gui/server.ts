@@ -21,7 +21,12 @@ import { buildWeekPayload } from './week-data.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DB_PATH = process.env.CALENDROME_DB ?? 'calendrome.db';
-const PORT = Number(process.env.CALENDROME_GUI_PORT ?? 3737);
+// CALENDROME_GUI_PORT is the specific override (for machines where
+// something else also reads PORT); bare PORT is what the sandbox
+// skill documents and what people reach for first (#75).
+const PORT = Number(
+  process.env.CALENDROME_GUI_PORT ?? process.env.PORT ?? 3737,
+);
 
 // Run migrations once at startup
 const initDb = openDatabase(DB_PATH);
