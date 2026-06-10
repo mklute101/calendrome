@@ -62,7 +62,7 @@ Read the sentence, map each phrase to one of the listed entries (or a brand-new 
 - **Amended duration** ("4h on the WebKit thing") → `confirm_placement(id, { actual_minutes: 240 })`
 - **As-placed / "as planned"** ("the rest as placed", "standup as scheduled") → `confirm_placement(id)` with no amendment
 - **Skipped / didn't happen** ("skip the meeting", "we cancelled standup") → `skip_placement(id)`
-- **New work not on the list** ("I also spent an hour on the dashboard bug") → `log_time({ task_id?, project_id, started_at, stopped_at, notes? })`. Round to 15-minute increments.
+- **New work not on the list** ("I also spent an hour on the dashboard bug") → `log_time(...)`. Round to 15-minute increments. **Before logging, always try to link a task**: if the notes contain a Jira key (e.g., `A2-152`) or otherwise map to a known task, call `mcp__calendrome__search_tasks { query }` first and pass the matched `task_id` to `log_time`. Only log without `task_id` when the search rules out a match — that's a legitimate one-off (e.g., "subdomain SEO investigation" with no ticket). Don't ship an entry where the user's own conversation referenced a ticket but the entry isn't linked to it.
 - **Reschedule** ("the PR review actually ran 16:00–17:00") → `move_placement(id, new_start_at, { new_end_at? })`, then `confirm_placement` if duration was also amended.
 
 #### Edge cases (be explicit)
@@ -220,7 +220,7 @@ Use the exact same mapping rules as Phase 1 Step 0:
 - amended → `confirm_placement(id, { actual_minutes })`
 - as-placed → `confirm_placement(id)`
 - skipped → `skip_placement(id)`
-- new work → `log_time({...})` (15-minute increments — see `feedback_time_log_increments` convention)
+- new work → `log_time({...})` (15-minute increments — see `feedback_time_log_increments` convention). Search for and link a matching calendrome task by `task_id` whenever the notes contain a Jira key or recognizable task identifier; only log unlinked when no match exists.
 - reschedule → `move_placement(...)` then `confirm_placement` if needed
 
 Apply the same four edge cases (everything-as-planned, partial coverage, new work, unaccounted-for entry).
