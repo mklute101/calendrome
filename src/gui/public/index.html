@@ -109,6 +109,14 @@
   .block.logged {
     background: color-mix(in srgb, var(--c) 22%, transparent);
   }
+  /* Deadline marker — an unplaced task's due date. Deliberately not a
+     duration block: deadlines mark when something is owed, placements
+     mark when you'll do it (#79). */
+  .block.deadline {
+    background: transparent;
+    border-left-style: dashed;
+    opacity: 0.85;
+  }
   /* Past UNCONFIRMED placement / gcal-sync entries: visual "needs review"
      cue. The fix lives in MCP (/calendrome:today); the GUI just flags. */
   .block.overdue-review {
@@ -320,11 +328,11 @@ function isOverdueEvent(ce) {
   return Date.parse(ce.start) < Date.now();
 }
 
-// True when a task was placed (status=SCHEDULED) and its due time has
-// passed — the paired UNCONFIRMED time_entry awaits confirmation.
-function isOverdueTask(t) {
-  if (!t || t.status !== 'SCHEDULED' || !t.due) return false;
-  return Date.parse(t.due) < Date.now();
+// True when a placement's start has passed and it's still UNCONFIRMED
+// — the entry awaits confirmation in the day-end review flow.
+function isOverduePlacement(p) {
+  if (!p || p.status !== 'UNCONFIRMED') return false;
+  return Date.parse(p.start_at) < Date.now();
 }
 
 function getColor(projectId) {
@@ -398,6 +406,9 @@ function filterWeekData(data) {
     habit_instances: data.habit_instances.filter((h) =>
       visibleInCurrentView(h.project_id),
     ),
+    placements: (data.placements || []).filter((p) =>
+      visibleInCurrentView(p.project_id),
+    ),
     time_logs: data.time_logs.filter((tl) =>
       visibleInCurrentView(tl.project_id),
     ),
@@ -420,15 +431,24 @@ function buildDays(data) {
   const days = [];
   for (let i = 0; i < 7; i++) {
     const date = addDays(weekStart, i);
-    days.push({ date, tasks: [], habits: [], logs: [], meetings: [], totalMin: 0 });
+    days.push({ date, placed: [], deadlines: [], habits: [], logs: [], meetings: [], totalMin: 0 });
   }
-  for (const t of data.tasks) {
-    if (!t.due || t.status === 'ARCHIVED') continue;
-    const day = days.find(d => d.date === t.due.slice(0,10));
+  // Placements (UNCONFIRMED time_entry rows) are the planned blocks.
+  // task.due never positions a block — it's a pure deadline (#79).
+  for (const p of (data.placements || [])) {
+    const day = days.find(d => d.date === p.start_at.slice(0,10));
     if (day) {
-      day.tasks.push(t);
-      if (t.status === 'SCHEDULED') day.totalMin += t.duration_minutes;
+      day.placed.push(p);
+      day.totalMin += p.duration_minutes || 0;
     }
+  }
+  // Unplaced tasks with a due date in the week surface as deadline
+  // markers — visible, but never duration blocks on the calendar.
+  const placedTaskIds = new Set((data.placements || []).map(p => p.task_id));
+  for (const t of data.tasks) {
+    if (!t.due || t.status === 'ARCHIVED' || placedTaskIds.has(t.id)) continue;
+    const day = days.find(d => d.date === t.due.slice(0,10));
+    if (day) day.deadlines.push(t);
   }
   for (const hi of data.habit_instances) {
     const day = days.find(d => d.date === hi.scheduled_start.slice(0,10));
@@ -502,16 +522,20 @@ function renderCompact(days) {
       const c = getColor(hi.project_id);
       body.innerHTML += `<div class="block habit" style="--c:${c}"><div class="title">${hi.habit_title}</div><div class="meta">${fmtHours(hi.habit_duration)}</div></div>`;
     }
-    for (const t of d.tasks) {
+    for (const p of d.placed) {
+      const c = getColor(p.project_id);
+      const overdue = isOverduePlacement(p) ? ' overdue-review' : '';
+      body.innerHTML += `<div class="block${overdue}" style="--c:${c}"><div class="title">${p.task_title}</div><div class="meta">${fmtHours(p.duration_minutes)} · ${p.priority} · ${p.project_id}</div></div>`;
+    }
+    for (const t of d.deadlines) {
       const c = getColor(t.project_id);
-      const overdue = isOverdueTask(t) ? ' overdue-review' : '';
-      body.innerHTML += `<div class="block${overdue}" style="--c:${c}"><div class="title">${t.title}</div><div class="meta">${fmtHours(t.duration_minutes)} · ${t.priority} · ${t.project_id}</div></div>`;
+      body.innerHTML += `<div class="block deadline" style="--c:${c}"><div class="title">${t.title}</div><div class="meta">due · ${t.project_id}</div></div>`;
     }
     for (const tl of d.logs) {
       const c = getColor(tl.project_id);
       body.innerHTML += `<div class="block logged" style="--c:${c}"><div class="title">${tl.task_title ?? tl.notes ?? '(untitled)'}</div><div class="meta">${fmtHours(tl.duration_minutes)} logged at ${fmtTime(tl.started_at)}</div></div>`;
     }
-    if (!d.meetings.length && !d.habits.length && !d.tasks.length && !d.logs.length) {
+    if (!d.meetings.length && !d.habits.length && !d.placed.length && !d.deadlines.length && !d.logs.length) {
       body.innerHTML += '<div class="empty">No items</div>';
     }
   }
@@ -534,13 +558,12 @@ function renderTimeline(days) {
   hoursHtml += '</div>';
   tl.innerHTML += hoursHtml;
 
-  // Collect floating tasks (tasks with no time/due)
+  // Deadline markers: unplaced tasks with a due date this week. They
+  // never become timeline blocks — only this floating strip (#79).
   for (const d of days) {
-    for (const t of d.tasks) {
-      if (!t.due || !t.due.includes('T')) {
-        const c = getColor(t.project_id);
-        floating.innerHTML += `<div class="block" style="--c:${c}"><div class="title">${t.title}</div><div class="meta">${fmtHours(t.duration_minutes)} · ${t.project_id}</div></div>`;
-      }
+    for (const t of d.deadlines) {
+      const c = getColor(t.project_id);
+      floating.innerHTML += `<div class="block deadline" style="--c:${c}"><div class="title">${t.title}</div><div class="meta">due ${fmtDate(t.due.slice(0,10))} · ${t.project_id}</div></div>`;
     }
   }
 
@@ -583,17 +606,16 @@ function renderTimeline(days) {
       </div>`;
     }
 
-    // Tasks with a time in their due date
-    for (const t of d.tasks) {
-      if (!t.due || !t.due.includes('T')) continue;
-      const c = getColor(t.project_id);
-      const top = timeToOffset(t.due);
-      const height = durationToPx(t.duration_minutes);
+    // Placements (UNCONFIRMED time_entry rows) — the planned blocks
+    for (const p of d.placed) {
+      const c = getColor(p.project_id);
+      const top = timeToOffset(p.start_at);
+      const height = durationToPx(p.duration_minutes);
       if (top < 0 || top >= totalHeight) continue;
-      const overdue = isOverdueTask(t) ? ' overdue-review' : '';
+      const overdue = isOverduePlacement(p) ? ' overdue-review' : '';
       dayHtml += `<div class="timeline-block${overdue}" style="--c:${c};top:${top}px;height:${height}px">
-        <div class="title">${t.title}</div>
-        ${height > 30 ? `<div class="meta">${fmtHours(t.duration_minutes)} · ${t.project_id}</div>` : ''}
+        <div class="title">${p.task_title}</div>
+        ${height > 30 ? `<div class="meta">${fmtHours(p.duration_minutes)} · ${p.project_id}</div>` : ''}
       </div>`;
     }
 
