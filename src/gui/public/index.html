@@ -300,18 +300,25 @@ let viewMode = localStorage.getItem('calendrome-view') || 'compact';
 let categoryView = localStorage.getItem('calendrome-category-view') || 'work';
 let weekData = null;
 
+// Local-timezone ISO date. Never use toISOString() for day bucketing:
+// it shifts to UTC, so evenings (UTC-) label tomorrow as today and
+// mornings (UTC+) label yesterday (#82).
+function localISODate(d) {
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+
 function getMonday(d) {
   const dt = new Date(d);
   const day = dt.getDay();
   const diff = dt.getDate() - day + (day === 0 ? -6 : 1);
   dt.setDate(diff);
-  return dt.toISOString().slice(0,10);
+  return localISODate(dt);
 }
 
 function addDays(dateStr, n) {
   const d = new Date(dateStr + 'T00:00:00');
   d.setDate(d.getDate() + n);
-  return d.toISOString().slice(0,10);
+  return localISODate(d);
 }
 
 function fmtDate(dateStr) {
@@ -496,7 +503,7 @@ function renderBudgets(data) {
 }
 
 function renderCompact(days) {
-  const todayStr = new Date().toISOString().slice(0,10);
+  const todayStr = localISODate(new Date());
   const grid = document.getElementById('grid');
   grid.innerHTML = '';
   for (let i = 0; i < 7; i++) {
@@ -542,7 +549,7 @@ function renderCompact(days) {
 }
 
 function renderTimeline(days) {
-  const todayStr = new Date().toISOString().slice(0,10);
+  const todayStr = localISODate(new Date());
   const totalHeight = HOUR_COUNT * HOUR_PX;
   const tl = document.getElementById('timeline');
   const floating = document.getElementById('floating');
