@@ -15,6 +15,7 @@
  * shape (summary, `@example`, `@see`).
  */
 import type { DB } from '../../db/connection.js';
+import { guiStart, guiStop, guiStatus } from '../../gui/launcher.js';
 import {
   createProject,
   listProjects,
@@ -1625,6 +1626,67 @@ export function buildTools(
           category_id: args.category_id,
         });
         return { removed };
+      },
+    },
+
+    // -------- gui --------
+    /**
+     * Start the read-only week-view GUI dashboard (a separate Node
+     * process, normally on port 3737) and return its URL. Idempotent:
+     * if the GUI is already running — tracked PID alive, or the port is
+     * already in use — it returns the existing URL instead of spawning a
+     * duplicate. The child is detached so it survives MCP restarts; stop
+     * it with `gui_stop`.
+     *
+     * @example
+     * gui_start()
+     *
+     * @see gui_stop, gui_status
+     */
+    {
+      name: 'gui_start',
+      description:
+        'Start the week-view GUI dashboard (separate process, default ' +
+        'port 3737) and return its URL. No-op if already running.',
+      inputSchema: { type: 'object', properties: {} },
+      async handler() {
+        return guiStart();
+      },
+    },
+    /**
+     * Stop the GUI server previously started by `gui_start`. Only kills a
+     * process recorded in the sidecar PID file — a GUI started by hand
+     * (`npm run gui`) is left alone.
+     *
+     * @example
+     * gui_stop()
+     *
+     * @see gui_start, gui_status
+     */
+    {
+      name: 'gui_stop',
+      description: 'Stop the GUI server started by gui_start.',
+      inputSchema: { type: 'object', properties: {} },
+      async handler() {
+        return guiStop();
+      },
+    },
+    /**
+     * Report GUI server status: { running, pid, url, source }. `source`
+     * is 'pid' (our spawn), 'port' (someone else's process on the port),
+     * or null. Use before `gui_start` to decide whether to start.
+     *
+     * @example
+     * gui_status()
+     *
+     * @see gui_start, gui_stop
+     */
+    {
+      name: 'gui_status',
+      description: 'Report GUI server status { running, pid, url, source }.',
+      inputSchema: { type: 'object', properties: {} },
+      async handler() {
+        return guiStatus();
       },
     },
   ];

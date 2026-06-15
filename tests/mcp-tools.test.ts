@@ -63,6 +63,9 @@ describe('MCP tools layer', () => {
       'list_availability',
       'delete_availability',
       'clear_availability',
+      'gui_start',
+      'gui_stop',
+      'gui_status',
     ]) {
       expect(names).toContain(expected);
     }
