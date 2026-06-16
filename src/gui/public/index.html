@@ -253,6 +253,91 @@
   }
   .floating-tasks .block { flex: 0 0 auto; max-width: 200px; }
   .floating-tasks:empty { display: none; }
+
+  /* Pending-tasks drawer (#85) */
+  .tasks-panel {
+    position: fixed;
+    top: 0;
+    right: 0;
+    width: 340px;
+    max-width: 90vw;
+    height: 100vh;
+    background: var(--surface);
+    border-left: 1px solid var(--border);
+    box-shadow: -8px 0 24px rgba(0,0,0,0.35);
+    display: none;
+    flex-direction: column;
+    z-index: 20;
+  }
+  .tasks-panel.open { display: flex; }
+  .tasks-panel-head, .tasks-panel-tabs {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .tasks-panel-head .spacer { flex: 1; }
+  .tasks-panel .tp-search {
+    margin: 10px 12px 0;
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 0.8rem;
+  }
+  .tasks-panel-body { padding: 12px; overflow-y: auto; flex: 1; }
+  .tasks-panel a.nav-btn { text-decoration: none; }
+  .task-group { margin-bottom: 16px; }
+  .task-group-head {
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+    margin: 0 0 6px;
+    font-weight: 600;
+  }
+  .count-badge {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 0 6px;
+    font-size: 0.68rem;
+    color: var(--text-muted);
+    margin-left: 4px;
+  }
+  .task-row {
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--c, var(--accent));
+    border-radius: 6px;
+    padding: 8px 10px;
+    margin-bottom: 7px;
+    background: var(--bg);
+  }
+  .task-row-main { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; }
+  .task-title { font-weight: 500; }
+  .task-dur { color: var(--text-muted); font-size: 0.72rem; white-space: nowrap; }
+  .task-row-meta { display: flex; gap: 6px; align-items: center; margin-top: 5px; flex-wrap: wrap; }
+  .task-proj {
+    font-size: 0.65rem;
+    color: var(--c, var(--accent));
+    border: 1px solid color-mix(in srgb, var(--c, var(--accent)) 40%, var(--border));
+    border-radius: 10px;
+    padding: 1px 7px;
+  }
+  .task-status {
+    font-size: 0.62rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1px 7px;
+  }
+  .task-status.status-IN_PROGRESS { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); }
+  .task-due { font-size: 0.65rem; color: var(--text-muted); }
+  .tasks-panel .hidden { display: none; }
 </style>
 </head>
 <body>
@@ -271,6 +356,8 @@
     <!-- Work view is the screen-share-safe default. "All" reveals everything. -->
     <button class="nav-btn active" id="btn-cat-work" title="Show only work projects (screen-share safe)">Work</button>
     <button class="nav-btn" id="btn-cat-all" title="Show every category">All</button>
+    <span style="width:1px;height:20px;background:var(--border);margin:0 4px"></span>
+    <button class="nav-btn" id="btn-tasks-panel" title="Show pending tasks">Tasks</button>
   </div>
 </header>
 
@@ -279,6 +366,24 @@
 <div class="week-grid" id="grid"></div>
 <div class="timeline-container" id="timeline"></div>
 
+<!-- Pending-tasks drawer (#85). Fixed-position so it overlays without
+     disturbing the week layout. Populated from /api/tasks. -->
+<aside class="tasks-panel" id="tasks-panel" aria-hidden="true">
+  <div class="tasks-panel-head">
+    <strong>Pending tasks</strong>
+    <span class="spacer"></span>
+    <a class="nav-btn" href="/tasks" title="Open full-page tasks view">⤢</a>
+    <button class="nav-btn" id="tasks-panel-close" aria-label="Close">✕</button>
+  </div>
+  <div class="tasks-panel-tabs">
+    <button class="nav-btn active" id="tp-tab-priorities">Priorities</button>
+    <button class="nav-btn" id="tp-tab-tasks">Tasks</button>
+  </div>
+  <input type="search" id="tp-search" class="tp-search hidden" placeholder="Search tasks…" />
+  <div class="tasks-panel-body" id="tasks-panel-body"></div>
+</aside>
+
+<script src="/tasks-ui.js"></script>
 <script>
 const DAYS = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
 const PALETTE = [
@@ -432,6 +537,8 @@ function setCategoryView(view) {
   document.getElementById('btn-cat-work').classList.toggle('active', view === 'work');
   document.getElementById('btn-cat-all').classList.toggle('active', view === 'all');
   if (weekData) renderView(filterWeekData(weekData));
+  // Keep the pending-tasks drawer in sync with the Work/All filter.
+  if (typeof tpLoaded !== 'undefined' && tpLoaded) tpRender();
 }
 
 function buildDays(data) {
@@ -684,6 +791,69 @@ document.getElementById('btn-timeline').onclick = () => setView('timeline');
 // Category toggle (Work / All)
 document.getElementById('btn-cat-work').onclick = () => setCategoryView('work');
 document.getElementById('btn-cat-all').onclick = () => setCategoryView('all');
+
+// ---- Pending-tasks drawer (#85) ----
+// Read-only: lists pending tasks (NEW/IN_PROGRESS/SCHEDULED) from
+// /api/tasks. Respects the same Work/All category filter as the week
+// view. Loads lazily the first time it's opened.
+let tpTasks = [];
+let tpMeta = {};
+let tpTab = 'priorities';
+let tpLoaded = false;
+
+function tpVisibleTasks() {
+  if (categoryView === 'all') return tpTasks;
+  return tpTasks.filter((t) => (tpMeta[t.project_id]?.category_id || 'work') === categoryView);
+}
+
+function tpRender() {
+  const body = document.getElementById('tasks-panel-body');
+  const search = document.getElementById('tp-search');
+  const tasks = tpVisibleTasks();
+  if (tpTab === 'priorities') {
+    search.classList.add('hidden');
+    window.TasksUI.renderPriorities(body, tasks, tpMeta);
+  } else {
+    search.classList.remove('hidden');
+    window.TasksUI.renderUpNext(body, tasks, tpMeta, { search: search.value, sort: 'priority' });
+  }
+}
+
+async function tpLoad() {
+  if (tpLoaded) return;
+  tpLoaded = true;
+  const [projects, resp] = await Promise.all([
+    fetch('/api/projects').then((r) => r.json()),
+    fetch('/api/tasks').then((r) => r.json()),
+  ]);
+  tpMeta = {};
+  for (const p of projects) {
+    tpMeta[p.id] = { name: p.name, color: p.color, category_id: p.category_id || 'work' };
+  }
+  tpTasks = resp.tasks || [];
+  tpRender();
+}
+
+function tpSetTab(next) {
+  tpTab = next;
+  document.getElementById('tp-tab-priorities').classList.toggle('active', next === 'priorities');
+  document.getElementById('tp-tab-tasks').classList.toggle('active', next === 'tasks');
+  tpRender();
+}
+
+function tpToggle() {
+  const panel = document.getElementById('tasks-panel');
+  const open = panel.classList.toggle('open');
+  panel.setAttribute('aria-hidden', open ? 'false' : 'true');
+  document.getElementById('btn-tasks-panel').classList.toggle('active', open);
+  if (open) tpLoad();
+}
+
+document.getElementById('btn-tasks-panel').onclick = tpToggle;
+document.getElementById('tasks-panel-close').onclick = tpToggle;
+document.getElementById('tp-tab-priorities').onclick = () => tpSetTab('priorities');
+document.getElementById('tp-tab-tasks').onclick = () => tpSetTab('tasks');
+document.getElementById('tp-search').addEventListener('input', tpRender);
 
 // Init
 setView(viewMode);
