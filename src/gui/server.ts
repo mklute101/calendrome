@@ -18,6 +18,7 @@ import { migrate } from '../db/migrate.js';
 import { listProjects } from '../projects.js';
 import { listCategories } from '../categories.js';
 import { buildWeekPayload } from './week-data.js';
+import { buildTasksPayload } from './tasks-data.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DB_PATH = process.env.CALENDROME_DB ?? 'calendrome.db';
@@ -87,6 +88,21 @@ app.get('/api/week', (req, res) => {
   const db = getDb();
   try {
     res.json(buildWeekPayload(db, start));
+  } finally {
+    db.close();
+  }
+});
+
+/**
+ * List every pending/unfinished task (NEW, IN_PROGRESS, SCHEDULED),
+ * ordered by priority then due date. Source for the tasks panel and
+ * the full-page `/tasks` view (#85). Assembly lives in `tasks-data.ts`
+ * so the payload contract is unit-testable without the server.
+ */
+app.get('/api/tasks', (_req, res) => {
+  const db = getDb();
+  try {
+    res.json(buildTasksPayload(db));
   } finally {
     db.close();
   }
