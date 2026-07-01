@@ -210,6 +210,43 @@ mcp__calendrome__export_timesheet {
 
 Present inline.
 
+### Step 6 — Weekly Slack preview (start-of-week "here's my week" post)
+
+Triggered on a Monday session, or any time the user asks ("slack preview", "week preview", "post for the team"). Produces a **copy-paste-ready Slack message** summarizing the week's plan in **outline form with ticket links** — useful as a recurring "here's where my hours are going" post, especially on a part-time schedule.
+
+Build entirely from data already gathered in Steps 1–2 (budgets, scheduled task blocks, Jira issues, OOO blocks) — no new fetches needed if the planning view just ran.
+
+**Hours per project:**
+- If settings define hour targets (`weekly_hours_target` total, or a `weekly_hours` field per entry in `project_prefixes`), use those.
+- Otherwise fall back to each project's budget `allocated_minutes` (or `scheduled_minutes` for planned-only).
+- Round to whole/half hours and prefix with `~`.
+
+**Tickets per project (the outline body):**
+- List the Jira keys scheduled/planned for each project this week (from the calendrome task blocks' `notes` plus the Step 2 Jira pull).
+- Render each as a Slack link: `<<browse-url>|<KEY>> — <short summary>`. Derive `<browse-url>` from the full `browse/` URL in the task `notes` when present; otherwise build `https://<site>/browse/<KEY>` from the project's configured Atlassian site.
+- If a project has budgeted hours but no ticket, write `— no ticket assigned yet` instead of a sub-list.
+
+**Out-days (OOO):**
+- Scan the week's availability overrides / blocks for full-day `available: 0` entries (holidays, PTO) and any all-day OOO calendar events. List them on an `Out:` line; omit the line entirely if there are none.
+
+**Output format** (Slack mrkdwn — `*bold*`, `<url|label>` links, `•`/`◦` bullets), inside a fenced block so it copies cleanly:
+
+```
+*Week of <Mon Mon D>* — my plan
+
+• *<Project / client>* — ~<X>h
+   ◦ <https://<site>/browse/ACME-42|ACME-42> — <short summary>
+   ◦ <https://<site>/browse/ACME-51|ACME-51> — <short summary>
+• *<Project / client>* — ~<X>h — no ticket assigned yet
+• *<Internal project>* — ~<X>h — standups, internal, admin
+
+Out: <day(s)>
+
+<one-line focus / priority note>
+```
+
+Offer to adjust tone (more/less casual) and to plug in real hour targets if `weekly_hours_target` is not set in settings.
+
 ## Detection helpers
 
 ### Gap detection
