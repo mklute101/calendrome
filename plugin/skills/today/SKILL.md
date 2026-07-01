@@ -45,10 +45,10 @@ Otherwise render a compact bullet list (title, planned hours, time range) and as
 
 ```
 Yesterday has 4 entries waiting for review:
-  · A2-151 WebKit hotfix       2.0h placed (09:00–11:00)
-  · ATN Internal Meeting       0.5h placed (14:00–14:30)
-  · Beehiiv feed (A2-150)      2.0h placed (11:00–13:00)
-  · SAN PR review              1.0h placed (15:00–16:00)
+  · ACME-42 login hotfix       2.0h placed (09:00–11:00)
+  · ACME Internal Meeting      0.5h placed (14:00–14:30)
+  · Newsletter feed (ACME-41)  2.0h placed (11:00–13:00)
+  · GLBX PR review             1.0h placed (15:00–16:00)
 
 How'd yesterday actually go?
 ```
@@ -59,10 +59,10 @@ Then wait for the user's single sentence.
 
 Read the sentence, map each phrase to one of the listed entries (or a brand-new entry), and fire all MCP calls **in parallel in one turn**:
 
-- **Amended duration** ("4h on the WebKit thing") → `confirm_placement(id, { actual_minutes: 240 })`
+- **Amended duration** ("4h on the login thing") → `confirm_placement(id, { actual_minutes: 240 })`
 - **As-placed / "as planned"** ("the rest as placed", "standup as scheduled") → `confirm_placement(id)` with no amendment
 - **Skipped / didn't happen** ("skip the meeting", "we cancelled standup") → `skip_placement(id)`
-- **New work not on the list** ("I also spent an hour on the dashboard bug") → `log_time(...)`. Round to 15-minute increments. **Before logging, always try to link a task**: if the notes contain a Jira key (e.g., `A2-152`) or otherwise map to a known task, call `mcp__calendrome__search_tasks { query }` first and pass the matched `task_id` to `log_time`. Only log without `task_id` when the search rules out a match — that's a legitimate one-off (e.g., "subdomain SEO investigation" with no ticket). Don't ship an entry where the user's own conversation referenced a ticket but the entry isn't linked to it.
+- **New work not on the list** ("I also spent an hour on the dashboard bug") → `log_time(...)`. Round to 15-minute increments. **Before logging, always try to link a task**: if the notes contain a Jira key (e.g., `ACME-43`) or otherwise map to a known task, call `mcp__calendrome__search_tasks { query }` first and pass the matched `task_id` to `log_time`. Only log without `task_id` when the search rules out a match — that's a legitimate one-off (e.g., "subdomain SEO investigation" with no ticket). Don't ship an entry where the user's own conversation referenced a ticket but the entry isn't linked to it.
 - **Reschedule** ("the PR review actually ran 16:00–17:00") → `move_placement(id, new_start_at, { new_end_at? })`, then `confirm_placement` if duration was also amended.
 
 #### Edge cases (be explicit)
@@ -75,7 +75,7 @@ Read the sentence, map each phrase to one of the listed entries (or a brand-new 
 After all calls resolve, summarize back briefly:
 
 ```
-Logged: 7.5h across 3 projects (A2 5h, SAN 1h, ATN 1.5h skipped). Ready for today.
+Logged: 7.5h across 3 projects (ACME 5h, GLBX 1h, internal 1.5h skipped). Ready for today.
 ```
 
 Then proceed to Step 1.
@@ -88,20 +88,33 @@ Call Google Calendar `list_events`:
 - `timeMax`: today 23:59:59 in `<calendar_timezone>`
 - `timeZone`: `<calendar_timezone>`
 
+### Step 1.5 — Sync calendar into calendrome
+
+Calendrome does **not** auto-sync Google Calendar — events only land in it when imported. Right after fetching the calendar, push today's events into calendrome so its layout matches reality (otherwise blocks, the week view, and EOD review silently miss meetings).
+
+Call `mcp__calendrome__sync_calendar_events` with the events from Step 1:
+
+- Skip `transparency: "transparent"` / `AVAILABILITY_FREE` reminder-type events (bill reminders, tentative holds) — those are nudges, not blockers.
+- `is_meeting: true` for anything multi-attendee or sync/standup/review-like; `false` otherwise.
+- `project_id`: match the event title against `project_prefixes` (case-insensitive substring vs `name`); use that prefix's `project_id`, else `personal` for clearly personal items, else omit.
+- Pass each event's Google `id` and `calendar_id` verbatim — the import **upserts by id**, so re-running the brief is idempotent and won't create duplicates. Do **not** pass `clear_range` (it deletes rows in the window and can take placements with it); rely on upsert instead.
+
+This runs every morning brief, silently — only surface it if the sync errors.
+
 ### Step 2 — Extract Jira context from calendar events
 
 Scan event titles for:
-- Explicit Jira keys (e.g., `A2-105`, `WEB-1806`)
-- Project/task references that map to known tickets (e.g., a calendar block titled "ATN: Beehiiv" likely maps to a known ticket)
+- Explicit Jira keys (e.g., `ACME-30`, `GLBX-18`)
+- Project/task references that map to known tickets (e.g., a calendar block titled "ACME: Newsletter" likely maps to a known ticket)
 
 Build a focused JQL query combining what was found:
-- Any keys extracted: `key IN (A2-105, A2-103, ...)`
+- Any keys extracted: `key IN (ACME-30, ACME-28, ...)`
 - In-progress work: `status = "In Progress"`
 - Scoped to user: `assignee = "<atlassian_account_id>"`
 
 Example:
 ```
-assignee = "<atlassian_account_id>" AND (key IN (A2-105) OR status = "In Progress") ORDER BY priority DESC
+assignee = "<atlassian_account_id>" AND (key IN (ACME-30) OR status = "In Progress") ORDER BY priority DESC
 ```
 
 Call `mcp__plugin_atlassian_atlassian__searchJiraIssuesUsingJql`:
@@ -122,10 +135,10 @@ Categorize events into **meetings** (standups, syncs, reviews, multi-attendee Zo
 ## Today — [Day, Month Date YYYY]
 
 ### Timeline
-| Time        | Type     | Item                 | JIRA   |
-|-------------|----------|----------------------|--------|
-| 09:00-09:30 | Meet     | Standup              |        |
-| 09:30-11:00 | Task     | ATN: Beehiiv         | A2-105 |
+| Time        | Type     | Item                 | JIRA    |
+|-------------|----------|----------------------|---------|
+| 09:00-09:30 | Meet     | Standup              |         |
+| 09:30-11:00 | Task     | ACME: Newsletter     | ACME-30 |
 
 ### Active JIRA Tickets
 - [KEY] Summary — Status (linked to calendar block / no block today)
@@ -145,9 +158,9 @@ For each task block, ask: "Do we have what we need to do this?" Gather context p
 Format:
 ```
 ### Ready to go?
-- **ATN: Franchise Corner (A2-103)** — PR #XX open, branch sprint72/...; last comment: "fix archive pages". Ready
-- **SAN: WEB-1806** — No PR found. May need branch.
-- **M: Call IRS** — Last MO DOR email 2/16 (unread, encrypted). Open first.
+- **ACME: Landing page (ACME-28)** — PR #XX open, branch sprint72/...; last comment: "fix archive pages". Ready
+- **GLBX: GLBX-18** — No PR found. May need branch.
+- **M: Call dentist** — last email 2/16 (unread). Open first.
 ```
 
 After presenting:
@@ -162,7 +175,7 @@ After presenting:
 Stay engaged through the day. Respond to these patterns:
 
 ### Task completion
-"Done with [task]", "finished [ticket]", "completed ATN-42":
+"Done with [task]", "finished [ticket]", "completed ACME-42":
 1. Identify the Jira ticket (by key or matching description)
 2. Use `mcp__plugin_atlassian_atlassian__getTransitionsForJiraIssue` to find available transitions
 3. Ask: "Want me to transition [KEY] to [next status]?"
@@ -210,9 +223,9 @@ mcp__calendrome__list_pending_review({
 
 ```
 Today so far — 3 entries waiting to be confirmed:
-  · A2-151 WebKit hotfix    2.0h placed (09:00–11:00)
-  · Standup                 0.5h placed (11:00–11:30)
-  · Beehiiv feed (A2-150)   2.0h placed (13:00–15:00)
+  · ACME-42 login hotfix      2.0h placed (09:00–11:00)
+  · Standup                   0.5h placed (11:00–11:30)
+  · Newsletter feed (ACME-41) 2.0h placed (13:00–15:00)
 
 How'd today actually go?
 ```
@@ -234,7 +247,7 @@ Apply the same four edge cases (everything-as-planned, partial coverage, new wor
 After placements resolve:
 
 1. **Flag pending Jira transitions**: tickets worked on today that haven't moved status — offer to transition.
-2. **Summarize**: "Logged 7.0h. Open: A2-151 still In Progress. See you tomorrow."
+2. **Summarize**: "Logged 7.0h. Open: ACME-42 still In Progress. See you tomorrow."
 
 Catching up before bed means tomorrow's morning brief starts with a clean slate.
 
