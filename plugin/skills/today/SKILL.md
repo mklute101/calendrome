@@ -83,26 +83,31 @@ Logged: 7.5h across 3 projects (ACME 5h, GLBX 1h, internal 1.5h skipped). Ready 
 
 Then proceed to Step 1.
 
-### Step 1 — Fetch today's calendar
+### Step 1 — Fetch the week's calendar
+
+Fetch the whole visible week, not just today (#93) — days whose brief
+never ran, and meetings added after a brief, must still land in
+calendrome. The brief *displays* today; it *syncs* the week.
 
 Call Google Calendar `list_events`:
 - `calendarId`: `<calendar_id>`
-- `timeMin`: today 00:00:00 in `<calendar_timezone>` (ISO 8601)
-- `timeMax`: today 23:59:59 in `<calendar_timezone>`
+- `timeMin`: this week's Monday 00:00:00 in `<calendar_timezone>` (ISO 8601)
+- `timeMax`: next week's Sunday 23:59:59 in `<calendar_timezone>`
 - `timeZone`: `<calendar_timezone>`
 
 ### Step 1.5 — Sync calendar into calendrome
 
-Calendrome does **not** auto-sync Google Calendar — events only land in it when imported. Right after fetching the calendar, push today's events into calendrome so its layout matches reality (otherwise blocks, the week view, and EOD review silently miss meetings).
+Calendrome does **not** auto-sync Google Calendar — events only land in it when imported. Right after fetching the calendar, push the fetched window into calendrome so its layout matches reality (otherwise blocks, the week view, and EOD review silently miss meetings).
 
 Call `mcp__calendrome__sync_calendar_events` with the events from Step 1:
 
-- Skip `transparency: "transparent"` / `AVAILABILITY_FREE` reminder-type events (bill reminders, tentative holds) — those are nudges, not blockers.
+- `window: { from: "<this Monday ISO date>", to: "<next Sunday ISO date>" }` — the range fetched in Step 1. This prunes synced-but-since-cancelled meetings inside the window; it only ever removes UNCONFIRMED gcal-sync rows, so placements, confirmed time, and habits are safe. (Do **not** pass the legacy `clear_range` — `window` supersedes it.)
+- Skip `transparency: "transparent"` / `AVAILABILITY_FREE` reminder-type events (bill reminders, tentative holds) — those are nudges, not blockers. Skipping them is safe with `window`: they were never synced, so there's nothing to prune.
 - `is_meeting: true` for anything multi-attendee or sync/standup/review-like; `false` otherwise.
 - `project_id`: match the event title against `project_prefixes` (case-insensitive substring vs `name`); use that prefix's `project_id`, else `personal` for clearly personal items, else omit.
-- Pass each event's Google `id` and `calendar_id` verbatim — the import **upserts by id**, so re-running the brief is idempotent and won't create duplicates. Do **not** pass `clear_range` (it deletes rows in the window and can take placements with it); rely on upsert instead.
+- Pass each event's Google `id` and `calendar_id` verbatim — the import **upserts by id**, so re-running the brief is idempotent and won't create duplicates.
 
-This runs every morning brief, silently — only surface it if the sync errors.
+This runs every morning brief, silently — only surface it if the sync errors. For the rest of the brief (Step 2 onward), work from today's slice of the fetched events.
 
 ### Step 2 — Extract Jira context from calendar events
 

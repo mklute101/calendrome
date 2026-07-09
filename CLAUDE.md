@@ -75,8 +75,10 @@ sentence — never a click path.
 - **GUI is a separate Express process** — reads same SQLite file,
   fresh DB connection per request for cross-process visibility
 - **Skills are the UX layer** — `/week`, `/calendrome`, `/focus`
-- **Calendar events synced in** — planner skill fetches from Google
-  Calendar MCP, pushes into calendrome via `sync_calendar_events`
+- **Calendar events synced in** — planner skills fetch the whole
+  visible week from the Google Calendar MCP and push it via
+  `sync_calendar_events` with a `window` — upsert + prune of
+  cancelled meetings, never touching confirmed/placed rows (#93)
 - **Harvest push is bulk** — one MCP call loops internally
 
 ## Conventions

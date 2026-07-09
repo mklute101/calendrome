@@ -8,7 +8,7 @@
  * Idempotent: re-syncing the same event id updates in place.
  */
 import type { DB } from './db/connection.js';
-import { toCanonicalUtc } from './day-range.js';
+import { toCanonicalUtc, toDayRange } from './day-range.js';
 
 export interface CalendarEventInput {
   id: string;
@@ -33,9 +33,27 @@ export interface CalendarEvent {
   status: 'UNCONFIRMED' | 'CONFIRMED';
 }
 
+/**
+ * Prune window for mirror-sync (#93). When provided, gcal-sync
+ * UNCONFIRMED rows inside the window whose `external_id` is not in
+ * the synced payload are deleted — the event was cancelled or moved
+ * out of the window in Google Calendar. Bounds are inclusive UTC day
+ * buckets (`day-range.ts`, #92). CONFIRMED rows are historical and
+ * always survive; placements/habits/manual rows are never touched.
+ *
+ * The prune is window-global, not per-calendar: it assumes the sync
+ * payload is the complete truth for the window. If multiple calendar
+ * feeds ever sync independently, scope the prune per feed first.
+ */
+export interface SyncWindow {
+  from: string;
+  to: string;
+}
+
 export function syncCalendarEvents(
   db: DB,
   events: CalendarEventInput[],
+  window?: SyncWindow,
 ): { upserted: number; deleted: number } {
   // Write into the unified time_entry table. On conflict (existing
   // external_id), update only the sync-driven fields and leave confirmation
@@ -55,6 +73,7 @@ export function syncCalendarEvents(
   `);
 
   let upserted = 0;
+  let deleted = 0;
   const txn = db.transaction(() => {
     for (const e of events) {
       upsertTimeEntry.run(
@@ -67,10 +86,29 @@ export function syncCalendarEvents(
       );
       upserted++;
     }
+
+    if (window) {
+      const { fromDay, toDay } = toDayRange(window.from, window.to);
+      const ids = events.map((e) => e.id);
+      const notInPayload = ids.length
+        ? `AND external_id NOT IN (${ids.map(() => '?').join(',')})`
+        : '';
+      deleted = db
+        .prepare(`
+          DELETE FROM time_entry
+           WHERE source = 'gcal-sync'
+             AND status = 'UNCONFIRMED'
+             AND external_id IS NOT NULL
+             AND DATE(start_at) >= ?
+             AND DATE(start_at) <= ?
+             ${notInPayload}
+        `)
+        .run(fromDay, toDay, ...ids).changes as number;
+    }
   });
   txn();
 
-  return { upserted, deleted: 0 };
+  return { upserted, deleted };
 }
 
 export function deleteCalendarEventsInRange(

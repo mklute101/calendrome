@@ -1287,12 +1287,21 @@ export function buildTools(
      * UNCONFIRMED. Project assignment is matched by uppercase
      * prefix on the event summary (e.g. `[ACME] Sprint planning`).
      *
-     * If `clear_range` is provided, existing gcal-sync events in
-     * that range are deleted first — used by the weekly planner
-     * to keep the mirror tight against Google Calendar.
+     * If `window` is provided (#93), the sync is a true mirror for
+     * that range: after upserting, UNCONFIRMED gcal-sync rows inside
+     * the window that are **not** in the payload are pruned — they
+     * were cancelled or rescheduled in Google Calendar. Bounds are
+     * inclusive UTC day buckets. CONFIRMED rows, placements, habits,
+     * and manual entries are never touched, so passing the window is
+     * always safe. Pass a window matching the fetched range on every
+     * sync; omit it only for partial pushes (a single new event).
+     *
+     * `clear_range` (delete-then-reinsert) is the legacy variant —
+     * prefer `window`, which preserves row identity and any state on
+     * re-synced rows instead of recreating them.
      *
      * @example
-     * sync_calendar_events({ events: [...], clear_range: { from: '2026-05-04', to: '2026-05-10' } })
+     * sync_calendar_events({ events: [...], window: { from: '2026-05-04', to: '2026-05-17' } })
      *
      * @see list_pending_review, confirm_placement, get_week_layout
      */
@@ -1300,7 +1309,9 @@ export function buildTools(
       name: 'sync_calendar_events',
       description:
         'Import external calendar events into Calendrome. ' +
-        'If clear_range is provided, existing events in that range are deleted first.',
+        'If window is provided, unconfirmed synced events in that range ' +
+        'missing from the payload are pruned (mirror semantics; safe for ' +
+        'placements). clear_range (legacy) deletes the range first instead.',
       inputSchema: {
         type: 'object',
         required: ['events'],
@@ -1321,6 +1332,14 @@ export function buildTools(
               },
             },
           },
+          window: {
+            type: 'object',
+            properties: {
+              from: { type: 'string' },
+              to: { type: 'string' },
+            },
+            required: ['from', 'to'],
+          },
           clear_range: {
             type: 'object',
             properties: {
@@ -1332,17 +1351,17 @@ export function buildTools(
         },
       },
       async handler(args) {
-        let deleted = 0;
+        let cleared = 0;
         if (args.clear_range) {
-          deleted = deleteCalendarEventsInRange(
+          cleared = deleteCalendarEventsInRange(
             db,
             args.clear_range.from,
             args.clear_range.to,
           );
         }
         const events: CalendarEventInput[] = args.events ?? [];
-        const result = syncCalendarEvents(db, events);
-        return { upserted: result.upserted, deleted };
+        const result = syncCalendarEvents(db, events, args.window);
+        return { upserted: result.upserted, deleted: result.deleted + cleared };
       },
     },
 
