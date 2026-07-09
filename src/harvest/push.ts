@@ -1,4 +1,5 @@
 import type { DB } from '../db/connection.js';
+import { toDayRange } from '../day-range.js';
 import { listProjects, type Project } from '../projects.js';
 import { listPendingReview } from '../time-entry.js';
 import { HarvestClient } from './client.js';
@@ -50,11 +51,9 @@ export async function harvestPushTimesheet(
   // (place_task / log_time / skip / confirm). The guard always asks
   // about the 'work' category — Harvest doesn't care about personal.
   if (!force) {
-    // listPendingReview filter is `start_at >= from AND start_at < to`,
-    // so widen the upper bound to capture entries on the final date.
     const pending = listPendingReview(db, {
-      from: `${fromDate}T00:00:00Z`,
-      to: `${toDate}T23:59:59.999Z`,
+      from: fromDate,
+      to: toDate,
       category: 'work',
     });
     if (pending.length > 0) {
@@ -79,6 +78,7 @@ export async function harvestPushTimesheet(
   if (categories.length === 0) {
     return { pushed: 0, skipped: 0, failed: 0, errors: [] };
   }
+  const { fromDay, toDay } = toDayRange(fromDate, toDate);
   const placeholders = categories.map(() => '?').join(',');
   const rows = db
     .prepare(
@@ -101,7 +101,7 @@ export async function harvestPushTimesheet(
          AND p.category_id IN (${placeholders})
        ORDER BY te.start_at`,
     )
-    .all(fromDate, toDate, ...categories) as TimeEntryRow[];
+    .all(fromDay, toDay, ...categories) as TimeEntryRow[];
 
   const projects = listProjects(db);
   const projectMap = new Map<string, Project>(projects.map((p) => [p.id, p]));

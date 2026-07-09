@@ -84,6 +84,9 @@ sentence — never a click path.
 - Prefixes are uppercase (`ACME`, `GLBX`), map 1:1 to `project.id`
 - Dates are ISO 8601, stored as TEXT in SQLite
 - Time is minutes internally, decimal hours in exports (1.25h = 75 min)
+- `time_entry` range reads normalize `from`/`to` through
+  `src/day-range.ts`: inclusive UTC day buckets, never raw string
+  compares against `DATE(start_at)` (#92)
 - Tests use in-memory SQLite (`freshDb()`) — isolated, no cleanup
 - No PII in the repo — fictional names, `<FILL IN>` markers in skills
 

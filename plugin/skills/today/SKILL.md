@@ -33,11 +33,14 @@ Before today's plan, close out yesterday. Call:
 
 ```
 mcp__calendrome__list_pending_review({
-  from: <yesterday 00:00 in calendar_timezone>,
-  to:   <yesterday 23:59 in calendar_timezone>,
+  from: <yesterday's date, YYYY-MM-DD>,
+  to:   <yesterday's date, YYYY-MM-DD>,
   category: 'work'
 })
 ```
+
+(Ranges are day-granular and inclusive — pass plain dates, not
+timestamps; a timestamp is bucketed to its UTC day.)
 
 If the list is empty, skip to Step 1.
 
@@ -213,11 +216,16 @@ Same list-then-one-sentence pattern as the morning brief — just scoped to **to
 
 ```
 mcp__calendrome__list_pending_review({
-  from: <today 00:00 in calendar_timezone>,
-  to:   <now in calendar_timezone>,
+  from: <today's date, YYYY-MM-DD>,
+  to:   <today's date, YYYY-MM-DD>,
   category: 'work'
 })
 ```
+
+The range is day-granular and inclusive, so placements later today
+that haven't started yet come back too. Drop any entry whose
+`start_at` is still in the future before rendering — the wrap only
+reviews work that has already started.
 
 ### Step 2 — Render and ask one question
 

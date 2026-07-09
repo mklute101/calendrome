@@ -136,7 +136,7 @@ GUI and other reads currently using `tasks.time_spent_minutes` switch to `LEFT J
 |---|---|---|
 | `confirm_placement` | `(time_entry_id, { actual_minutes?, project_id?, notes? })` | Flip UNCONFIRMED → CONFIRMED; stamp `confirmed_at`. Optional `actual_minutes` overrides the placed duration; optional `project_id` re-assigns. Idempotent on already-CONFIRMED entries (no-op + warning). |
 | `skip_placement` | `(time_entry_id)` | Delete the row. Rejects on `status='CONFIRMED'`. Rejects on `source='gcal-sync'` (let gcal own those — delete the event there and let next sync remove). |
-| `list_pending_review` | `({ from?, to?, category? })` | UNCONFIRMED entries with `start_at < now()`. `category` defaults to `'work'`. |
+| `list_pending_review` | `({ from?, to?, category? })` | UNCONFIRMED entries in the `from`/`to` range — day-granular and inclusive, shared with `get_timesheet_summary` via `src/day-range.ts` (#92); default range ends today, so today's still-upcoming placements are included and callers filter them out where "already started" matters. `category` defaults to `'work'`. |
 | `move_placement` | `(time_entry_id, new_start_at, { new_end_at?, preserve_duration? = true })` | Reschedule an unconfirmed entry. Only `status='UNCONFIRMED'`. Only `source IN ('placement','habit')`. Default preserves duration. |
 
 ### Removed tools (2)
@@ -374,7 +374,7 @@ The existing 110+ vitest suite must pass post-migration. Tests writing directly 
 | **State machine** | UNCONFIRMED → CONFIRMED via `confirm_placement` writes `confirmed_at`; CONFIRMED cannot transition back; CONFIRMED entries immutable except for `notes` |
 | **Confirm semantics** | Confirm as-placed uses `end_at − start_at`; `actual_minutes` override stored; `project_id` override reassigns |
 | **Skip** | Deletes the row; rejects on CONFIRMED; rejects on `source='gcal-sync'` |
-| **list_pending_review** | Returns only `status='UNCONFIRMED' AND start_at < now()`; respects `category` filter (defaults `'work'`); future placements never appear |
+| **list_pending_review** | Returns only `status='UNCONFIRMED'` rows in the inclusive day-granular `from`/`to` range (same bucketing as `get_timesheet_summary`, #92); respects `category` filter (defaults `'work'`) |
 | **move_placement** | Preserves duration by default; accepts `new_end_at`; rejects on CONFIRMED, on `source='gcal-sync'`, on `source='manual'` |
 | **Export filter** | `export_timesheet` defaults to `categories=['work']`; personal excluded by default; `['work','personal']` includes both; `['personal']` personal-only |
 | **Harvest guard** | `harvest_push_timesheet` refuses if any UNCONFIRMED in range; lists offenders; `force: true` overrides |

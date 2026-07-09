@@ -1,4 +1,5 @@
 import type { DB } from './db/connection.js';
+import { toDayRange } from './day-range.js';
 
 interface QueryRow {
   date: string;
@@ -89,6 +90,10 @@ function query(
   status: 'CONFIRMED' | 'UNCONFIRMED',
 ): QueryRow[] {
   if (categories.length === 0) return [];
+  // Normalize bounds to inclusive UTC day buckets so a caller-supplied
+  // timestamp can't lexicographically outrank DATE(te.start_at) and
+  // drop the first day of the range (#92).
+  const { fromDay, toDay } = toDayRange(fromDate, toDate);
   const placeholders = categories.map(() => '?').join(',');
   // task_id is optional on time_entry, so LEFT JOIN tasks. project_id
   // is similarly nullable; INNER JOIN projects ensures only categorized
@@ -116,7 +121,7 @@ function query(
       ORDER BY date, COALESCE(t.id, te.id)`;
   return db
     .prepare(sql)
-    .all(status, fromDate, toDate, ...categories) as QueryRow[];
+    .all(status, fromDay, toDay, ...categories) as QueryRow[];
 }
 
 function rowsToTimesheetRows(rows: QueryRow[]): TimesheetRow[] {
@@ -137,6 +142,10 @@ function rowsToTimesheetRows(rows: QueryRow[]): TimesheetRow[] {
  * Reads from `time_entry` filtered to `status = 'CONFIRMED'`. Defaults
  * to the `work` category — personal entries are excluded unless the
  * caller asks for them via `categories`.
+ *
+ * `fromDate`/`toDate` accept a plain date or an ISO timestamp; both
+ * are bucketed to inclusive UTC days (`day-range.ts`), the same
+ * semantics as `listPendingReview`.
  */
 export function getTimesheetSummary(
   db: DB,
