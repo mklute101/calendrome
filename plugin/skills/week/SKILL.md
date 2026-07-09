@@ -32,12 +32,14 @@ Call:
 ```
 mcp__calendrome__list_pending_review {
   from: "<last Monday ISO date>",
-  to:   "<this Monday ISO date>",
+  to:   "<last Sunday ISO date>",
   category: "work"
 }
 ```
 
-(The range is the previous Mon–Sun, exclusive of this Monday.)
+(The range is the previous Mon–Sun. Both bounds are day-granular and
+inclusive — passing this Monday as `to` would pull today's placements
+into last week's review.)
 
 **If the result is empty:** brief acknowledgement and continue —
 
