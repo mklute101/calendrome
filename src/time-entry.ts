@@ -1,4 +1,5 @@
 import type { DB } from './db/connection.js';
+import { toDayRange } from './day-range.js';
 
 export type TimeEntryStatus = 'UNCONFIRMED' | 'CONFIRMED';
 export type TimeEntrySource = 'placement' | 'gcal-sync' | 'habit' | 'manual';
@@ -154,20 +155,30 @@ export interface ListPendingReviewOptions {
   category?: string;
 }
 
+/**
+ * `from`/`to` accept a plain date or an ISO timestamp; both are
+ * bucketed to inclusive UTC days (`day-range.ts`) and compared against
+ * `DATE(te.start_at)` — the same semantics as `getTimesheetSummary`,
+ * so the two can never disagree about which rows a range contains
+ * (#92). The default range ends today, so still-upcoming placements
+ * dated today are included.
+ */
 export function listPendingReview(db: DB, opts: ListPendingReviewOptions): TimeEntryRow[] {
   const category = opts.category ?? 'work';
-  const from = opts.from ?? '1970-01-01T00:00:00Z';
-  const to = opts.to ?? new Date().toISOString();
+  const { fromDay, toDay } = toDayRange(
+    opts.from ?? '1970-01-01',
+    opts.to ?? new Date().toISOString(),
+  );
 
   return db.prepare(`
     SELECT te.* FROM time_entry te
     LEFT JOIN projects p ON p.id = te.project_id
     WHERE te.status = 'UNCONFIRMED'
-      AND te.start_at >= ?
-      AND te.start_at < ?
+      AND DATE(te.start_at) >= ?
+      AND DATE(te.start_at) <= ?
       AND (p.category_id = ? OR (p.category_id IS NULL AND ? = 'work'))
     ORDER BY te.start_at ASC
-  `).all(from, to, category, category) as TimeEntryRow[];
+  `).all(fromDay, toDay, category, category) as TimeEntryRow[];
 }
 
 export interface MoveOptions {

@@ -15,6 +15,7 @@
  * shape (summary, `@example`, `@see`).
  */
 import type { DB } from '../../db/connection.js';
+import { toDayRange } from '../../day-range.js';
 import { guiStart, guiStop, guiStatus } from '../../gui/launcher.js';
 import {
   createProject,
@@ -578,8 +579,9 @@ export function buildTools(
      * habit instances, and synced calendar events — grouped for display.
      *
      * Used by the planner skill to reason about what's already on
-     * the calendar before suggesting new placements. `from`/`to` are
-     * ISO date strings (YYYY-MM-DD). The response includes the
+     * the calendar before suggesting new placements. `from`/`to`
+     * are bucketed to inclusive UTC days — plain dates preferred,
+     * ISO timestamps tolerated. The response includes the
      * placement rows themselves (`placements`: time_entry id,
      * start/end, status) so callers can confirm/move/skip without a
      * second lookup.
@@ -597,14 +599,24 @@ export function buildTools(
         type: 'object',
         required: ['from', 'to'],
         properties: {
-          from: { type: 'string' },
-          to: { type: 'string' },
+          from: {
+            type: 'string',
+            description:
+              'Range start: YYYY-MM-DD or ISO timestamp, bucketed to its UTC day (inclusive).',
+          },
+          to: {
+            type: 'string',
+            description:
+              'Range end: YYYY-MM-DD or ISO timestamp, bucketed to its UTC day (inclusive).',
+          },
           project_id: { type: 'string' },
         },
       },
       async handler(args) {
-        const from = requireString(args, 'from');
-        const to = requireString(args, 'to');
+        const { fromDay: from, toDay: to } = toDayRange(
+          requireString(args, 'from'),
+          requireString(args, 'to'),
+        );
         // A task is "on the calendar" iff it has a paired placement
         // time_entry (UNCONFIRMED = still scheduled, CONFIRMED = done).
         // The time_entry's start_at — not task.due, which is a pure
@@ -916,14 +928,19 @@ export function buildTools(
       },
     },
     /**
-     * List past UNCONFIRMED time_entries that need review.
+     * List UNCONFIRMED time_entries that need review.
      *
      * The feed the day/week wrap-up flow walks through to confirm
-     * or skip each placement. Returns only entries whose end is in
-     * the past — future placements aren't reviewable yet. Filters
-     * to work-category projects by default so personal placements
-     * don't clutter timesheet reconciliation; pass `category:
-     * 'personal'` or omit to broaden.
+     * or skip each placement. `from`/`to` are day-granular and
+     * inclusive: a plain date or an ISO timestamp is bucketed to
+     * its UTC day, and every entry on that day is returned — the
+     * same range semantics as `get_timesheet_summary`, so the two
+     * tools always agree on which rows a range contains. The
+     * default range ends today, which includes today's
+     * still-upcoming placements. Filters to work-category projects
+     * by default so personal placements don't clutter timesheet
+     * reconciliation; pass `category: 'personal'` or omit to
+     * broaden.
      *
      * @example
      * list_pending_review({ from: '2026-05-04', to: '2026-05-10' })
@@ -933,13 +950,22 @@ export function buildTools(
     {
       name: 'list_pending_review',
       description:
-        'List past UNCONFIRMED time_entries that need confirmation or ' +
-        'skip. Defaults to work-category entries only.',
+        'List UNCONFIRMED time_entries that need confirmation or ' +
+        'skip. Defaults to work-category entries only. `from`/`to` are ' +
+        'inclusive UTC days (plain date or ISO timestamp).',
       inputSchema: {
         type: 'object',
         properties: {
-          from: { type: 'string' },
-          to: { type: 'string' },
+          from: {
+            type: 'string',
+            description:
+              'Range start: YYYY-MM-DD or ISO timestamp, bucketed to its UTC day (inclusive).',
+          },
+          to: {
+            type: 'string',
+            description:
+              'Range end: YYYY-MM-DD or ISO timestamp, bucketed to its UTC day (inclusive).',
+          },
           category: { type: 'string' },
         },
       },
@@ -1030,8 +1056,16 @@ export function buildTools(
         type: 'object',
         required: ['from', 'to'],
         properties: {
-          from: { type: 'string' },
-          to: { type: 'string' },
+          from: {
+            type: 'string',
+            description:
+              'Range start: YYYY-MM-DD or ISO timestamp, bucketed to its UTC day (inclusive).',
+          },
+          to: {
+            type: 'string',
+            description:
+              'Range end: YYYY-MM-DD or ISO timestamp, bucketed to its UTC day (inclusive).',
+          },
           format: { type: 'string', enum: ['csv', 'markdown'] },
           include_totals: { type: 'boolean' },
           categories: {
@@ -1097,8 +1131,16 @@ export function buildTools(
         type: 'object',
         required: ['from', 'to'],
         properties: {
-          from: { type: 'string' },
-          to: { type: 'string' },
+          from: {
+            type: 'string',
+            description:
+              'Range start: YYYY-MM-DD or ISO timestamp, bucketed to its UTC day (inclusive).',
+          },
+          to: {
+            type: 'string',
+            description:
+              'Range end: YYYY-MM-DD or ISO timestamp, bucketed to its UTC day (inclusive).',
+          },
           categories: {
             type: 'array',
             items: { type: 'string' },
@@ -1167,8 +1209,16 @@ export function buildTools(
         type: 'object',
         required: ['from', 'to'],
         properties: {
-          from: { type: 'string' },
-          to: { type: 'string' },
+          from: {
+            type: 'string',
+            description:
+              'Range start: YYYY-MM-DD or ISO timestamp, bucketed to its UTC day (inclusive).',
+          },
+          to: {
+            type: 'string',
+            description:
+              'Range end: YYYY-MM-DD or ISO timestamp, bucketed to its UTC day (inclusive).',
+          },
           categories: {
             type: 'array',
             items: { type: 'string' },
