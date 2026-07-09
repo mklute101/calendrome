@@ -1,5 +1,5 @@
 import type { DB } from './db/connection.js';
-import { toDayRange } from './day-range.js';
+import { toCanonicalUtc, toDayRange } from './day-range.js';
 
 export type TimeEntryStatus = 'UNCONFIRMED' | 'CONFIRMED';
 export type TimeEntrySource = 'placement' | 'gcal-sync' | 'habit' | 'manual';
@@ -31,15 +31,15 @@ export function insertTimeEntry(db: DB, input: TimeEntryInput): number {
   const result = stmt.run(
     input.task_id ?? null,
     input.project_id ?? null,
-    input.start_at,
-    input.end_at,
+    toCanonicalUtc(input.start_at, 'start_at'),
+    toCanonicalUtc(input.end_at, 'end_at'),
     input.actual_minutes ?? null,
     input.status,
-    input.confirmed_at ?? null,
+    input.confirmed_at != null ? toCanonicalUtc(input.confirmed_at, 'confirmed_at') : null,
     input.source,
     input.external_id ?? null,
     input.is_meeting ? 1 : 0,
-    input.synced_at ?? null,
+    input.synced_at != null ? toCanonicalUtc(input.synced_at, 'synced_at') : null,
     input.harvest_entry_id ?? null,
     input.notes ?? null,
   );
@@ -57,7 +57,11 @@ export function confirmTimeEntry(db: DB, id: number, opts: ConfirmOptions): void
   if (!existing) throw new Error(`time_entry ${id} not found`);
   if (existing.status === 'CONFIRMED') return; // idempotent no-op
 
-  const sets: string[] = ["status = 'CONFIRMED'", "confirmed_at = datetime('now')", "updated_at = datetime('now')"];
+  const sets: string[] = [
+    "status = 'CONFIRMED'",
+    "confirmed_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')",
+    "updated_at = datetime('now')",
+  ];
   const args: (number | string | null)[] = [];
   if (opts.actual_minutes !== undefined) {
     sets.push('actual_minutes = ?');
@@ -186,10 +190,6 @@ export interface MoveOptions {
   preserve_duration?: boolean;
 }
 
-function toIsoSeconds(date: Date): string {
-  return date.toISOString().replace(/\.\d{3}Z$/, 'Z');
-}
-
 export function moveTimeEntry(db: DB, id: number, new_start_at: string, opts: MoveOptions = {}): void {
   const existing = db.prepare(`SELECT status, source, start_at, end_at FROM time_entry WHERE id = ?`)
     .get(id) as { status: string; source: string; start_at: string; end_at: string } | undefined;
@@ -202,16 +202,20 @@ export function moveTimeEntry(db: DB, id: number, new_start_at: string, opts: Mo
     throw new Error('cannot move a manual entry; manual entries are CONFIRMED by definition');
   }
 
-  let new_end_at: string;
+  const startAt = toCanonicalUtc(new_start_at, 'new_start_at');
+  let endAt: string;
   if (opts.new_end_at) {
-    new_end_at = opts.new_end_at;
+    endAt = toCanonicalUtc(opts.new_end_at, 'new_end_at');
   } else {
     const oldDuration =
       new Date(existing.end_at).getTime() - new Date(existing.start_at).getTime();
-    new_end_at = toIsoSeconds(new Date(new Date(new_start_at).getTime() + oldDuration));
+    endAt = toCanonicalUtc(
+      new Date(new Date(startAt).getTime() + oldDuration).toISOString(),
+      'new_end_at',
+    );
   }
 
   db.prepare(
     `UPDATE time_entry SET start_at = ?, end_at = ?, updated_at = datetime('now') WHERE id = ?`,
-  ).run(new_start_at, new_end_at, id);
+  ).run(startAt, endAt, id);
 }

@@ -87,6 +87,10 @@ sentence — never a click path.
 - `time_entry` range reads normalize `from`/`to` through
   `src/day-range.ts`: inclusive UTC day buckets, never raw string
   compares against `DATE(start_at)` (#92)
+- `time_entry` timestamps are stored canonical UTC
+  (`YYYY-MM-DDTHH:MM:SSZ`): every write path funnels through
+  `toCanonicalUtc` in `src/day-range.ts`, and `migrate()` normalizes
+  legacy mixed-form rows (#95)
 - Tests use in-memory SQLite (`freshDb()`) — isolated, no cleanup
 - No PII in the repo — fictional names, `<FILL IN>` markers in skills
 

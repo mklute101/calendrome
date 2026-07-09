@@ -169,7 +169,7 @@ describe('MCP tools layer', () => {
     expect(rows[0].task_id).toBe(t.task.id);
     expect(rows[0].project_id).toBe('acme');
     expect(rows[0].start_at).toBe('2026-04-14T10:00:00Z');
-    expect(rows[0].end_at).toBe('2026-04-14T11:00:00.000Z');
+    expect(rows[0].end_at).toBe('2026-04-14T11:00:00Z');
     expect(placed.time_entry_id).toBe(rows[0].id);
   });
 

@@ -208,3 +208,26 @@ describe('calendar-sync', () => {
     expect(events[0].is_meeting).toBe(1);
   });
 });
+
+describe('canonical UTC timestamp storage (#95)', () => {
+  it('syncCalendarEvents normalizes offset-stamped event times and stamps canonical synced_at', () => {
+    const db = freshDb();
+    syncCalendarEvents(db, [
+      {
+        id: 'evt-tz',
+        calendar_id: 'cal-work',
+        summary: 'Evening sync',
+        start: '2026-07-06T20:00:00-05:00',
+        end: '2026-07-06T20:30:00-05:00',
+        is_meeting: true,
+      },
+    ]);
+
+    const row = db
+      .prepare(`SELECT start_at, end_at, synced_at FROM time_entry WHERE external_id = 'evt-tz'`)
+      .get() as any;
+    expect(row.start_at).toBe('2026-07-07T01:00:00Z');
+    expect(row.end_at).toBe('2026-07-07T01:30:00Z');
+    expect(row.synced_at).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
+  });
+});

@@ -8,6 +8,7 @@
  * Idempotent: re-syncing the same event id updates in place.
  */
 import type { DB } from './db/connection.js';
+import { toCanonicalUtc } from './day-range.js';
 
 export interface CalendarEventInput {
   id: string;
@@ -42,7 +43,7 @@ export function syncCalendarEvents(
   const upsertTimeEntry = db.prepare(`
     INSERT INTO time_entry (
       project_id, start_at, end_at, status, source, external_id, is_meeting, synced_at, notes
-    ) VALUES (?, ?, ?, 'UNCONFIRMED', 'gcal-sync', ?, ?, datetime('now'), ?)
+    ) VALUES (?, ?, ?, 'UNCONFIRMED', 'gcal-sync', ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), ?)
     ON CONFLICT(external_id) WHERE external_id IS NOT NULL DO UPDATE SET
       project_id = excluded.project_id,
       start_at   = excluded.start_at,
@@ -58,8 +59,8 @@ export function syncCalendarEvents(
     for (const e of events) {
       upsertTimeEntry.run(
         e.project_id ?? null,
-        e.start,
-        e.end,
+        toCanonicalUtc(e.start, `event ${e.id} start`),
+        toCanonicalUtc(e.end, `event ${e.id} end`),
         e.id,
         e.is_meeting ? 1 : 0,
         e.summary,
