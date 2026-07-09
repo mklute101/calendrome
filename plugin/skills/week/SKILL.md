@@ -87,12 +87,40 @@ Step 1.
 
 ### Step 1 — Fetch data (parallel)
 
-**Google Calendar** — this week Mon–Fri:
+**Google Calendar** — the full week, Mon–Sun:
 `mcp__claude_ai_Google_Calendar__list_events` with:
 - `calendarId`: `<calendar_id>`
 - `timeMin`: this Monday 00:00:00 in `<calendar_timezone>`
-- `timeMax`: this Friday 23:59:59 in `<calendar_timezone>`
+- `timeMax`: this Sunday 23:59:59 in `<calendar_timezone>`
 - `timeZone`: `<calendar_timezone>`
+
+### Step 1.5 — Sync the week's calendar into calendrome
+
+Calendrome does **not** auto-sync Google Calendar — the week view and
+budgets only see what's imported, so push the whole fetched week
+before presenting anything (otherwise meetings on days without a
+morning brief are silently missing, #93).
+
+Call `mcp__calendrome__sync_calendar_events` with all events from
+Step 1, plus a `window` matching the fetched range:
+
+- `window: { from: "<this Monday ISO date>", to: "<this Sunday ISO date>" }`
+  — prunes synced-but-since-cancelled meetings inside the window. It
+  only ever removes UNCONFIRMED gcal-sync rows, so placements,
+  confirmed time, and habits are safe.
+- Skip `transparency: "transparent"` / `AVAILABILITY_FREE`
+  reminder-type events — nudges, not blockers.
+- `is_meeting: true` for anything multi-attendee or
+  sync/standup/review-like; `false` otherwise.
+- `project_id`: match the event title against `project_prefixes`
+  (case-insensitive substring vs `name`); else omit.
+- Pass each event's Google `id` and `calendar_id` verbatim — the
+  import upserts by id, so re-running is idempotent.
+
+Run it silently — only surface errors. Because synced meetings with a
+`project_id` count toward budgets, run Step 1's calendrome calls
+(`get_all_budgets`, `list_tasks`) **after** this sync, not in the
+parallel fan-out with the calendar fetch.
 
 **Jira** — open assigned issues:
 `mcp__plugin_atlassian_atlassian__searchJiraIssuesUsingJql`:

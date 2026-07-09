@@ -231,3 +231,124 @@ describe('canonical UTC timestamp storage (#95)', () => {
     expect(row.synced_at).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
   });
 });
+
+describe('window prune — mirror semantics (#93)', () => {
+  const evt = (id: string, start: string, end: string) => ({
+    id,
+    calendar_id: 'cal-work',
+    summary: `event ${id}`,
+    start,
+    end,
+    is_meeting: true,
+  });
+  const WINDOW = { from: '2026-07-06', to: '2026-07-12' };
+
+  it('prunes unconfirmed synced events in the window that are missing from the payload', () => {
+    const db = freshDb();
+    syncCalendarEvents(db, [
+      evt('keep', '2026-07-07T10:00:00Z', '2026-07-07T10:30:00Z'),
+      evt('cancelled', '2026-07-08T14:00:00Z', '2026-07-08T15:00:00Z'),
+    ]);
+
+    // Next sync: 'cancelled' was deleted in Google Calendar.
+    const result = syncCalendarEvents(
+      db,
+      [evt('keep', '2026-07-07T10:00:00Z', '2026-07-07T10:30:00Z')],
+      WINDOW,
+    );
+
+    expect(result.deleted).toBe(1);
+    const ids = db
+      .prepare(`SELECT external_id FROM time_entry WHERE source = 'gcal-sync'`)
+      .all()
+      .map((r: any) => r.external_id);
+    expect(ids).toEqual(['keep']);
+  });
+
+  it('never prunes CONFIRMED rows — confirmed time is historical', () => {
+    const db = freshDb();
+    syncCalendarEvents(db, [evt('done', '2026-07-07T10:00:00Z', '2026-07-07T11:00:00Z')]);
+    db.prepare(`UPDATE time_entry SET status = 'CONFIRMED' WHERE external_id = 'done'`).run();
+
+    const result = syncCalendarEvents(db, [], WINDOW);
+
+    expect(result.deleted).toBe(0);
+    expect(
+      db.prepare(`SELECT COUNT(*) AS n FROM time_entry WHERE external_id = 'done'`).get(),
+    ).toEqual({ n: 1 });
+  });
+
+  it('never prunes placements, habits, or manual entries in the window', () => {
+    const db = freshDb();
+    db.prepare(`INSERT INTO projects (id, name, prefix) VALUES ('TEST', 'T', 'TEST')`).run();
+    for (const source of ['placement', 'habit', 'manual'] as const) {
+      db.prepare(`
+        INSERT INTO time_entry (project_id, start_at, end_at, status, source, external_id)
+        VALUES ('TEST', '2026-07-08T09:00:00Z', '2026-07-08T10:00:00Z', 'UNCONFIRMED', ?, ?)
+      `).run(source, source === 'placement' ? 'gcal-evt-123' : null);
+    }
+
+    const result = syncCalendarEvents(db, [], WINDOW);
+
+    expect(result.deleted).toBe(0);
+    expect(db.prepare(`SELECT COUNT(*) AS n FROM time_entry`).get()).toEqual({ n: 3 });
+  });
+
+  it('leaves rows outside the window alone', () => {
+    const db = freshDb();
+    syncCalendarEvents(db, [
+      evt('last-week', '2026-07-01T10:00:00Z', '2026-07-01T11:00:00Z'),
+      evt('next-month', '2026-08-03T10:00:00Z', '2026-08-03T11:00:00Z'),
+    ]);
+
+    const result = syncCalendarEvents(db, [], WINDOW);
+
+    expect(result.deleted).toBe(0);
+    expect(db.prepare(`SELECT COUNT(*) AS n FROM time_entry`).get()).toEqual({ n: 2 });
+  });
+
+  it('window bounds are inclusive UTC day buckets, first and last day included', () => {
+    const db = freshDb();
+    syncCalendarEvents(db, [
+      evt('first-day', '2026-07-06T08:00:00Z', '2026-07-06T09:00:00Z'),
+      evt('last-day', '2026-07-12T22:00:00Z', '2026-07-12T23:00:00Z'),
+    ]);
+
+    // Timestamp-form bounds must behave identically to plain dates (#92).
+    const result = syncCalendarEvents(db, [], {
+      from: '2026-07-06T00:00:00Z',
+      to: '2026-07-12T00:00:00Z',
+    });
+
+    expect(result.deleted).toBe(2);
+  });
+
+  it('re-synced events keep their row identity and project assignment', () => {
+    const db = freshDb();
+    db.prepare(`INSERT INTO projects (id, name, prefix) VALUES ('ACME', 'Acme', 'ACME')`).run();
+    syncCalendarEvents(db, [evt('standup', '2026-07-07T10:00:00Z', '2026-07-07T10:15:00Z')]);
+    const before = db
+      .prepare(`SELECT id FROM time_entry WHERE external_id = 'standup'`)
+      .get() as any;
+
+    syncCalendarEvents(
+      db,
+      [{ ...evt('standup', '2026-07-07T10:00:00Z', '2026-07-07T10:15:00Z'), project_id: 'ACME' }],
+      WINDOW,
+    );
+
+    const after = db
+      .prepare(`SELECT id, project_id FROM time_entry WHERE external_id = 'standup'`)
+      .get() as any;
+    expect(after.id).toBe(before.id);
+    expect(after.project_id).toBe('ACME');
+  });
+
+  it('without a window, sync never prunes (backward compatible)', () => {
+    const db = freshDb();
+    syncCalendarEvents(db, [evt('a', '2026-07-07T10:00:00Z', '2026-07-07T11:00:00Z')]);
+    const result = syncCalendarEvents(db, []);
+    expect(result.deleted).toBe(0);
+    expect(db.prepare(`SELECT COUNT(*) AS n FROM time_entry`).get()).toEqual({ n: 1 });
+  });
+});
