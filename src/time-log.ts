@@ -1,4 +1,5 @@
 import type { DB } from './db/connection.js';
+import { toCanonicalUtc } from './day-range.js';
 import { getTask, setTaskStatus, type Task } from './tasks.js';
 import { insertTimeEntry } from './time-entry.js';
 
@@ -82,8 +83,8 @@ export function logTime(db: DB, input: LogTimeInput): LogTimeResult {
     );
   }
 
-  const startIso = startedAt.toISOString();
-  const stopIso = stoppedAt.toISOString();
+  const startIso = toCanonicalUtc(startedAt.toISOString(), 'started_at');
+  const stopIso = toCanonicalUtc(stoppedAt.toISOString(), 'stopped_at');
   const durationMinutes = Math.round(
     (stoppedAt.getTime() - startedAt.getTime()) / 60000,
   );

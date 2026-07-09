@@ -384,3 +384,110 @@ describe('moveTimeEntry', () => {
     expect(() => moveTimeEntry(db, 9999, '2026-05-13T09:00:00Z')).toThrow();
   });
 });
+
+describe('canonical UTC timestamp storage (#95)', () => {
+  const CANONICAL = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
+
+  it('insertTimeEntry converts offset-stamped timestamps to canonical UTC', () => {
+    const db = freshDb();
+    db.prepare(`INSERT INTO projects (id, name, prefix) VALUES ('TEST', 'T', 'TEST')`).run();
+
+    // 8pm Chicago on July 6 = 1am UTC on July 7
+    const id = insertTimeEntry(db, {
+      project_id: 'TEST',
+      start_at: '2026-07-06T20:00:00-05:00',
+      end_at: '2026-07-06T21:00:00-05:00',
+      status: 'UNCONFIRMED',
+      source: 'placement',
+    });
+
+    const row = db.prepare(`SELECT start_at, end_at FROM time_entry WHERE id = ?`).get(id) as any;
+    expect(row.start_at).toBe('2026-07-07T01:00:00Z');
+    expect(row.end_at).toBe('2026-07-07T02:00:00Z');
+  });
+
+  it('insertTimeEntry strips millisecond precision', () => {
+    const db = freshDb();
+    db.prepare(`INSERT INTO projects (id, name, prefix) VALUES ('TEST', 'T', 'TEST')`).run();
+
+    const id = insertTimeEntry(db, {
+      project_id: 'TEST',
+      start_at: '2026-07-06T11:15:00.000Z',
+      end_at: '2026-07-06T19:15:00.500Z',
+      status: 'UNCONFIRMED',
+      source: 'placement',
+      confirmed_at: '2026-07-06T19:15:00.123Z',
+      synced_at: '2026-07-06T19:15:01.999Z',
+    });
+
+    const row = db.prepare(`SELECT * FROM time_entry WHERE id = ?`).get(id) as any;
+    expect(row.start_at).toBe('2026-07-06T11:15:00Z');
+    expect(row.end_at).toBe('2026-07-06T19:15:00Z');
+    expect(row.confirmed_at).toBe('2026-07-06T19:15:00Z');
+    expect(row.synced_at).toBe('2026-07-06T19:15:01Z');
+  });
+
+  it('insertTimeEntry rejects unparseable timestamps', () => {
+    const db = freshDb();
+    expect(() =>
+      insertTimeEntry(db, {
+        start_at: 'not-a-date',
+        end_at: '2026-07-06T12:00:00Z',
+        status: 'UNCONFIRMED',
+        source: 'placement',
+      }),
+    ).toThrow(/start_at/);
+  });
+
+  it('moveTimeEntry normalizes an offset-stamped new_start_at and preserves duration', () => {
+    const db = freshDb();
+    db.prepare(`INSERT INTO projects (id, name, prefix) VALUES ('TEST', 'T', 'TEST')`).run();
+    const id = insertTimeEntry(db, {
+      project_id: 'TEST',
+      start_at: '2026-07-06T09:00:00Z',
+      end_at: '2026-07-06T10:30:00Z',
+      status: 'UNCONFIRMED',
+      source: 'placement',
+    });
+
+    moveTimeEntry(db, id, '2026-07-06T20:00:00-05:00');
+
+    const row = db.prepare(`SELECT start_at, end_at FROM time_entry WHERE id = ?`).get(id) as any;
+    expect(row.start_at).toBe('2026-07-07T01:00:00Z');
+    expect(row.end_at).toBe('2026-07-07T02:30:00Z');
+  });
+
+  it('moveTimeEntry normalizes an explicit offset-stamped new_end_at', () => {
+    const db = freshDb();
+    db.prepare(`INSERT INTO projects (id, name, prefix) VALUES ('TEST', 'T', 'TEST')`).run();
+    const id = insertTimeEntry(db, {
+      project_id: 'TEST',
+      start_at: '2026-07-06T09:00:00Z',
+      end_at: '2026-07-06T10:00:00Z',
+      status: 'UNCONFIRMED',
+      source: 'placement',
+    });
+
+    moveTimeEntry(db, id, '2026-07-06T14:00:00Z', { new_end_at: '2026-07-06T10:00:00-05:00' });
+
+    const row = db.prepare(`SELECT end_at FROM time_entry WHERE id = ?`).get(id) as any;
+    expect(row.end_at).toBe('2026-07-06T15:00:00Z');
+  });
+
+  it('confirmTimeEntry stamps confirmed_at in canonical form', () => {
+    const db = freshDb();
+    db.prepare(`INSERT INTO projects (id, name, prefix) VALUES ('TEST', 'T', 'TEST')`).run();
+    const id = insertTimeEntry(db, {
+      project_id: 'TEST',
+      start_at: '2026-07-06T09:00:00Z',
+      end_at: '2026-07-06T10:00:00Z',
+      status: 'UNCONFIRMED',
+      source: 'placement',
+    });
+
+    confirmTimeEntry(db, id, {});
+
+    const row = db.prepare(`SELECT confirmed_at FROM time_entry WHERE id = ?`).get(id) as any;
+    expect(row.confirmed_at).toMatch(CANONICAL);
+  });
+});
