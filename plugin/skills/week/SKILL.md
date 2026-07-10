@@ -113,7 +113,10 @@ Step 1, plus a `window` matching the fetched range:
 - `is_meeting: true` for anything multi-attendee or
   sync/standup/review-like; `false` otherwise.
 - `project_id`: match the event title against `project_prefixes`
-  (case-insensitive substring vs `name`); else omit.
+  (case-insensitive substring vs `name`); else omit. When omitted,
+  calendrome's `meeting_project_mappings` rules apply server-side —
+  for recurring meetings, prefer creating a durable rule once
+  (`add_meeting_project_mapping { pattern, project_id }`).
 - Pass each event's Google `id` and `calendar_id` verbatim — the
   import upserts by id, so re-running is idempotent.
 
