@@ -33,8 +33,13 @@ sentence — never a click path.
   with a large duration and a due date.
 - The `/week` planner skill is the primary UX — collaborative weekly
   planning that pulls from Jira, Google Calendar, and calendrome.
-- The GUI is a read-only dashboard. It shows the full picture but
-  you plan via Claude conversations.
+- The GUI is an interactive weekly planner (React SPA + optional
+  Tauri desktop shell): drag placements to move/resize, drag tasks
+  from the panel to place them, complete/snooze/confirm/skip inline.
+  Every GUI write goes through the same core functions as the MCP
+  tools (`src/placement.ts`, `src/gui/mutations.ts`) — the two
+  surfaces cannot drift. Claude conversations remain the planning
+  brain; the GUI covers fast rearranging (#24, #86).
 - Every project belongs to a **category** (`work`, `personal`, …).
   Categories own a default scheduling window — work is Mon-Fri 9-5,
   personal is evenings/weekends — so the planner knows which slots
@@ -51,10 +56,11 @@ sentence — never a click path.
 - **Auto-scheduling:** Not sure yet. The current model is fully
   manual (Claude suggests, you approve). But some level of "just
   place this for me" might be valuable. TBD.
-- **How much GUI?** In an AI-tools world, does the dashboard need
-  to be interactive? Or can MCP + Claude handle everything? The
-  current bet is "start with MCP-only, see how far it goes, add
-  GUI interactivity only when conversations can't."
+- ~~**How much GUI?**~~ Resolved (#86, #24): MCP-only hit its
+  ceiling at fast rescheduling — round-tripping every block move
+  through a conversation was real friction. The GUI is now
+  write-capable for scheduling actions; task *creation* and planning
+  still happen in conversation.
 - **Data store vs. orchestrator:** Right now calendrome never calls
   external services — the AI does that and pushes data in. But that
   line might move. If calendar sync should be automatic, calendrome
@@ -98,9 +104,16 @@ sentence — never a click path.
 
 ## What Claude should know
 
-- `npm test` runs vitest (110+ tests)
-- `npm run build` compiles TS + copies schema.sql and GUI assets
-- `npm start` launches the MCP server, `npm run gui` the web dashboard
+- `npm test` runs vitest (270+ tests); `npm run test:e2e` runs the
+  Playwright browser tests (build first)
+- `npm run build` compiles TS, builds the GUI SPA (Vite), copies
+  schema.sql + docs.html, regenerates docs.json
+- `npm start` launches the MCP server, `npm run gui` the web app;
+  `npm run dev` is Vite HMR against a running GUI server
+- `npm run tauri:build` produces the native desktop app (needs the
+  Rust toolchain; run on the target machine)
+- GUI write posture: binds 127.0.0.1, no CORS, non-local Origin
+  writes rejected — see the `src/gui/server.ts` header
 - Planner skill: `.claude/skills/week.md`
 - When adding tools: update `src/mcp/tools/index.ts` + the surface
   check in `tests/mcp-tools.test.ts`
