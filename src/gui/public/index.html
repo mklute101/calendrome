@@ -53,8 +53,15 @@
     flex: 1;
   }
   .budget-card h3 { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px; }
-  .budget-bar { height: 4px; background: var(--border); border-radius: 3px; overflow: hidden; margin-bottom: 4px; }
-  .budget-fill { height: 100%; border-radius: 3px; transition: width 0.3s; }
+  .budget-bar { height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; margin-bottom: 4px; display: flex; position: relative; }
+  /* Spent (done) = solid; scheduled (planned) = diagonal hatch; the
+     over-budget portion of either keeps its texture but goes red (#28). */
+  .budget-seg { height: 100%; transition: width 0.3s; }
+  .budget-seg.spent { background: var(--c); }
+  .budget-seg.sched { background: repeating-linear-gradient(45deg, var(--c) 0 3px, color-mix(in srgb, var(--c) 30%, transparent) 3px 6px); }
+  .budget-seg.spent.over { background: #f85149; }
+  .budget-seg.sched.over { background: repeating-linear-gradient(45deg, #f85149 0 3px, color-mix(in srgb, #f85149 30%, transparent) 3px 6px); }
+  .budget-mark { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--bg); }
   .budget-label { font-size: 0.75rem; color: var(--text-muted); }
   .over-budget { color: #f85149; }
 
@@ -590,21 +597,34 @@ function renderBudgets(data) {
   budgetsEl.innerHTML = '';
   for (const b of data.budgets) {
     const alloc = b.allocated_minutes;
-    const used = b.spent_minutes + b.scheduled_minutes;
-    const ratio = alloc ? used / alloc : 0;
-    const pct = alloc ? Math.min(100, ratio * 100) : 0;
+    const spent = b.spent_minutes;
+    const sched = b.scheduled_minutes;
+    const used = spent + sched;
     const color = getColor(b.project_id);
-    let fillColor = color, label = '', labelClass = '';
-    if (alloc) {
-      if (ratio > 1.30) { fillColor = '#f85149'; labelClass = 'over-budget'; label = ` (+${Math.round((ratio-1)*100)}%)`; }
-      else if (ratio > 1.10) { fillColor = '#d29922'; label = ` (+${Math.round((ratio-1)*100)}%)`; }
-      else if (ratio < 0.40) { fillColor = `color-mix(in srgb, ${color} 40%, transparent)`; label = ` (-${Math.round((1-ratio)*100)}%)`; }
-    }
+
+    // Track spans max(budget, used); when over budget the overflow
+    // portion of each segment renders red and a marker shows where
+    // the budget line sits (#28). Segment order: spent fills first
+    // (it already happened), scheduled stacks after it.
+    const track = alloc ? Math.max(alloc, used) : used;
+    const w = (m) => (track ? (m / track) * 100 : 0);
+    const spentIn = alloc ? Math.min(spent, alloc) : spent;
+    const schedIn = alloc ? Math.min(sched, Math.max(0, alloc - spent)) : sched;
+    const over = alloc ? used > alloc : false;
+    const overLabel = over ? ` (+${Math.round((used / alloc - 1) * 100)}%)` : '';
+    const mark = over ? `<div class="budget-mark" style="left:${w(alloc)}%"></div>` : '';
+
     budgetsEl.innerHTML += `
       <div class="budget-card">
         <h3 style="color:${color}">${b.project_id}</h3>
-        <div class="budget-bar"><div class="budget-fill" style="width:${pct}%;background:${fillColor}"></div></div>
-        <div class="budget-label ${labelClass}">${fmtHours(used)} / ${alloc ? fmtHours(alloc) : '∞'}${label}</div>
+        <div class="budget-bar" style="--c:${color}">
+          <div class="budget-seg spent" style="width:${w(spentIn)}%"></div>
+          <div class="budget-seg spent over" style="width:${w(spent - spentIn)}%"></div>
+          <div class="budget-seg sched" style="width:${w(schedIn)}%"></div>
+          <div class="budget-seg sched over" style="width:${w(sched - schedIn)}%"></div>
+          ${mark}
+        </div>
+        <div class="budget-label ${over ? 'over-budget' : ''}">${fmtHours(spent)} done · ${fmtHours(sched)} planned · ${alloc ? fmtHours(alloc) : '∞'} budget${overLabel}</div>
       </div>`;
   }
 }
