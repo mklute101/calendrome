@@ -104,7 +104,7 @@ Call `mcp__calendrome__sync_calendar_events` with the events from Step 1:
 - `window: { from: "<this Monday ISO date>", to: "<next Sunday ISO date>" }` — the range fetched in Step 1. This prunes synced-but-since-cancelled meetings inside the window; it only ever removes UNCONFIRMED gcal-sync rows, so placements, confirmed time, and habits are safe. (Do **not** pass the legacy `clear_range` — `window` supersedes it.)
 - Skip `transparency: "transparent"` / `AVAILABILITY_FREE` reminder-type events (bill reminders, tentative holds) — those are nudges, not blockers. Skipping them is safe with `window`: they were never synced, so there's nothing to prune.
 - `is_meeting: true` for anything multi-attendee or sync/standup/review-like; `false` otherwise.
-- `project_id`: match the event title against `project_prefixes` (case-insensitive substring vs `name`); use that prefix's `project_id`, else `personal` for clearly personal items, else omit.
+- `project_id`: match the event title against `project_prefixes` (case-insensitive substring vs `name`); use that prefix's `project_id`, else `personal` for clearly personal items, else omit. When omitted, calendrome's own `meeting_project_mappings` rules apply server-side — for recurring meetings, prefer creating a durable rule once (`add_meeting_project_mapping { pattern, project_id }`) over re-matching titles every brief.
 - Pass each event's Google `id` and `calendar_id` verbatim — the import **upserts by id**, so re-running the brief is idempotent and won't create duplicates.
 
 This runs every morning brief, silently — only surface it if the sync errors. For the rest of the brief (Step 2 onward), work from today's slice of the fetched events.

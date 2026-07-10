@@ -137,3 +137,16 @@ SELECT
 FROM time_entry
 WHERE status = 'CONFIRMED' AND task_id IS NOT NULL
 GROUP BY task_id;
+
+-- Title-pattern rules that auto-assign incoming calendar events to a
+-- project during sync (#35). Google recurring-event instances have
+-- unique ids, so per-event tagging never sticks; the durable identity
+-- of a meeting series is its title. First match by id order wins.
+CREATE TABLE IF NOT EXISTS meeting_project_mappings (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  pattern    TEXT NOT NULL,
+  match      TEXT NOT NULL DEFAULT 'contains'
+             CHECK (match IN ('exact', 'contains', 'regex')),
+  project_id TEXT NOT NULL REFERENCES projects(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);

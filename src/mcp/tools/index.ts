@@ -68,6 +68,11 @@ import {
   clearAvailabilityOverrides,
 } from '../../availability.js';
 import { HarvestClient } from '../../harvest/client.js';
+import {
+  addMeetingProjectMapping,
+  listMeetingProjectMappings,
+  deleteMeetingProjectMapping,
+} from '../../meeting-mappings.js';
 import { harvestPushTimesheet } from '../../harvest/push.js';
 import {
   exportTimesheet,
@@ -1362,6 +1367,90 @@ export function buildTools(
         const events: CalendarEventInput[] = args.events ?? [];
         const result = syncCalendarEvents(db, events, args.window);
         return { upserted: result.upserted, deleted: result.deleted + cleared };
+      },
+    },
+
+    // -------- meeting → project mappings --------
+    /**
+     * Add a title-pattern rule that auto-assigns synced calendar
+     * events to a project (#35).
+     *
+     * Recurring Google events have a unique id per instance, so
+     * tagging events individually never sticks — the durable
+     * identity of a meeting series is its title. Rules apply during
+     * `sync_calendar_events` to events without an explicit
+     * `project_id`; first rule (by creation order) that matches
+     * wins. Matching is case-insensitive; `match` is `contains`
+     * (default), `exact`, or `regex` (validated here).
+     *
+     * @example
+     * add_meeting_project_mapping({ pattern: 'Daily Standup', project_id: 'acme' })
+     *
+     * @see sync_calendar_events, list_meeting_project_mappings, delete_meeting_project_mapping
+     */
+    {
+      name: 'add_meeting_project_mapping',
+      description:
+        'Add a title-pattern rule that auto-assigns synced calendar events ' +
+        'to a project. match: contains (default) | exact | regex, ' +
+        'case-insensitive. First matching rule wins during sync.',
+      inputSchema: {
+        type: 'object',
+        required: ['pattern', 'project_id'],
+        properties: {
+          pattern: { type: 'string' },
+          project_id: { type: 'string' },
+          match: { type: 'string', enum: ['exact', 'contains', 'regex'] },
+        },
+      },
+      async handler(args) {
+        const mapping = addMeetingProjectMapping(db, {
+          pattern: requireString(args, 'pattern'),
+          project_id: requireString(args, 'project_id'),
+          match: args.match,
+        });
+        return { mapping };
+      },
+    },
+    /**
+     * List meeting → project mapping rules in application order.
+     *
+     * @example
+     * list_meeting_project_mappings()
+     *
+     * @see add_meeting_project_mapping, delete_meeting_project_mapping
+     */
+    {
+      name: 'list_meeting_project_mappings',
+      description:
+        'List meeting title → project mapping rules in the order they apply.',
+      inputSchema: { type: 'object', properties: {} },
+      async handler() {
+        return { mappings: listMeetingProjectMappings(db) };
+      },
+    },
+    /**
+     * Delete a meeting → project mapping rule by id.
+     *
+     * Already-synced events keep their assignment; the rule just
+     * stops applying to future syncs.
+     *
+     * @example
+     * delete_meeting_project_mapping({ id: 3 })
+     *
+     * @see add_meeting_project_mapping, list_meeting_project_mappings
+     */
+    {
+      name: 'delete_meeting_project_mapping',
+      description: 'Delete a meeting title → project mapping rule by id.',
+      inputSchema: {
+        type: 'object',
+        required: ['id'],
+        properties: { id: { type: 'integer' } },
+      },
+      async handler(args) {
+        deleteMeetingProjectMapping(db, requireNumber(args, 'id'));
+        return { deleted: true };
       },
     },
 

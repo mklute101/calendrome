@@ -9,6 +9,7 @@
  */
 import type { DB } from './db/connection.js';
 import { toCanonicalUtc, toDayRange } from './day-range.js';
+import { buildMeetingProjectResolver } from './meeting-mappings.js';
 
 export interface CalendarEventInput {
   id: string;
@@ -72,12 +73,17 @@ export function syncCalendarEvents(
       updated_at = datetime('now')
   `);
 
+  // Title-pattern auto-assignment (#35): events arriving without an
+  // explicit project_id are matched against meeting_project_mappings.
+  // Explicit assignment (the skill matched a prefix) always wins.
+  const resolveProject = buildMeetingProjectResolver(db);
+
   let upserted = 0;
   let deleted = 0;
   const txn = db.transaction(() => {
     for (const e of events) {
       upsertTimeEntry.run(
-        e.project_id ?? null,
+        e.project_id ?? resolveProject(e.summary),
         toCanonicalUtc(e.start, `event ${e.id} start`),
         toCanonicalUtc(e.end, `event ${e.id} end`),
         e.id,
