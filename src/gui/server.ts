@@ -68,6 +68,10 @@ export function createApp(
   app.use(express.json());
   app.use(express.static(join(__dirname, 'public'), { extensions: ['html'] }));
 
+  // The SPA uses hash routing; the old standalone /tasks page is now
+  // the #/tasks route. Keep the old URL working.
+  app.get('/tasks', (_req, res) => res.redirect('/#/tasks'));
+
   // Origin guard for writes (see header). GET stays unguarded — the
   // payloads are already readable by any local process via the DB.
   app.use('/api', (req, res, next) => {
