@@ -73,6 +73,7 @@ import {
   listMeetingProjectMappings,
   deleteMeetingProjectMapping,
 } from '../../meeting-mappings.js';
+import { placeTask, unplaceTask } from '../../placement.js';
 import { harvestPushTimesheet } from '../../harvest/push.js';
 import {
   exportTimesheet,
@@ -703,45 +704,10 @@ export function buildTools(
         },
       },
       async handler(args) {
-        const taskId = requireNumber(args, 'task_id');
-        const start = requireString(args, 'start');
-        const task = getTask(db, taskId);
-        if (!task) throw new Error(`task ${taskId} not found`);
-        const project = getProject(db, task.project_id);
-
-        const startMs = Date.parse(start);
-        const endMs = startMs + task.duration_minutes * 60_000;
-        const end = new Date(endMs).toISOString();
-
-        const event = await calendar.createEvent({
-          calendar_id: project?.calendar_id ?? null,
-          summary: `${project?.prefix ?? ''} ${task.title}`.trim(),
-          start,
-          end,
-          description: task.notes ?? undefined,
+        return placeTask(db, calendar, {
+          task_id: requireNumber(args, 'task_id'),
+          start: requireString(args, 'start'),
         });
-
-        // Insert paired UNCONFIRMED time_entry — this is the row the
-        // confirmation flow operates on. The time_entry's `external_id`
-        // (= event.id) is now the canonical link between task and
-        // calendar event; we no longer stamp `task.calendar_event_id`.
-        const timeEntryId = insertTimeEntry(db, {
-          task_id: taskId,
-          project_id: task.project_id,
-          start_at: start,
-          end_at: end,
-          status: 'UNCONFIRMED',
-          source: 'placement',
-          external_id: event.id,
-          notes: task.notes ?? null,
-        });
-
-        setTaskStatus(db, taskId, 'SCHEDULED');
-        return {
-          task: getTask(db, taskId),
-          event,
-          time_entry_id: timeEntryId,
-        };
       },
     },
     /**
@@ -770,48 +736,12 @@ export function buildTools(
         properties: { task_id: { type: 'integer' } },
       },
       async handler(args) {
-        const taskId = requireNumber(args, 'task_id');
-        const task = getTask(db, taskId);
-        if (!task) throw new Error(`task ${taskId} not found`);
-
-        // Find the paired placement time_entry, if any. The time_entry
-        // is now the sole source of truth for "is this task placed?".
-        const pairedEntry = db
-          .prepare(
-            `SELECT id, status, external_id FROM time_entry
-             WHERE task_id = ? AND source = 'placement'
-             ORDER BY id DESC LIMIT 1`,
-          )
-          .get(taskId) as
-          | { id: number; status: string; external_id: string | null }
-          | undefined;
-
-        if (pairedEntry && pairedEntry.status === 'CONFIRMED') {
-          throw new Error(
-            `cannot unplace task ${taskId}: its time_entry is already CONFIRMED`,
-          );
-        }
-
-        if (pairedEntry && pairedEntry.external_id) {
-          const project = getProject(db, task.project_id);
-          await calendar.deleteEvent({
-            calendar_id: project?.calendar_id ?? null,
-            event_id: pairedEntry.external_id,
-          });
-        }
-
-        if (pairedEntry) {
-          db.prepare(`DELETE FROM time_entry WHERE id = ?`).run(pairedEntry.id);
-        }
-
-        // Only flip status when the task was actually SCHEDULED. For NEW
-        // (never placed), IN_PROGRESS, or COMPLETE we leave the status
-        // alone — unplacing the calendar event shouldn't yank a task out
-        // of in-progress or completed state.
-        if (task.status === 'SCHEDULED') {
-          setTaskStatus(db, taskId, 'NEW');
-        }
-        return { task: getTask(db, taskId) };
+        const { task } = await unplaceTask(
+          db,
+          calendar,
+          requireNumber(args, 'task_id'),
+        );
+        return { task };
       },
     },
     /**
