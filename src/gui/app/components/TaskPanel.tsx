@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import type { ProjectMeta, Task } from '../types';
 import { compareTasks, PRIORITY_LABEL, PRIORITY_ORDER, TaskRow } from './TaskRow';
+import type { TaskActions } from '../hooks/useTaskActions';
 
 /**
  * Pending-tasks drawer (#85). Respects the same Work/All category
@@ -12,11 +13,15 @@ export function TaskPanel({
   meta,
   categoryView,
   onClose,
+  actions,
+  onDragStart,
 }: {
   tasks: Task[];
   meta: ProjectMeta;
   categoryView: string;
   onClose: () => void;
+  actions?: TaskActions;
+  onDragStart?: (e: React.PointerEvent, task: Task) => void;
 }) {
   const [tab, setTab] = useState<'priorities' | 'tasks'>('priorities');
   const [search, setSearch] = useState('');
@@ -76,9 +81,11 @@ export function TaskPanel({
       )}
       <div className="tasks-panel-body">
         {tab === 'priorities' ? (
-          <PriorityGroups tasks={visible} meta={meta} />
+          <PriorityGroups tasks={visible} meta={meta} actions={actions} onDragStart={onDragStart} />
         ) : searched.length ? (
-          searched.map((t) => <TaskRow key={t.id} task={t} meta={meta} />)
+          searched.map((t) => (
+            <TaskRow key={t.id} task={t} meta={meta} actions={actions} onDragStart={onDragStart} />
+          ))
         ) : (
           <div className="empty">No matching tasks.</div>
         )}
@@ -87,7 +94,17 @@ export function TaskPanel({
   );
 }
 
-export function PriorityGroups({ tasks, meta }: { tasks: Task[]; meta: ProjectMeta }) {
+export function PriorityGroups({
+  tasks,
+  meta,
+  actions,
+  onDragStart,
+}: {
+  tasks: Task[];
+  meta: ProjectMeta;
+  actions?: TaskActions;
+  onDragStart?: (e: React.PointerEvent, task: Task) => void;
+}) {
   const groups = PRIORITY_ORDER.map((p) => ({
     priority: p,
     items: tasks.filter((t) => t.priority === p),
@@ -101,7 +118,7 @@ export function PriorityGroups({ tasks, meta }: { tasks: Task[]; meta: ProjectMe
             {PRIORITY_LABEL[g.priority]} <span className="count-badge">{g.items.length}</span>
           </h3>
           {g.items.map((t) => (
-            <TaskRow key={t.id} task={t} meta={meta} />
+            <TaskRow key={t.id} task={t} meta={meta} actions={actions} onDragStart={onDragStart} />
           ))}
         </section>
       ))}

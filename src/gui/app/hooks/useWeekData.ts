@@ -35,5 +35,14 @@ export function useWeekData(weekStart: string) {
     void refetch();
   }, [refetch]);
 
-  return { data, meta, error, refetch };
+  /**
+   * Optimistic overlay for drag interactions: patch the local payload
+   * immediately so the dropped block doesn't snap back while the POST
+   * is in flight. The following refetch is authoritative.
+   */
+  const applyLocal = useCallback((fn: (d: WeekPayload) => WeekPayload) => {
+    setData((d) => (d ? fn(d) : d));
+  }, []);
+
+  return { data, meta, error, refetch, applyLocal };
 }

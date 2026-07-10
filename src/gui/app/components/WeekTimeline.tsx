@@ -1,4 +1,4 @@
-import type { ProjectMeta } from '../types';
+import type { Placement, ProjectMeta } from '../types';
 import type { DayBucket } from '../lib/weekdays';
 import { isOverdueEvent, isOverduePlacement } from '../lib/weekdays';
 import { colorOf, UNASSIGNED_COLOR } from '../lib/colors';
@@ -12,6 +12,7 @@ import {
   durationToPx,
   timeToOffset,
 } from '../lib/geometry';
+import type { DragGhost, DragSource } from '../hooks/useTimelineDrag';
 
 const cssBlock = (c: string, top: number, height: number) =>
   ({ '--c': c, top: `${top}px`, height: `${height}px` }) as React.CSSProperties;
@@ -22,15 +23,29 @@ function hourLabel(h: number): string {
 
 /**
  * Timeline view: absolute-positioned blocks on a 7-day × hourly grid.
- * Deadline markers render in the floating strip above (never as
- * duration blocks, #79). Placement blocks become draggable in phase 3.
+ * Placement blocks are interactive (#24): drag the body to move, the
+ * bottom edge to resize, hover for confirm/skip. Logs, habits, and
+ * gcal events render without handles — the server guards are the
+ * backstop, the missing affordance is the UX.
  */
 export function WeekTimeline({
   days,
   meta,
+  ghost,
+  gridRef,
+  dragging,
+  onStartDrag,
+  onConfirm,
+  onSkip,
 }: {
   days: DayBucket[];
   meta: ProjectMeta;
+  ghost: DragGhost | null;
+  gridRef: React.MutableRefObject<HTMLDivElement | null>;
+  dragging: boolean;
+  onStartDrag: (e: React.PointerEvent, source: DragSource) => void;
+  onConfirm: (p: Placement) => void;
+  onSkip: (p: Placement) => void;
 }) {
   const todayStr = localISODate(new Date());
   const deadlines = days.flatMap((d) => d.deadlines);
@@ -54,7 +69,7 @@ export function WeekTimeline({
           </div>
         ))}
       </div>
-      <div className="timeline-container">
+      <div className="timeline-container" ref={gridRef}>
         <div className="timeline-hours">
           {Array.from({ length: HOUR_COUNT }, (_, i) => (
             <div className="timeline-hour-label" key={i}>
@@ -64,6 +79,7 @@ export function WeekTimeline({
         </div>
         {days.map((d, i) => {
           const isToday = d.date === todayStr;
+          const showGhost = ghost && ghost.valid && ghost.dayIndex === i;
           return (
             <div className={`timeline-day${isToday ? ' today' : ''}`} key={d.date}>
               <div className="timeline-day-header">
@@ -119,11 +135,20 @@ export function WeekTimeline({
                   const top = timeToOffset(p.start_at);
                   if (!inRange(top)) return null;
                   const height = durationToPx(p.duration_minutes);
+                  const color = colorOf(meta, p.project_id);
+                  const beingDragged =
+                    dragging &&
+                    ghost &&
+                    ghost.kind !== 'place' &&
+                    isDraggedPlacement(ghost, p);
                   return (
                     <div
                       key={`p-${p.time_entry_id}`}
-                      className={`timeline-block${isOverduePlacement(p) ? ' overdue-review' : ''}`}
-                      style={cssBlock(colorOf(meta, p.project_id), top, height)}
+                      className={`timeline-block placement${isOverduePlacement(p) ? ' overdue-review' : ''}${beingDragged ? ' drag-origin' : ''}`}
+                      style={cssBlock(color, top, height)}
+                      onPointerDown={(e) =>
+                        onStartDrag(e, { kind: 'move', placement: p, color })
+                      }
                     >
                       <div className="title">{p.task_title}</div>
                       {height > 30 && (
@@ -131,6 +156,33 @@ export function WeekTimeline({
                           {fmtHours(p.duration_minutes)} · {p.project_id}
                         </div>
                       )}
+                      <div
+                        className="block-actions"
+                        onPointerDown={(e) => e.stopPropagation()}
+                      >
+                        <button
+                          className="block-action"
+                          title="Confirm — this happened"
+                          onClick={() => onConfirm(p)}
+                        >
+                          ✓
+                        </button>
+                        <button
+                          className="block-action"
+                          title="Skip — this didn't happen"
+                          onClick={() => onSkip(p)}
+                        >
+                          ✕
+                        </button>
+                      </div>
+                      <div
+                        className="resize-handle"
+                        title="Drag to resize"
+                        onPointerDown={(e) => {
+                          e.stopPropagation();
+                          onStartDrag(e, { kind: 'resize', placement: p, color });
+                        }}
+                      />
                     </div>
                   );
                 })}
@@ -149,6 +201,21 @@ export function WeekTimeline({
                     </div>
                   );
                 })}
+                {showGhost && (
+                  <div
+                    className="timeline-block drag-ghost"
+                    style={cssBlock(
+                      ghost.color,
+                      (ghost.startMinutes - HOUR_START * 60) * (HOUR_PX / 60),
+                      durationToPx(ghost.durationMinutes),
+                    )}
+                  >
+                    <div className="title">{ghost.label}</div>
+                    <div className="meta">
+                      {fmtGhostTime(ghost.startMinutes)} · {ghost.durationMinutes}m
+                    </div>
+                  </div>
+                )}
                 {isToday && nowHours >= HOUR_START && nowHours < HOUR_END && (
                   <div className="now-line" style={{ top: (nowHours - HOUR_START) * HOUR_PX }} />
                 )}
@@ -159,4 +226,19 @@ export function WeekTimeline({
       </div>
     </>
   );
+}
+
+function isDraggedPlacement(ghost: DragGhost, p: Placement): boolean {
+  // The ghost doesn't carry the placement id; label match is enough
+  // for the dim-the-origin affordance (worst case two same-titled
+  // blocks both dim during the drag).
+  return ghost.label === (p.task_title ?? '(untitled)');
+}
+
+function fmtGhostTime(minutes: number): string {
+  const h24 = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  const h12 = h24 % 12 === 0 ? 12 : h24 % 12;
+  const ampm = h24 < 12 ? 'a' : 'p';
+  return `${h12}:${String(m).padStart(2, '0')}${ampm}`;
 }

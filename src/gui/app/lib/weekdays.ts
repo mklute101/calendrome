@@ -114,3 +114,43 @@ export function isOverdueEvent(ce: CalendarEvent): boolean {
 export function isOverduePlacement(p: Placement): boolean {
   return p.status === 'UNCONFIRMED' && Date.parse(p.start_at) < Date.now();
 }
+
+export function minutesOfDay(iso: string): number {
+  const d = new Date(iso);
+  return d.getHours() * 60 + d.getMinutes();
+}
+
+/**
+ * First block in `day` overlapping [startMin, endMin) — the
+ * warn-don't-block check on drop (#24): the drop always completes,
+ * the UI just mentions what it collides with.
+ */
+export function findOverlap(
+  day: DayBucket,
+  startMin: number,
+  endMin: number,
+  excludeEntryId?: number,
+): string | null {
+  const spans: { start: number; end: number; label: string }[] = [];
+  for (const p of day.placed) {
+    if (p.time_entry_id === excludeEntryId) continue;
+    const s = minutesOfDay(p.start_at);
+    spans.push({ start: s, end: s + p.duration_minutes, label: p.task_title ?? 'placement' });
+  }
+  for (const m of day.meetings) {
+    const s = minutesOfDay(m.start);
+    spans.push({ start: s, end: s + m.duration_minutes, label: m.summary });
+  }
+  for (const h of day.habits) {
+    const s = minutesOfDay(h.scheduled_start);
+    spans.push({ start: s, end: s + (h.habit_duration || 30), label: h.habit_title });
+  }
+  for (const l of day.logs) {
+    const s = minutesOfDay(l.started_at);
+    spans.push({ start: s, end: s + l.duration_minutes, label: l.task_title ?? 'logged time' });
+  }
+  for (const span of spans) {
+    if (startMin < span.end && endMin > span.start) return span.label;
+  }
+  return null;
+}

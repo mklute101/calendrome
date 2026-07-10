@@ -1,7 +1,7 @@
 {
   "name": "calendrome",
   "version": "0.1.0",
-  "description": "Local, project-based task scheduling MCP server — a Reclaim.ai replacement",
+  "description": "Local, project-based task scheduling MCP server \u2014 a Reclaim.ai replacement",
   "type": "module",
   "private": true,
   "scripts": {
@@ -11,7 +11,8 @@
     "build": "tsc -p tsconfig.json && cp src/db/schema.sql dist/src/db/schema.sql && npm run typecheck:app && vite build && mkdir -p dist/src/gui/public && cp -R src/gui/public/. dist/src/gui/public/ && node scripts/extract-docs.mjs",
     "dev": "vite",
     "start": "node dist/src/mcp/server.js",
-    "gui": "node dist/src/gui/server.js"
+    "gui": "node dist/src/gui/server.js",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",

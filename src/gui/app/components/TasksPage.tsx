@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useTasksData } from '../hooks/useTasksData';
+import { useTaskActions } from '../hooks/useTaskActions';
 import { compareTasks, TaskRow } from './TaskRow';
 import { PriorityGroups } from './TaskPanel';
 
@@ -7,7 +8,8 @@ type SortKey = 'priority' | 'due' | 'duration';
 
 /** Full-page tasks view (#/tasks) — port of the legacy tasks.html. */
 export function TasksPage({ categoryView }: { categoryView: string }) {
-  const { tasks, meta, error } = useTasksData();
+  const { tasks, meta, error, refetch } = useTasksData();
+  const actions = useTaskActions(refetch);
   const [tab, setTab] = useState<'priorities' | 'tasks'>('priorities');
   const [search, setSearch] = useState('');
   const [projectFilter, setProjectFilter] = useState('');
@@ -86,9 +88,9 @@ export function TasksPage({ categoryView }: { categoryView: string }) {
         </div>
       )}
       {tab === 'priorities' ? (
-        <PriorityGroups tasks={visible.slice().sort(compareTasks)} meta={meta} />
+        <PriorityGroups tasks={visible.slice().sort(compareTasks)} meta={meta} actions={actions} />
       ) : list.length ? (
-        list.map((t) => <TaskRow key={t.id} task={t} meta={meta} />)
+        list.map((t) => <TaskRow key={t.id} task={t} meta={meta} actions={actions} />)
       ) : (
         <div className="empty">No matching tasks.</div>
       )}
