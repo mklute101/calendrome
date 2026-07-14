@@ -17,7 +17,17 @@ import type {
   TimeLog,
   WeekPayload,
 } from '../types';
-import { addDays } from './dates';
+import { addDays, localISODate } from './dates';
+
+/**
+ * Bucket an entry by the viewer's LOCAL calendar day, not the raw UTC
+ * date. time_entry timestamps are canonical UTC (#95), so slicing the
+ * string filed evening US-timezone blocks under tomorrow — the #82 fix
+ * regressed when bucketing moved from the legacy index.html into this
+ * SPA. Every field here is a full timestamp (offset or Z), so parsing
+ * through Date is safe.
+ */
+const localDay = (iso: string): string => localISODate(new Date(iso));
 
 export interface DayBucket {
   date: string;
@@ -43,7 +53,7 @@ export function buildDays(data: WeekPayload, weekStart: string): DayBucket[] {
     });
   }
   for (const p of data.placements ?? []) {
-    const day = days.find((d) => d.date === p.start_at.slice(0, 10));
+    const day = days.find((d) => d.date === localDay(p.start_at));
     if (day) {
       day.placed.push(p);
       day.totalMin += p.duration_minutes || 0;
@@ -52,7 +62,7 @@ export function buildDays(data: WeekPayload, weekStart: string): DayBucket[] {
   const placedTaskIds = new Set((data.placements ?? []).map((p) => p.task_id));
   for (const t of data.tasks) {
     if (!t.due || t.status === 'ARCHIVED' || placedTaskIds.has(t.id)) continue;
-    const day = days.find((d) => d.date === t.due!.slice(0, 10));
+    const day = days.find((d) => d.date === localDay(t.due!));
     if (day) day.deadlines.push(t);
   }
   for (const hi of data.habit_instances) {
@@ -61,18 +71,18 @@ export function buildDays(data: WeekPayload, weekStart: string): DayBucket[] {
     // span — display truth), not the immutable `scheduled_start` slot,
     // so a moved instance lands on its new day.
     if (hi.status === 'SKIPPED') continue;
-    const day = days.find((d) => d.date === hi.start_at.slice(0, 10));
+    const day = days.find((d) => d.date === localDay(hi.start_at));
     if (day) {
       day.habits.push(hi);
       day.totalMin += hi.habit_duration || 0;
     }
   }
   for (const tl of data.time_logs) {
-    const day = days.find((d) => d.date === tl.started_at.slice(0, 10));
+    const day = days.find((d) => d.date === localDay(tl.started_at));
     if (day && tl.duration_minutes) day.logs.push(tl);
   }
   for (const ce of data.calendar_events ?? []) {
-    const day = days.find((d) => d.date === ce.start.slice(0, 10));
+    const day = days.find((d) => d.date === localDay(ce.start));
     if (day) {
       day.meetings.push(ce);
       day.totalMin += ce.duration_minutes || 0;
