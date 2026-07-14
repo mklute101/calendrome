@@ -1,15 +1,20 @@
 {
   "name": "calendrome",
   "version": "0.1.0",
-  "description": "Local, project-based task scheduling MCP server — a Reclaim.ai replacement",
+  "description": "Local, project-based task scheduling MCP server \u2014 a Reclaim.ai replacement",
   "type": "module",
   "private": true,
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
-    "build": "tsc -p tsconfig.json && cp src/db/schema.sql dist/src/db/schema.sql && mkdir -p dist/src/gui/public && cp -R src/gui/public/. dist/src/gui/public/ && node scripts/extract-docs.mjs",
+    "typecheck:app": "tsc -p src/gui/app/tsconfig.json",
+    "build": "tsc -p tsconfig.json && cp src/db/schema.sql dist/src/db/schema.sql && npm run typecheck:app && vite build && mkdir -p dist/src/gui/public && cp -R src/gui/public/. dist/src/gui/public/ && node scripts/extract-docs.mjs",
+    "dev": "vite",
     "start": "node dist/src/mcp/server.js",
-    "gui": "node dist/src/gui/server.js"
+    "gui": "node dist/src/gui/server.js",
+    "test:e2e": "playwright test",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
@@ -17,10 +22,18 @@
     "express": "^5.2.1"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
+    "@tauri-apps/cli": "^2.11.4",
     "@types/better-sqlite3": "^7.6.11",
     "@types/express": "^5.0.6",
     "@types/node": "^22.7.0",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.2.0",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
     "typescript": "^5.6.0",
+    "vite": "^7.3.6",
     "vitest": "^2.1.0"
   }
 }
