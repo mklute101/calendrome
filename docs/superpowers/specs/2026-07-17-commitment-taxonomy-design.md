@@ -2,6 +2,7 @@
 
 **Date:** 2026-07-17
 **Status:** Draft to play with — nothing here is ratified; the PR carrying this doc is the sandbox for the discussion
+**Tracking issue:** [#106](https://github.com/mklute101/calendrome/issues/106)
 **Reframes:** [#103](https://github.com/mklute101/calendrome/issues/103) (habit interaction model — the question that triggered this)
 **Builds on:** [#99](https://github.com/mklute101/calendrome/issues/99), [#100](https://github.com/mklute101/calendrome/issues/100) (budget caps), the [2026-05-13 time-entry unification](./2026-05-13-time-entry-unification-design.md)
 
