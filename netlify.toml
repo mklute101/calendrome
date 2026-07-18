@@ -5,8 +5,10 @@
   # sources, or the playground changed. The playground bundles the GUI
   # app plus the core modules it calls, so src/ is included wholesale —
   # app PRs now trigger a (cheap, static) website deploy, which keeps
-  # the in-browser demo honest about matching the code.
-  ignore = "git diff --quiet HEAD^ HEAD -- website/ netlify.toml scripts/extract-docs.mjs src/ vite.playground.config.ts package.json package-lock.json"
+  # the in-browser demo honest about matching the code. The check lives
+  # in a script because previews and production need different diff
+  # bases (whole-PR vs last-built commit).
+  ignore = "sh scripts/netlify-ignore.sh"
 
 [build.environment]
   NODE_VERSION = "20"
