@@ -93,6 +93,51 @@ export interface AvailabilityOverride {
   reason: string | null;
 }
 
+/** `goalProgress` output embedded per goal in the week payload (#106). */
+export interface GoalProgress {
+  goal_id: number;
+  week_start: string;
+  flavor: 'by_date' | 'refill';
+  target_minutes: number;
+  confirmed_minutes: number;
+  scheduled_minutes: number;
+  week_confirmed: number;
+  week_scheduled: number;
+  remaining_minutes: number | null;
+  weeks_left: number | null;
+  weekly_ask: number;
+  needed_this_week: number;
+  status: 'on_track' | 'behind' | 'funded' | 'complete';
+}
+
+export interface Goal {
+  id: number;
+  project_id: string;
+  title: string;
+  notes: string | null;
+  target_minutes: number;
+  due: string | null;
+  refill_period: string | null;
+  min_chunk_minutes: number | null;
+  progress: GoalProgress;
+}
+
+/** Weekly frequency meter for a habit: "3/4 this week". */
+export interface HabitScore {
+  habit_id: number;
+  title: string;
+  project_id: string;
+  done: number;
+  target: number;
+}
+
+/** Week-level envelope totals — the first ambient budget signal. */
+export interface EnvelopeSummary {
+  assigned_minutes: number;
+  confirmed_minutes: number;
+  scheduled_minutes: number;
+}
+
 export interface WeekPayload {
   start: string;
   end: string;
@@ -103,10 +148,58 @@ export interface WeekPayload {
   budgets: Budget[];
   calendar_events: CalendarEvent[];
   availability: AvailabilityOverride[];
+  goals: Goal[];
+  habit_scores: HabitScore[];
+  envelope_summary: EnvelopeSummary;
 }
 
 export interface TasksPayload {
   tasks: Task[];
+}
+
+/* ---- Budget view (#106 M2) — mirrors src/gui/budget-data.ts ---- */
+
+export type EnvelopeType = 'project' | 'goal' | 'habit';
+export type EnvelopeFunding = 'overspent' | 'underfunded' | 'on_track' | 'snoozed';
+
+export interface BudgetEnvelope {
+  envelope_type: EnvelopeType;
+  envelope_id: string;
+  title: string;
+  /** NULL = snoozed (unfunded) for the week. */
+  assigned: number | null;
+  activity: { confirmed_minutes: number; scheduled_minutes: number };
+  /** assigned − (confirmed + scheduled). */
+  available: number;
+  funding: EnvelopeFunding;
+  status_line: string;
+  /** Minutes of this week's ask not yet covered; 0 for projects. */
+  needed_minutes: number;
+  week_score?: { done: number; target: number };
+  /** Owning project — the grouping key. */
+  project_id: string;
+}
+
+export interface EnvelopeMove {
+  id: number;
+  week_start: string;
+  from_type: EnvelopeType | null;
+  from_id: string | null;
+  to_type: EnvelopeType | null;
+  to_id: string | null;
+  minutes: number;
+  note: string | null;
+  created_at: string;
+}
+
+export interface EnvelopesPayload {
+  week: string;
+  envelopes: BudgetEnvelope[];
+}
+
+export interface MovesPayload {
+  week: string;
+  moves: EnvelopeMove[];
 }
 
 /** projectId → display metadata, built from /api/projects. */

@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from 'react';
 import * as api from '../api';
-import type { Placement, Task } from '../types';
+import type { Goal, Placement, Task } from '../types';
 import { useWeekData } from '../hooks/useWeekData';
 import { useTasksData } from '../hooks/useTasksData';
 import { usePolling } from '../hooks/usePolling';
@@ -12,7 +12,7 @@ import {
 } from '../hooks/useTimelineDrag';
 import { useToasts } from './Toasts';
 import { buildDays, filterWeekData, findOverlap, placementLabel } from '../lib/weekdays';
-import { addDays, fmtDate, fmtTime, getMonday } from '../lib/dates';
+import { addDays, fmtDate, fmtHours, fmtTime, getMonday } from '../lib/dates';
 import { localDateTimeIso } from '../lib/geometry';
 import { BudgetCards } from './BudgetCards';
 import { CompactGrid } from './CompactGrid';
@@ -63,6 +63,14 @@ export function WeekView({
     () => (filtered ? buildDays(filtered, weekStart) : null),
     [filtered, weekStart],
   );
+  // Goal lookup for the timeline's progress chips. Built from the
+  // unfiltered payload — a goal block already filtered out of `days`
+  // simply never asks for its chip.
+  const goalsById = useMemo(() => {
+    const m: Record<number, Goal> = {};
+    for (const g of data?.goals ?? []) m[g.id] = g;
+    return m;
+  }, [data]);
 
   const runMutation = useCallback(
     async (fn: () => Promise<void>) => {
@@ -246,6 +254,15 @@ export function WeekView({
           <button className="nav-btn" onClick={() => setWeekStart(getMonday(new Date()))}>
             Today
           </button>
+          {data?.envelope_summary && (
+            <span
+              className="envelope-strip"
+              title="This week's envelopes: hours assigned vs hours confirmed"
+            >
+              assigned {fmtHours(data.envelope_summary.assigned_minutes)} ·{' '}
+              confirmed {fmtHours(data.envelope_summary.confirmed_minutes)}
+            </span>
+          )}
           <span className="nav-sep" />
           <button
             className={`nav-btn${viewMode === 'compact' ? ' active' : ''}`}
@@ -276,6 +293,9 @@ export function WeekView({
             All
           </button>
           <span className="nav-sep" />
+          <a className="nav-btn" href="#/budget" title="Envelope budget view">
+            Budget
+          </a>
           <button
             className={`nav-btn${panelOpen ? ' active' : ''}`}
             onClick={() => setPanelOpen(!panelOpen)}
@@ -291,11 +311,12 @@ export function WeekView({
         <>
           <BudgetCards budgets={filtered.budgets} meta={meta} />
           {viewMode === 'compact' ? (
-            <CompactGrid days={days} meta={meta} />
+            <CompactGrid days={days} meta={meta} goalsById={goalsById} />
           ) : (
             <WeekTimeline
               days={days}
               meta={meta}
+              goalsById={goalsById}
               ghost={ghost}
               gridRef={gridRef}
               dragging={dragging}
@@ -314,6 +335,8 @@ export function WeekView({
           onClose={() => setPanelOpen(false)}
           actions={taskActions}
           onDragStart={viewMode === 'timeline' ? startPlaceDrag : undefined}
+          goals={filtered?.goals ?? []}
+          habitScores={filtered?.habit_scores ?? []}
         />
       )}
     </>

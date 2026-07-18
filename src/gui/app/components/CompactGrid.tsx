@@ -1,6 +1,6 @@
-import type { ProjectMeta } from '../types';
+import type { Goal, ProjectMeta } from '../types';
 import type { DayBucket } from '../lib/weekdays';
-import { isOverdueEvent, isOverduePlacement, placementLabel } from '../lib/weekdays';
+import { goalChip, isOverdueEvent, isOverduePlacement, placementLabel } from '../lib/weekdays';
 import { colorOf, UNASSIGNED_COLOR } from '../lib/colors';
 import { DAYS, fmtDate, fmtHours, fmtTime, localISODate } from '../lib/dates';
 
@@ -10,9 +10,11 @@ const cssColor = (c: string) => ({ '--c': c } as React.CSSProperties);
 export function CompactGrid({
   days,
   meta,
+  goalsById,
 }: {
   days: DayBucket[];
   meta: ProjectMeta;
+  goalsById: Record<number, Goal>;
 }) {
   const todayStr = localISODate(new Date());
   return (
@@ -51,18 +53,27 @@ export function CompactGrid({
                   <div className="meta">{fmtHours(hi.habit_duration)}</div>
                 </div>
               ))}
-              {d.placed.map((p) => (
-                <div
-                  key={`p-${p.time_entry_id}`}
-                  className={`block${isOverduePlacement(p) ? ' overdue-review' : ''}`}
-                  style={cssColor(colorOf(meta, p.project_id))}
-                >
-                  <div className="title">{placementLabel(p)}</div>
-                  <div className="meta">
-                    {fmtHours(p.duration_minutes)} · {p.priority} · {p.project_id}
+              {d.placed.map((p) => {
+                const goal = p.goal_id != null ? goalsById[p.goal_id] : undefined;
+                return (
+                  <div
+                    key={`p-${p.time_entry_id}`}
+                    className={`block${p.goal_id != null ? ' goal' : ''}${isOverduePlacement(p) ? ' overdue-review' : ''}`}
+                    style={cssColor(colorOf(meta, p.project_id))}
+                  >
+                    <div className="title">{placementLabel(p)}</div>
+                    <div className="meta">
+                      {fmtHours(p.duration_minutes)}
+                      {p.priority ? ` · ${p.priority}` : ''} · {p.project_id}
+                      {goal && (
+                        <span className="goal-chip" title="Bucket progress: confirmed / target">
+                          {goalChip(goal.progress)}
+                        </span>
+                      )}
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
               {d.deadlines.map((t) => (
                 <div key={`d-${t.id}`} className="block deadline" style={cssColor(colorOf(meta, t.project_id))}>
                   <div className="title">{t.title}</div>

@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
-import type { ProjectMeta, Task } from '../types';
+import type { Goal, HabitScore, ProjectMeta, Task } from '../types';
 import { compareTasks, PRIORITY_LABEL, PRIORITY_ORDER, TaskRow } from './TaskRow';
+import { CommitmentSections } from './CommitmentSections';
 import type { TaskActions } from '../hooks/useTaskActions';
 
 /**
@@ -15,6 +16,8 @@ export function TaskPanel({
   onClose,
   actions,
   onDragStart,
+  goals = [],
+  habitScores = [],
 }: {
   tasks: Task[];
   meta: ProjectMeta;
@@ -22,6 +25,9 @@ export function TaskPanel({
   onClose: () => void;
   actions?: TaskActions;
   onDragStart?: (e: React.PointerEvent, task: Task) => void;
+  /** Already filtered to the active category view (filterWeekData). */
+  goals?: Goal[];
+  habitScores?: HabitScore[];
 }) {
   const [tab, setTab] = useState<'priorities' | 'tasks'>('priorities');
   const [search, setSearch] = useState('');
@@ -80,6 +86,7 @@ export function TaskPanel({
         />
       )}
       <div className="tasks-panel-body">
+        <CommitmentSections goals={goals} habitScores={habitScores} meta={meta} />
         {tab === 'priorities' ? (
           <PriorityGroups tasks={visible} meta={meta} actions={actions} onDragStart={onDragStart} />
         ) : searched.length ? (

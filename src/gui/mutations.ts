@@ -30,6 +30,14 @@ import {
 } from '../time-entry.js';
 import { completeTask } from '../time-log.js';
 import { getTask, updateTask, type Task, type TaskStatus } from '../tasks.js';
+import {
+  assignHours,
+  pullHours,
+  type Assignment,
+  type AssignHoursInput,
+  type EnvelopeMove,
+  type PullHoursInput,
+} from '../assignments.js';
 
 function getEntry(db: DB, id: number): TimeEntryRow {
   const row = db
@@ -122,4 +130,22 @@ export function guiSnooze(
   until: string | null,
 ): { task: Task } {
   return { task: updateTask(db, taskId, { snooze_until: until }) };
+}
+
+/**
+ * Set an envelope's weekly assignment (same as the `assign_hours` MCP
+ * tool). `minutes: null` snoozes the envelope for the week.
+ */
+export function guiAssign(db: DB, args: AssignHoursInput): { assignment: Assignment } {
+  return { assignment: assignHours(db, args) };
+}
+
+/**
+ * Move minutes between two envelopes — the YNAB pull (same as the
+ * `pull_hours` MCP tool). The client's undo is simply the reverse
+ * pull (from/to swapped), which `pullHours` accepts cleanly because
+ * the forward pull left the destination holding the pulled minutes.
+ */
+export function guiPull(db: DB, args: PullHoursInput): { move: EnvelopeMove } {
+  return { move: pullHours(db, args) };
 }

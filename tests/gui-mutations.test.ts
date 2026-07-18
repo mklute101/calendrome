@@ -12,6 +12,8 @@ import {
   guiComplete,
   reopenTask,
   guiSnooze,
+  guiAssign,
+  guiPull,
 } from '../src/gui/mutations.js';
 
 function setup() {
@@ -184,5 +186,88 @@ describe('GUI mutations (#24, #86)', () => {
     expect(snoozed.status).toBe('NEW');
     const { task: cleared } = guiSnooze(db, task.id, null);
     expect(cleared.snooze_until).toBeNull();
+  });
+});
+
+describe('GUI budget mutations (#106 M2)', () => {
+  function budgetSetup() {
+    const db = freshDb();
+    db.prepare(
+      `INSERT INTO projects (id, name, prefix, weekly_budget_minutes)
+       VALUES ('acme', 'Acme', 'ACME', 1200), ('hobby', 'Hobby', 'HOBBY', 300)`,
+    ).run();
+    return { db };
+  }
+  const WEEK = '2026-07-13'; // Monday
+
+  it('guiAssign upserts the assignment row (and null snoozes)', () => {
+    const { db } = budgetSetup();
+    const { assignment } = guiAssign(db, {
+      envelope_type: 'project',
+      envelope_id: 'acme',
+      week_start: WEEK,
+      minutes: 600,
+      note: 'light week',
+    });
+    expect(assignment.minutes).toBe(600);
+    expect(assignment.note).toBe('light week');
+
+    const { assignment: snoozed } = guiAssign(db, {
+      envelope_type: 'project',
+      envelope_id: 'acme',
+      week_start: WEEK,
+      minutes: null,
+    });
+    expect(snoozed.minutes).toBeNull();
+  });
+
+  it('guiPull moves minutes and the reverse pull (the undo) restores both sides', () => {
+    const { db } = budgetSetup();
+    const { move } = guiPull(db, {
+      week_start: WEEK,
+      from: { type: 'project', id: 'hobby' },
+      to: { type: 'project', id: 'acme' },
+      minutes: 120,
+      note: 'launch crunch',
+    });
+    expect(move.from_id).toBe('hobby');
+    expect(move.to_id).toBe('acme');
+    expect(move.minutes).toBe(120);
+
+    const minutesOf = (id: string) =>
+      (
+        db
+          .prepare(
+            'SELECT minutes FROM assignments WHERE envelope_id = ? AND week_start = ?',
+          )
+          .get(id, WEEK) as { minutes: number }
+      ).minutes;
+    expect(minutesOf('hobby')).toBe(180); // 300 − 120
+    expect(minutesOf('acme')).toBe(1320); // 1200 + 120
+
+    // Undo = reverse pull, from/to swapped. Must be accepted cleanly:
+    // the forward pull left acme holding the minutes to give back.
+    const { move: undo } = guiPull(db, {
+      week_start: WEEK,
+      from: { type: 'project', id: 'acme' },
+      to: { type: 'project', id: 'hobby' },
+      minutes: 120,
+      note: 'undo',
+    });
+    expect(undo.note).toBe('undo');
+    expect(minutesOf('hobby')).toBe(300);
+    expect(minutesOf('acme')).toBe(1200);
+  });
+
+  it('guiPull surfaces core guards (overdraw throws)', () => {
+    const { db } = budgetSetup();
+    expect(() =>
+      guiPull(db, {
+        week_start: WEEK,
+        from: { type: 'project', id: 'hobby' },
+        to: { type: 'project', id: 'acme' },
+        minutes: 999,
+      }),
+    ).toThrow(/only 300m assigned/);
   });
 });

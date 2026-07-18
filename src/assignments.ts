@@ -73,6 +73,12 @@ export interface EnvelopeRow {
   available: number;
   funding: 'overspent' | 'underfunded' | 'on_track' | 'snoozed';
   status_line: string;
+  /**
+   * Goal/habit envelopes: minutes of this week's ask not yet covered
+   * by activity — the number behind "Nh more needed this week".
+   * Always 0 for projects (they have caps, not asks).
+   */
+  needed_minutes: number;
   /** Habit envelopes only: the weekly frequency meter. */
   week_score?: { done: number; target: number };
 }
@@ -363,6 +369,7 @@ export function getEnvelopes(db: DB, weekStart: string): EnvelopeRow[] {
       available,
       funding,
       status_line,
+      needed_minutes: weeklyAskNeeded ?? 0,
       ...(weekScore ? { week_score: weekScore } : {}),
     };
   };

@@ -13,10 +13,12 @@
  */
 import type { DB } from '../db/connection.js';
 import { listTasks } from '../tasks.js';
-import { listHabits, generateHabitInstances } from '../habits.js';
+import { listHabits, generateHabitInstances, habitWeekScore } from '../habits.js';
 import { getAllBudgets } from '../budgets.js';
 import { listCalendarEvents } from '../calendar-sync.js';
 import { listAvailabilityOverrides } from '../availability.js';
+import { listGoals, goalProgress } from '../goals.js';
+import { getEnvelopes } from '../assignments.js';
 
 // Effective minutes of a time_entry: explicit actual_minutes wins,
 // otherwise derive from the start/end span.
@@ -119,6 +121,40 @@ export function buildWeekPayload(db: DB, start: string) {
 
   const budgets = getAllBudgets(db, start);
 
+  // Commitments (M1 — watchable): goals with embedded progress, habit
+  // weekly meters, and the week's envelope totals. goalProgress /
+  // getEnvelopes key off a Monday; the GUI always requests Mondays,
+  // but normalize anyway so a mid-week `start` still answers for its
+  // own week instead of throwing.
+  const startDow = startDate.getUTCDay(); // 0=Sun..6=Sat
+  const monday = new Date(
+    startDate.getTime() - ((startDow + 6) % 7) * 86_400_000,
+  )
+    .toISOString()
+    .slice(0, 10);
+
+  const goals = listGoals(db, { active: true }).map((g) => ({
+    ...g,
+    progress: goalProgress(db, g.id, monday),
+  }));
+
+  const habitScores = listHabits(db, { active: true }).map((h) => ({
+    habit_id: h.id,
+    title: h.title,
+    project_id: h.project_id,
+    ...habitWeekScore(db, h.id, monday),
+  }));
+
+  const envelopeSummary = getEnvelopes(db, monday).reduce(
+    (acc, e) => {
+      acc.assigned_minutes += e.assigned ?? 0;
+      acc.confirmed_minutes += e.activity.confirmed_minutes;
+      acc.scheduled_minutes += e.activity.scheduled_minutes;
+      return acc;
+    },
+    { assigned_minutes: 0, confirmed_minutes: 0, scheduled_minutes: 0 },
+  );
+
   const calendarEvents = listCalendarEvents(
     db,
     start + 'T00:00:00',
@@ -140,5 +176,8 @@ export function buildWeekPayload(db: DB, start: string) {
     budgets,
     calendar_events: calendarEvents,
     availability,
+    goals,
+    habit_scores: habitScores,
+    envelope_summary: envelopeSummary,
   };
 }
