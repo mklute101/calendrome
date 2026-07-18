@@ -4,6 +4,8 @@ import { createProject } from '../src/projects.js';
 import { buildTools } from '../src/mcp/tools/index.js';
 import { FakeCalendarClient } from '../src/calendar/fake.js';
 import { buildWeekPayload } from '../src/gui/week-data.js';
+import { createHabit } from '../src/habits.js';
+import { assignHours } from '../src/assignments.js';
 
 /**
  * GUI week payload tests (#79).
@@ -168,5 +170,110 @@ describe('buildWeekPayload goal blocks (#111 review)', () => {
     expect(payload.time_logs).toHaveLength(1);
     expect(payload.time_logs[0].goal_title).toBe('Spanish practice');
     expect(payload.time_logs[0].goal_id).toBe(g.goal.id);
+  });
+});
+
+describe('buildWeekPayload commitments (M1 — watchable)', () => {
+  it('embeds active goals with their goalProgress for the week', async () => {
+    const { db, tools } = setup();
+    const g = await getTool(tools, 'create_goal').handler({
+      project_id: 'acme',
+      title: 'Spanish practice',
+      target_minutes: 180,
+      refill_period: 'week',
+    });
+    await getTool(tools, 'place_goal_block').handler({
+      goal_id: g.goal.id,
+      start: SLOT,
+      duration_minutes: 60,
+    });
+
+    const payload = buildWeekPayload(db, WEEK);
+    expect(payload.goals).toHaveLength(1);
+    const goal = payload.goals[0];
+    expect(goal.title).toBe('Spanish practice');
+    expect(goal.progress.flavor).toBe('refill');
+    expect(goal.progress.week_scheduled).toBe(60);
+    expect(goal.progress.needed_this_week).toBe(120);
+  });
+
+  it('inactive goals stay out of the payload', async () => {
+    const { db, tools } = setup();
+    const g = await getTool(tools, 'create_goal').handler({
+      project_id: 'acme',
+      title: 'Old goal',
+      target_minutes: 60,
+      refill_period: 'week',
+    });
+    await getTool(tools, 'deactivate_goal').handler({ id: g.goal.id });
+    expect(buildWeekPayload(db, WEEK).goals).toHaveLength(0);
+  });
+
+  it('habit_scores carries the weekly meter per active habit', () => {
+    const { db } = setup();
+    const habit = createHabit(db, {
+      project_id: 'acme',
+      title: 'Stretch',
+      duration_minutes: 15,
+      days_of_week: '1,3,5',
+      start_time: '07:00',
+    });
+
+    const payload = buildWeekPayload(db, WEEK);
+    expect(payload.habit_scores).toEqual([
+      {
+        habit_id: habit.id,
+        title: 'Stretch',
+        project_id: 'acme',
+        done: 0,
+        target: 3,
+      },
+    ]);
+  });
+
+  it('envelope_summary sums assigned/confirmed/scheduled over the envelopes', async () => {
+    const { db, tools } = setup();
+    const g = await getTool(tools, 'create_goal').handler({
+      project_id: 'acme',
+      title: 'Prospecting',
+      target_minutes: 180,
+      refill_period: 'week',
+    });
+    // Explicit project assignment + the goal's standing weekly ask.
+    assignHours(db, {
+      envelope_type: 'project',
+      envelope_id: 'acme',
+      week_start: WEEK,
+      minutes: 600,
+    });
+    const placed = await getTool(tools, 'place_goal_block').handler({
+      goal_id: g.goal.id,
+      start: SLOT,
+      duration_minutes: 90,
+    });
+    await getTool(tools, 'confirm_placement').handler({
+      time_entry_id: placed.entry.id,
+      actual_minutes: 60,
+    });
+
+    const summary = buildWeekPayload(db, WEEK).envelope_summary;
+    expect(summary).toEqual({
+      assigned_minutes: 600 + 180,
+      confirmed_minutes: 60,
+      scheduled_minutes: 0,
+    });
+  });
+
+  it('a mid-week start answers for its own Monday instead of throwing', async () => {
+    const { db, tools } = setup();
+    await getTool(tools, 'create_goal').handler({
+      project_id: 'acme',
+      title: 'Spanish practice',
+      target_minutes: 180,
+      refill_period: 'week',
+    });
+
+    const payload = buildWeekPayload(db, '2026-06-17'); // Wednesday
+    expect(payload.goals[0].progress.week_start).toBe(WEEK);
   });
 });

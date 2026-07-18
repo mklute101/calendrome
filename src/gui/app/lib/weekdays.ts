@@ -9,6 +9,7 @@
  */
 import type {
   CalendarEvent,
+  GoalProgress,
   HabitInstance,
   Placement,
   ProjectMeta,
@@ -99,6 +100,8 @@ export function filterWeekData(
     time_logs: data.time_logs.filter((tl) => visible(tl.project_id)),
     calendar_events: (data.calendar_events ?? []).filter((ce) => visible(ce.project_id)),
     budgets: data.budgets.filter((b) => visible(b.project_id)),
+    goals: (data.goals ?? []).filter((g) => visible(g.project_id)),
+    habit_scores: (data.habit_scores ?? []).filter((h) => visible(h.project_id)),
   };
 }
 
@@ -126,6 +129,20 @@ export function placementLabel(p: {
   goal_title?: string | null;
 }): string {
   return p.task_title ?? p.goal_title ?? '(untitled)';
+}
+
+/**
+ * Progress chip text for a goal block: "4.5/10h". By-date goals show
+ * the whole bucket (all-time confirmed / target); refill goals reset
+ * weekly, so they show this week's confirmed / weekly ask.
+ */
+export function goalChip(progress: GoalProgress): string {
+  const [done, target] =
+    progress.flavor === 'by_date'
+      ? [progress.confirmed_minutes, progress.target_minutes]
+      : [progress.week_confirmed, progress.weekly_ask];
+  const h = (m: number) => String(Number((m / 60).toFixed(1)));
+  return `${h(done)}/${h(target)}h`;
 }
 
 export function minutesOfDay(iso: string): number {

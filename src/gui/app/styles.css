@@ -465,6 +465,81 @@ body.dragging * { cursor: grabbing !important; }
 }
 .snooze-option:hover { background: color-mix(in srgb, var(--accent) 15%, var(--surface)); }
 
+/* ===== COMMITMENTS — M1 watchable (#106) ===== */
+/* Header strip: the first ambient envelope signal. */
+.envelope-strip {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 2px 10px;
+  margin-left: 4px;
+  white-space: nowrap;
+}
+
+/* Goal blocks: bucket accent — dashed left border sets them apart
+   from task placements without a new color channel. */
+.block.goal,
+.timeline-block.goal {
+  border-left-style: dashed;
+}
+.goal-chip {
+  display: inline-block;
+  font-size: 0.6rem;
+  line-height: 1.4;
+  color: var(--text);
+  border: 1px solid color-mix(in srgb, var(--c, var(--accent)) 50%, transparent);
+  background: color-mix(in srgb, var(--c, var(--accent)) 14%, transparent);
+  border-radius: 8px;
+  padding: 0 6px;
+  margin-top: 2px;
+  margin-left: 4px;
+  white-space: nowrap;
+}
+
+/* Side-panel Goals section */
+.goal-item {
+  border: 1px solid var(--border);
+  border-left: 3px dashed var(--c, var(--accent));
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin-bottom: 7px;
+  background: var(--bg);
+}
+.goal-item-main { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; }
+.goal-bar {
+  height: 5px;
+  background: var(--border);
+  border-radius: 3px;
+  overflow: hidden;
+  margin: 6px 0 4px;
+}
+.goal-bar-fill { height: 100%; background: var(--c, var(--accent)); transition: width 0.3s; }
+.goal-item-status { font-size: 0.68rem; color: var(--text-muted); }
+/* Behind-pace glow: the date passed with the bucket unfilled. */
+.goal-item.behind {
+  border-color: color-mix(in srgb, #d29922 55%, var(--border));
+  box-shadow: 0 0 0 1px color-mix(in srgb, #d29922 35%, transparent);
+}
+.goal-item.behind .goal-item-status { color: #d29922; }
+
+/* Side-panel Habits section: the weekly frequency meter (●●●○ 3/4). */
+.habit-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--c, var(--accent));
+  border-radius: 6px;
+  padding: 7px 10px;
+  margin-bottom: 7px;
+  background: var(--bg);
+}
+.habit-meter { display: inline-flex; align-items: baseline; gap: 6px; white-space: nowrap; }
+.habit-dots { font-size: 0.6rem; letter-spacing: 2px; color: var(--c, var(--accent)); }
+.habit-frac { font-size: 0.68rem; color: var(--text-muted); }
+
 /* Toasts */
 .toast-stack {
   position: fixed;

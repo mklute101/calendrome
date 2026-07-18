@@ -93,6 +93,51 @@ export interface AvailabilityOverride {
   reason: string | null;
 }
 
+/** `goalProgress` output embedded per goal in the week payload (#106). */
+export interface GoalProgress {
+  goal_id: number;
+  week_start: string;
+  flavor: 'by_date' | 'refill';
+  target_minutes: number;
+  confirmed_minutes: number;
+  scheduled_minutes: number;
+  week_confirmed: number;
+  week_scheduled: number;
+  remaining_minutes: number | null;
+  weeks_left: number | null;
+  weekly_ask: number;
+  needed_this_week: number;
+  status: 'on_track' | 'behind' | 'funded' | 'complete';
+}
+
+export interface Goal {
+  id: number;
+  project_id: string;
+  title: string;
+  notes: string | null;
+  target_minutes: number;
+  due: string | null;
+  refill_period: string | null;
+  min_chunk_minutes: number | null;
+  progress: GoalProgress;
+}
+
+/** Weekly frequency meter for a habit: "3/4 this week". */
+export interface HabitScore {
+  habit_id: number;
+  title: string;
+  project_id: string;
+  done: number;
+  target: number;
+}
+
+/** Week-level envelope totals — the first ambient budget signal. */
+export interface EnvelopeSummary {
+  assigned_minutes: number;
+  confirmed_minutes: number;
+  scheduled_minutes: number;
+}
+
 export interface WeekPayload {
   start: string;
   end: string;
@@ -103,6 +148,9 @@ export interface WeekPayload {
   budgets: Budget[];
   calendar_events: CalendarEvent[];
   availability: AvailabilityOverride[];
+  goals: Goal[];
+  habit_scores: HabitScore[];
+  envelope_summary: EnvelopeSummary;
 }
 
 export interface TasksPayload {

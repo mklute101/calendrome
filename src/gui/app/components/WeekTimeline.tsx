@@ -1,6 +1,6 @@
-import type { Placement, ProjectMeta } from '../types';
+import type { Goal, Placement, ProjectMeta } from '../types';
 import type { DayBucket } from '../lib/weekdays';
-import { isOverdueEvent, isOverduePlacement, placementLabel } from '../lib/weekdays';
+import { goalChip, isOverdueEvent, isOverduePlacement, placementLabel } from '../lib/weekdays';
 import { colorOf, UNASSIGNED_COLOR } from '../lib/colors';
 import { DAYS, fmtDate, fmtHours, fmtTime, localISODate } from '../lib/dates';
 import {
@@ -31,6 +31,7 @@ function hourLabel(h: number): string {
 export function WeekTimeline({
   days,
   meta,
+  goalsById,
   ghost,
   gridRef,
   dragging,
@@ -40,6 +41,7 @@ export function WeekTimeline({
 }: {
   days: DayBucket[];
   meta: ProjectMeta;
+  goalsById: Record<number, Goal>;
   ghost: DragGhost | null;
   gridRef: React.MutableRefObject<HTMLDivElement | null>;
   dragging: boolean;
@@ -136,6 +138,7 @@ export function WeekTimeline({
                   if (!inRange(top)) return null;
                   const height = durationToPx(p.duration_minutes);
                   const color = colorOf(meta, p.project_id);
+                  const goal = p.goal_id != null ? goalsById[p.goal_id] : undefined;
                   const beingDragged =
                     dragging &&
                     ghost &&
@@ -144,7 +147,7 @@ export function WeekTimeline({
                   return (
                     <div
                       key={`p-${p.time_entry_id}`}
-                      className={`timeline-block placement${isOverduePlacement(p) ? ' overdue-review' : ''}${beingDragged ? ' drag-origin' : ''}`}
+                      className={`timeline-block placement${p.goal_id != null ? ' goal' : ''}${isOverduePlacement(p) ? ' overdue-review' : ''}${beingDragged ? ' drag-origin' : ''}`}
                       style={cssBlock(color, top, height)}
                       onPointerDown={(e) =>
                         onStartDrag(e, { kind: 'move', placement: p, color })
@@ -155,6 +158,11 @@ export function WeekTimeline({
                         <div className="meta">
                           {fmtHours(p.duration_minutes)} · {p.project_id}
                         </div>
+                      )}
+                      {goal && height > 46 && (
+                        <span className="goal-chip" title="Bucket progress: confirmed / target">
+                          {goalChip(goal.progress)}
+                        </span>
                       )}
                       <div
                         className="block-actions"
