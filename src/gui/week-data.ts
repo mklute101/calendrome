@@ -51,13 +51,26 @@ export function buildWeekPayload(db: DB, start: string) {
       // already generated
     }
   }
+  // Display truth for a habit block is the linked time_entry's span —
+  // a moved instance (#118) keeps its immutable `scheduled_start` slot
+  // identity but renders (and buckets) on the entry's day, mirroring
+  // the placements query. SKIPPED instances have no entry (COALESCE
+  // falls back to the scheduled slot); they stay in the payload for
+  // the weekly meter and are filtered out client-side in buildDays.
+  // `times_per_week` rides along so the client can constrain drags to
+  // the frequency range (fixed-days: own day; target form: own week).
   const existingInstances = db
     .prepare(
-      `SELECT hi.*, h.title as habit_title, h.project_id, h.duration_minutes as habit_duration
+      `SELECT hi.*, h.title as habit_title, h.project_id,
+              h.duration_minutes as habit_duration, h.times_per_week,
+              COALESCE(te.start_at, hi.scheduled_start) AS start_at,
+              COALESCE(te.end_at, hi.scheduled_end)     AS end_at
        FROM habit_instances hi
        JOIN habits h ON h.id = hi.habit_id
-       WHERE hi.scheduled_start >= ? AND hi.scheduled_start <= ?
-       ORDER BY hi.scheduled_start`,
+       LEFT JOIN time_entry te ON te.id = hi.time_entry_id
+       WHERE COALESCE(te.start_at, hi.scheduled_start) >= ?
+         AND COALESCE(te.start_at, hi.scheduled_start) <= ?
+       ORDER BY COALESCE(te.start_at, hi.scheduled_start)`,
     )
     .all(start + 'T00:00:00', end + 'T23:59:59') as any[];
 

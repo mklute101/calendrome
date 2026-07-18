@@ -47,6 +47,10 @@ import {
   guiSnooze,
   guiAssign,
   guiPull,
+  guiHabitComplete,
+  guiHabitSkip,
+  guiHabitMove,
+  reopenHabitInstance,
 } from './mutations.js';
 import type { EnvelopeRef, EnvelopeType } from '../assignments.js';
 
@@ -281,6 +285,57 @@ export function createApp(
     }
     const db = getDb();
     mutate(res, () => guiSnooze(db, idParam(req), body.until)).finally(() =>
+      db.close(),
+    );
+  });
+
+  /**
+   * Mark a habit instance done (#118): status → COMPLETE, paired
+   * time_entry confirmed. 404 unknown id, 409 non-PLANNED.
+   */
+  app.post('/api/habit-instances/:id/complete', (req, res) => {
+    const db = getDb();
+    mutate(res, () => guiHabitComplete(db, idParam(req))).finally(() =>
+      db.close(),
+    );
+  });
+
+  /**
+   * Skip a habit instance (#118): status → SKIPPED, paired entry
+   * deleted. The miss stays counted in the weekly meter. Undo via
+   * `/reopen`. 404 unknown id, 409 non-PLANNED.
+   */
+  app.post('/api/habit-instances/:id/skip', (req, res) => {
+    const db = getDb();
+    mutate(res, () => guiHabitSkip(db, idParam(req))).finally(() => db.close());
+  });
+
+  /**
+   * Move a habit instance within its frequency range (#118). Body:
+   * `{start, end?}`. Fixed-days habits move within their own day,
+   * times_per_week habits within their week — leaving the range is a
+   * skip, not a move, and 409s here.
+   */
+  app.post('/api/habit-instances/:id/move', (req, res) => {
+    const { start, end } = req.body ?? {};
+    if (typeof start !== 'string') {
+      res.status(400).json({ error: 'body requires start (string)' });
+      return;
+    }
+    const db = getDb();
+    mutate(res, () => guiHabitMove(db, idParam(req), { start, end })).finally(
+      () => db.close(),
+    );
+  });
+
+  /**
+   * Reopen a COMPLETE/SKIPPED habit instance back to PLANNED — the
+   * undo path for the ✓/✕ toasts (#118). Documented GUI-only
+   * deviation, like `/api/tasks/:id/reopen`.
+   */
+  app.post('/api/habit-instances/:id/reopen', (req, res) => {
+    const db = getDb();
+    mutate(res, () => reopenHabitInstance(db, idParam(req))).finally(() =>
       db.close(),
     );
   });

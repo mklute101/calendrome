@@ -25,11 +25,19 @@ import {
 import {
   moveTimeEntry,
   confirmTimeEntry,
+  insertTimeEntry,
   skipTimeEntry,
   type TimeEntryRow,
 } from '../time-entry.js';
 import { completeTask } from '../time-log.js';
 import { getTask, updateTask, type Task, type TaskStatus } from '../tasks.js';
+import {
+  completeHabitInstance,
+  getHabit,
+  moveHabitInstance,
+  skipHabitInstance,
+  type HabitInstance,
+} from '../habits.js';
 import {
   assignHours,
   pullHours,
@@ -122,6 +130,124 @@ export function reopenTask(
     `UPDATE tasks SET status = ?, updated_at = datetime('now') WHERE id = ?`,
   ).run(to, taskId);
   return { task: getTask(db, taskId)! };
+}
+
+function getHabitInstance(db: DB, id: number): HabitInstance {
+  const row = db
+    .prepare(`SELECT * FROM habit_instances WHERE id = ?`)
+    .get(id) as HabitInstance | undefined;
+  if (!row) throw new Error(`habit_instance ${id} not found`);
+  return row;
+}
+
+/** Requires PLANNED — the core fns don't guard status, the GUI does
+ *  so a stale double-click 409s instead of silently re-completing. */
+function requirePlanned(inst: HabitInstance): void {
+  if (inst.status !== 'PLANNED') {
+    throw new Error(
+      `habit_instance ${inst.id} is ${inst.status}, not PLANNED`,
+    );
+  }
+}
+
+/**
+ * Mark a habit instance done (#118) — same core as the
+ * `complete_habit_instance` path: status → COMPLETE and the paired
+ * time_entry confirmed.
+ */
+export function guiHabitComplete(db: DB, id: number): { instance: HabitInstance } {
+  requirePlanned(getHabitInstance(db, id));
+  return { instance: completeHabitInstance(db, id) };
+}
+
+/**
+ * Skip a habit instance (#118) — the slot didn't happen. Status →
+ * SKIPPED and the paired UNCONFIRMED time_entry is deleted. The skip
+ * is counted, not hidden: it stays in the DB for the weekly meter.
+ * Undo is `reopenHabitInstance`, not a re-insert here.
+ */
+export function guiHabitSkip(db: DB, id: number): { instance: HabitInstance } {
+  requirePlanned(getHabitInstance(db, id));
+  return { instance: skipHabitInstance(db, id) };
+}
+
+/**
+ * Move a habit instance within its frequency range (#118) — thin
+ * wrapper over `moveHabitInstance`, which enforces the range rule
+ * (fixed-days: its own day; times_per_week: its week) and moves the
+ * linked entry without touching `scheduled_start`.
+ */
+export function guiHabitMove(
+  db: DB,
+  id: number,
+  args: { start: string; end?: string },
+): { instance: HabitInstance; entry: TimeEntryRow } {
+  return moveHabitInstance(db, id, args.start, { newEnd: args.end });
+}
+
+/**
+ * Undo path for habit ✓/✕ (#118). Like `reopenTask` above, this is a
+ * deliberate, GUI-undo-only deviation from the one-way core
+ * transitions: validated to only ever move an instance *back to*
+ * PLANNED, and only for habit-sourced state.
+ *  - from SKIPPED: status → PLANNED and the UNCONFIRMED entry is
+ *    re-inserted at the scheduled slot + relinked (the skip deleted
+ *    it; the scheduled slot is the only position we still know).
+ *  - from COMPLETE: status → PLANNED, completed_at cleared, and the
+ *    linked entry un-confirmed in place (it keeps any moved position).
+ */
+export function reopenHabitInstance(db: DB, id: number): { instance: HabitInstance } {
+  const reopenTx = db.transaction(() => {
+    const inst = getHabitInstance(db, id);
+    if (inst.status === 'PLANNED') {
+      throw new Error(`habit_instance ${id} is already PLANNED`);
+    }
+    const habit = getHabit(db, inst.habit_id);
+    if (!habit) throw new Error(`habit ${inst.habit_id} not found`);
+
+    if (inst.status === 'SKIPPED') {
+      const teId = insertTimeEntry(db, {
+        task_id: null,
+        project_id: habit.project_id,
+        start_at: inst.scheduled_start,
+        end_at: inst.scheduled_end,
+        status: 'UNCONFIRMED',
+        source: 'habit',
+        notes: habit.title,
+      });
+      db.prepare(
+        `UPDATE habit_instances
+            SET status = 'PLANNED', completed_at = NULL, time_entry_id = ?
+          WHERE id = ?`,
+      ).run(teId, id);
+      return;
+    }
+
+    // COMPLETE → PLANNED. Un-confirming has no core fn on purpose
+    // (confirm is one-way everywhere else); validate the entry is
+    // habit-sourced before the direct write.
+    if (inst.time_entry_id != null) {
+      const te = db
+        .prepare(`SELECT source FROM time_entry WHERE id = ?`)
+        .get(inst.time_entry_id) as { source: string } | undefined;
+      if (te && te.source !== 'habit') {
+        throw new Error(
+          `habit_instance ${id} links non-habit time_entry ${inst.time_entry_id} (${te.source})`,
+        );
+      }
+      db.prepare(
+        `UPDATE time_entry
+            SET status = 'UNCONFIRMED', confirmed_at = NULL,
+                updated_at = datetime('now')
+          WHERE id = ?`,
+      ).run(inst.time_entry_id);
+    }
+    db.prepare(
+      `UPDATE habit_instances SET status = 'PLANNED', completed_at = NULL WHERE id = ?`,
+    ).run(id);
+  });
+  reopenTx();
+  return { instance: getHabitInstance(db, id) };
 }
 
 export function guiSnooze(

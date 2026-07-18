@@ -6,6 +6,7 @@ import type { Server } from 'node:http';
 import { openDatabase } from '../src/db/connection.js';
 import { migrate } from '../src/db/migrate.js';
 import { createTask } from '../src/tasks.js';
+import { createHabit, generateHabitInstances } from '../src/habits.js';
 import { FakeCalendarClient } from '../src/calendar/index.js';
 import { createApp } from '../src/gui/server.js';
 
@@ -129,6 +130,111 @@ describe('GUI write API over HTTP', () => {
     // The happy chain above confirmed its placement, which moves it
     // from placements[] to time_logs[] — assert it landed there.
     expect(payload.time_logs.length).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * Habit-instance API over HTTP (#118): the generate → move → complete
+ * → reopen → skip chain plus the 400/404/409 mapping. Range-rule and
+ * reopen mechanics are covered in habits.test.ts / gui-mutations.test.ts.
+ */
+describe('GUI habit-instance API over HTTP', () => {
+  let dir: string;
+  let server: Server;
+  let base: string;
+  let instId: number;
+
+  beforeAll(async () => {
+    dir = mkdtempSync(join(tmpdir(), 'calendrome-http-habits-'));
+    const dbPath = join(dir, 'calendrome.db');
+    const db = openDatabase(dbPath);
+    migrate(db);
+    db.prepare(`INSERT INTO projects (id, name, prefix) VALUES ('me', 'Me', 'ME')`).run();
+    const habit = createHabit(db, {
+      project_id: 'me',
+      title: 'Stretch',
+      duration_minutes: 30,
+      days_of_week: '1', // Monday
+      start_time: '09:00',
+      timezone: 'UTC',
+    });
+    // 2026-07-13 is a Monday.
+    const [inst] = generateHabitInstances(db, habit.id, '2026-07-13', '2026-07-13');
+    instId = inst.id;
+    db.close();
+
+    const app = createApp(dbPath, new FakeCalendarClient());
+    await new Promise<void>((resolve) => {
+      server = app.listen(0, '127.0.0.1', () => resolve());
+    });
+    const addr = server.address();
+    if (addr === null || typeof addr === 'string') throw new Error('no port');
+    base = `http://127.0.0.1:${addr.port}`;
+  });
+
+  afterAll(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const json = (r: Response): Promise<any> => r.json() as Promise<any>;
+  const post = (path: string, body?: unknown) =>
+    fetch(base + path, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+
+  it('chain: move → complete → reopen → skip → reopen, with 400/404/409 mapping', async () => {
+    // Malformed move body → 400; unknown id → 404.
+    expect((await post(`/api/habit-instances/${instId}/move`, {})).status).toBe(400);
+    expect(
+      (await post('/api/habit-instances/9999/move', { start: '2026-07-13T12:00:00Z' }))
+        .status,
+    ).toBe(404);
+
+    // Move within the day succeeds; scheduled_start stays put.
+    const moved = await post(`/api/habit-instances/${instId}/move`, {
+      start: '2026-07-13T18:00:00Z',
+    });
+    expect(moved.status).toBe(200);
+    const movedBody = await json(moved);
+    expect(movedBody.instance.scheduled_start).toBe('2026-07-13T09:00:00Z');
+    expect(movedBody.entry.start_at).toBe('2026-07-13T18:00:00Z');
+
+    // Leaving the day is a skip, not a move → 409.
+    const offDay = await post(`/api/habit-instances/${instId}/move`, {
+      start: '2026-07-14T09:00:00Z',
+    });
+    expect(offDay.status).toBe(409);
+    expect((await json(offDay)).error).toMatch(/skip, not a move/);
+
+    // Complete; double-complete 409s; move-after-complete 409s.
+    const done = await post(`/api/habit-instances/${instId}/complete`);
+    expect(done.status).toBe(200);
+    expect((await json(done)).instance.status).toBe('COMPLETE');
+    expect((await post(`/api/habit-instances/${instId}/complete`)).status).toBe(409);
+    expect(
+      (await post(`/api/habit-instances/${instId}/move`, { start: '2026-07-13T12:00:00Z' }))
+        .status,
+    ).toBe(409);
+
+    // Reopen (undo of ✓) → back to PLANNED, entry un-confirmed.
+    const reopened = await post(`/api/habit-instances/${instId}/reopen`);
+    expect(reopened.status).toBe(200);
+    expect((await json(reopened)).instance.status).toBe('PLANNED');
+
+    // Skip → SKIPPED; reopen (undo of ✕) re-inserts at the scheduled slot.
+    const skipped = await post(`/api/habit-instances/${instId}/skip`);
+    expect(skipped.status).toBe(200);
+    expect((await json(skipped)).instance.status).toBe('SKIPPED');
+    const reopened2 = await post(`/api/habit-instances/${instId}/reopen`);
+    expect(reopened2.status).toBe(200);
+    const back = (await json(reopened2)).instance;
+    expect(back.status).toBe('PLANNED');
+    expect(back.time_entry_id).not.toBeNull();
+    // Reopening a PLANNED instance is a guard violation → 409.
+    expect((await post(`/api/habit-instances/${instId}/reopen`)).status).toBe(409);
   });
 });
 

@@ -1,6 +1,12 @@
-import type { Goal, Placement, ProjectMeta } from '../types';
+import type { Goal, HabitInstance, Placement, ProjectMeta } from '../types';
 import type { DayBucket } from '../lib/weekdays';
-import { goalChip, isOverdueEvent, isOverduePlacement, placementLabel } from '../lib/weekdays';
+import {
+  goalChip,
+  isOverdueEvent,
+  isOverdueHabit,
+  isOverduePlacement,
+  placementLabel,
+} from '../lib/weekdays';
 import { colorOf, UNASSIGNED_COLOR } from '../lib/colors';
 import { DAYS, fmtDate, fmtHours, fmtTime, localISODate } from '../lib/dates';
 import {
@@ -24,9 +30,12 @@ function hourLabel(h: number): string {
 /**
  * Timeline view: absolute-positioned blocks on a 7-day × hourly grid.
  * Placement blocks are interactive (#24): drag the body to move, the
- * bottom edge to resize, hover for confirm/skip. Logs, habits, and
- * gcal events render without handles — the server guards are the
- * backstop, the missing affordance is the UX.
+ * bottom edge to resize, hover for confirm/skip. PLANNED habit
+ * instances are interactive too (#118): drag to slide within the
+ * frequency range, hover for ✓/✕ — but no resize handle, a habit's
+ * chunk size is its instance duration. Logs and gcal events render
+ * without handles — the server guards are the backstop, the missing
+ * affordance is the UX.
  */
 export function WeekTimeline({
   days,
@@ -38,6 +47,8 @@ export function WeekTimeline({
   onStartDrag,
   onConfirm,
   onSkip,
+  onCompleteHabit,
+  onSkipHabit,
 }: {
   days: DayBucket[];
   meta: ProjectMeta;
@@ -48,6 +59,8 @@ export function WeekTimeline({
   onStartDrag: (e: React.PointerEvent, source: DragSource) => void;
   onConfirm: (p: Placement) => void;
   onSkip: (p: Placement) => void;
+  onCompleteHabit: (hi: HabitInstance) => void;
+  onSkipHabit: (hi: HabitInstance) => void;
 }) {
   const todayStr = localISODate(new Date());
   const deadlines = days.flatMap((d) => d.deadlines);
@@ -99,17 +112,59 @@ export function WeekTimeline({
                   />
                 ))}
                 {d.habits.map((hi) => {
-                  const top = timeToOffset(hi.scheduled_start);
+                  // Position from start_at (the linked entry — display
+                  // truth), not the immutable scheduled_start (#118).
+                  const top = timeToOffset(hi.start_at);
                   if (!inRange(top)) return null;
                   const height = durationToPx(hi.habit_duration || 30);
+                  const color = colorOf(meta, hi.project_id);
+                  const planned = hi.status === 'PLANNED';
+                  const complete = hi.status === 'COMPLETE';
+                  const beingDragged =
+                    dragging &&
+                    ghost &&
+                    ghost.kind === 'move-habit' &&
+                    ghost.label === hi.habit_title;
                   return (
                     <div
                       key={`h-${hi.id}`}
-                      className="timeline-block habit"
-                      style={cssBlock(colorOf(meta, hi.project_id), top, height)}
+                      className={`timeline-block habit${complete ? ' complete' : ''}${isOverdueHabit(hi) ? ' overdue-review' : ''}${beingDragged ? ' drag-origin' : ''}`}
+                      style={cssBlock(color, top, height)}
+                      onPointerDown={
+                        planned
+                          ? (e) =>
+                              onStartDrag(e, { kind: 'move-habit', habit: hi, color })
+                          : undefined
+                      }
                     >
-                      <div className="title">{hi.habit_title}</div>
+                      <div className="title">
+                        {complete ? '✓ ' : ''}
+                        {hi.habit_title}
+                      </div>
                       {height > 30 && <div className="meta">{fmtHours(hi.habit_duration)}</div>}
+                      {/* ✓/✕ for PLANNED only; no resize handle — a
+                          habit's chunk size is its instance duration. */}
+                      {planned && (
+                        <div
+                          className="block-actions"
+                          onPointerDown={(e) => e.stopPropagation()}
+                        >
+                          <button
+                            className="block-action"
+                            title="Done — this habit happened"
+                            onClick={() => onCompleteHabit(hi)}
+                          >
+                            ✓
+                          </button>
+                          <button
+                            className="block-action"
+                            title="Skip — this one didn't happen"
+                            onClick={() => onSkipHabit(hi)}
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      )}
                     </div>
                   );
                 })}
@@ -142,7 +197,7 @@ export function WeekTimeline({
                   const beingDragged =
                     dragging &&
                     ghost &&
-                    ghost.kind !== 'place' &&
+                    (ghost.kind === 'move' || ghost.kind === 'resize') &&
                     isDraggedPlacement(ghost, p);
                   return (
                     <div

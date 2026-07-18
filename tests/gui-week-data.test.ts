@@ -4,7 +4,13 @@ import { createProject } from '../src/projects.js';
 import { buildTools } from '../src/mcp/tools/index.js';
 import { FakeCalendarClient } from '../src/calendar/fake.js';
 import { buildWeekPayload } from '../src/gui/week-data.js';
-import { createHabit } from '../src/habits.js';
+import {
+  createHabit,
+  generateHabitInstances,
+  moveHabitInstance,
+  skipHabitInstance,
+} from '../src/habits.js';
+import { buildDays } from '../src/gui/app/lib/weekdays.js';
 import { assignHours } from '../src/assignments.js';
 
 /**
@@ -170,6 +176,64 @@ describe('buildWeekPayload goal blocks (#111 review)', () => {
     expect(payload.time_logs).toHaveLength(1);
     expect(payload.time_logs[0].goal_title).toBe('Spanish practice');
     expect(payload.time_logs[0].goal_id).toBe(g.goal.id);
+  });
+});
+
+describe('buildWeekPayload habit instances (#118)', () => {
+  it('a moved instance carries the entry span as start_at/end_at and buckets on its new day', () => {
+    const { db } = setup();
+    const habit = createHabit(db, {
+      project_id: 'acme',
+      title: 'Workout',
+      duration_minutes: 45,
+      times_per_week: 2,
+      start_time: '09:00',
+      timezone: 'UTC',
+    });
+    const [inst] = generateHabitInstances(db, habit.id, WEEK, '2026-06-21');
+    moveHabitInstance(db, inst.id, '2026-06-20T10:00:00Z'); // Mon → Sat
+
+    const payload = buildWeekPayload(db, WEEK);
+    // Rebuilding regenerated for the week — still exactly 2 instances
+    // (dedupe keys off the untouched scheduled_start).
+    expect(payload.habit_instances).toHaveLength(2);
+    const moved = payload.habit_instances.find((h: any) => h.id === inst.id);
+    expect(moved.scheduled_start).toBe('2026-06-15T09:00:00Z'); // slot identity
+    expect(moved.start_at).toBe('2026-06-20T10:00:00Z'); // display truth
+    expect(moved.end_at).toBe('2026-06-20T10:45:00Z');
+    expect(moved.times_per_week).toBe(2);
+
+    // buildDays buckets by start_at: the block lands on Saturday.
+    const days = buildDays(payload as any, WEEK);
+    expect(days[0].habits.map((h: any) => h.id)).not.toContain(inst.id);
+    expect(days[5].habits.map((h: any) => h.id)).toContain(inst.id);
+  });
+
+  it('SKIPPED stays in the payload (weekly meter) but buildDays filters it out', () => {
+    const { db } = setup();
+    const habit = createHabit(db, {
+      project_id: 'acme',
+      title: 'Stretch',
+      duration_minutes: 15,
+      days_of_week: '1', // Monday
+      start_time: '07:00',
+      timezone: 'UTC',
+    });
+    const [inst] = generateHabitInstances(db, habit.id, WEEK, WEEK);
+    skipHabitInstance(db, inst.id);
+
+    // Exclusion is deliberately client-side (buildDays), so the payload
+    // keeps the row — the weekly meter and any future skip surfacing
+    // need it. The COALESCE falls back to the scheduled slot since the
+    // skip deleted the linked entry.
+    const payload = buildWeekPayload(db, WEEK);
+    const skipped = payload.habit_instances.find((h: any) => h.id === inst.id);
+    expect(skipped).toBeDefined();
+    expect(skipped.status).toBe('SKIPPED');
+    expect(skipped.start_at).toBe('2026-06-15T07:00:00Z');
+
+    const days = buildDays(payload as any, WEEK);
+    expect(days.every((d) => !d.habits.some((h: any) => h.id === inst.id))).toBe(true);
   });
 });
 

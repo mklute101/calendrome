@@ -8,6 +8,7 @@ import type {
   EnvelopeMove,
   EnvelopeType,
   EnvelopesPayload,
+  HabitInstance,
   SupplyPayload,
   MovesPayload,
   Placement,
@@ -93,6 +94,23 @@ export const reopenTask = (id: number, status: 'NEW' | 'SCHEDULED' | 'IN_PROGRES
 
 export const snoozeTask = (id: number, until: string | null) =>
   post<{ task: Task }>(`/api/tasks/${id}/snooze`, { until });
+
+// ---- habit instances (#118) ----
+
+export const completeHabitInstance = (id: number) =>
+  post<{ instance: HabitInstance }>(`/api/habit-instances/${id}/complete`);
+
+export const skipHabitInstance = (id: number) =>
+  post<{ instance: HabitInstance }>(`/api/habit-instances/${id}/skip`);
+
+export const moveHabitInstance = (id: number, args: { start: string; end?: string }) =>
+  post<{ instance: HabitInstance; entry: unknown }>(
+    `/api/habit-instances/${id}/move`,
+    args,
+  );
+
+export const reopenHabitInstance = (id: number) =>
+  post<{ instance: HabitInstance }>(`/api/habit-instances/${id}/reopen`);
 
 // ---- budget view (#106 M2) ----
 

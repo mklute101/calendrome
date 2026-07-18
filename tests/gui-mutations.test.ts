@@ -14,7 +14,12 @@ import {
   guiSnooze,
   guiAssign,
   guiPull,
+  guiHabitComplete,
+  guiHabitSkip,
+  guiHabitMove,
+  reopenHabitInstance,
 } from '../src/gui/mutations.js';
+import { createHabit, generateHabitInstances } from '../src/habits.js';
 
 function setup() {
   const db = freshDb();
@@ -186,6 +191,89 @@ describe('GUI mutations (#24, #86)', () => {
     expect(snoozed.status).toBe('NEW');
     const { task: cleared } = guiSnooze(db, task.id, null);
     expect(cleared.snooze_until).toBeNull();
+  });
+});
+
+describe('GUI habit-instance mutations (#118)', () => {
+  function habitSetup() {
+    const db = freshDb();
+    db.prepare(`INSERT INTO projects (id, name, prefix) VALUES ('me', 'Me', 'ME')`).run();
+    const habit = createHabit(db, {
+      project_id: 'me',
+      title: 'Stretch',
+      duration_minutes: 30,
+      days_of_week: '1', // Monday
+      start_time: '09:00',
+      timezone: 'UTC',
+    });
+    // 2026-07-13 is a Monday.
+    const [inst] = generateHabitInstances(db, habit.id, '2026-07-13', '2026-07-13');
+    return { db, habit, inst };
+  }
+
+  it('guiHabitComplete completes; reopenHabitInstance un-confirms in place', () => {
+    const { db, inst } = habitSetup();
+    const { instance } = guiHabitComplete(db, inst.id);
+    expect(instance.status).toBe('COMPLETE');
+    expect(instance.completed_at).toBeTruthy();
+    const te = db
+      .prepare('SELECT status FROM time_entry WHERE id = ?')
+      .get(instance.time_entry_id) as { status: string };
+    expect(te.status).toBe('CONFIRMED');
+
+    // Undo: back to PLANNED, entry un-confirmed, same entry row kept.
+    const { instance: reopened } = reopenHabitInstance(db, inst.id);
+    expect(reopened.status).toBe('PLANNED');
+    expect(reopened.completed_at).toBeNull();
+    expect(reopened.time_entry_id).toBe(instance.time_entry_id);
+    const back = db
+      .prepare('SELECT status, confirmed_at FROM time_entry WHERE id = ?')
+      .get(instance.time_entry_id) as { status: string; confirmed_at: string | null };
+    expect(back.status).toBe('UNCONFIRMED');
+    expect(back.confirmed_at).toBeNull();
+  });
+
+  it('guiHabitSkip skips; reopenHabitInstance re-inserts the entry at the scheduled slot', () => {
+    const { db, inst } = habitSetup();
+    const priorEntryId = inst.time_entry_id;
+    const { instance } = guiHabitSkip(db, inst.id);
+    expect(instance.status).toBe('SKIPPED');
+    expect(instance.time_entry_id).toBeNull();
+
+    const { instance: reopened } = reopenHabitInstance(db, inst.id);
+    expect(reopened.status).toBe('PLANNED');
+    expect(reopened.time_entry_id).not.toBeNull();
+    expect(reopened.time_entry_id).not.toBe(priorEntryId); // fresh row
+    const te = db
+      .prepare('SELECT * FROM time_entry WHERE id = ?')
+      .get(reopened.time_entry_id) as any;
+    expect(te.status).toBe('UNCONFIRMED');
+    expect(te.source).toBe('habit');
+    expect(te.start_at).toBe('2026-07-13T09:00:00Z'); // scheduled slot
+    expect(te.end_at).toBe('2026-07-13T09:30:00Z');
+    expect(te.notes).toBe('Stretch');
+  });
+
+  it('guiHabitMove wraps moveHabitInstance (range rule included)', () => {
+    const { db, inst } = habitSetup();
+    const { instance, entry } = guiHabitMove(db, inst.id, {
+      start: '2026-07-13T18:00:00Z',
+    });
+    expect(instance.scheduled_start).toBe('2026-07-13T09:00:00Z'); // untouched
+    expect(entry.start_at).toBe('2026-07-13T18:00:00Z');
+    expect(() =>
+      guiHabitMove(db, inst.id, { start: '2026-07-14T09:00:00Z' }),
+    ).toThrow(/skip, not a move/);
+  });
+
+  it('guards: non-PLANNED refuses ✓/✕, PLANNED refuses reopen, unknown id 404-shapes', () => {
+    const { db, inst } = habitSetup();
+    expect(() => reopenHabitInstance(db, inst.id)).toThrow(/already PLANNED/);
+    guiHabitComplete(db, inst.id);
+    expect(() => guiHabitComplete(db, inst.id)).toThrow(/not PLANNED/);
+    expect(() => guiHabitSkip(db, inst.id)).toThrow(/not PLANNED/);
+    expect(() => guiHabitComplete(db, 9999)).toThrow(/not found/);
+    expect(() => reopenHabitInstance(db, 9999)).toThrow(/not found/);
   });
 });
 

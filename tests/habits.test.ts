@@ -9,6 +9,7 @@ import {
   generateHabitInstances,
   completeHabitInstance,
   skipHabitInstance,
+  moveHabitInstance,
   habitWeekScore,
 } from '../src/habits.js';
 
@@ -332,6 +333,126 @@ describe('habits', () => {
     expect(instances).toHaveLength(1);
     // Expect Friday local → Saturday 04:00 UTC during CDT
     expect(instances[0].scheduled_start).toBe('2026-05-09T04:00:00Z');
+  });
+});
+
+describe('moveHabitInstance — slide within the frequency range (#118)', () => {
+  function fixedDaysInstance(db: ReturnType<typeof setup>) {
+    const h = createHabit(db, {
+      project_id: 'me',
+      title: 'Stretch',
+      duration_minutes: 30,
+      days_of_week: '1', // Monday
+      start_time: '09:00',
+      timezone: 'UTC',
+    });
+    // 2026-07-13 is a Monday.
+    const [inst] = generateHabitInstances(db, h.id, '2026-07-13', '2026-07-13');
+    return inst;
+  }
+
+  it('fixed-days: moves within its own day, entry moves, scheduled_start does not', () => {
+    const db = setup();
+    const inst = fixedDaysInstance(db);
+    const { instance, entry } = moveHabitInstance(
+      db,
+      inst.id,
+      '2026-07-13T18:00:00Z',
+    );
+    // scheduled_start is the immutable slot identity — never rewritten.
+    expect(instance.scheduled_start).toBe('2026-07-13T09:00:00Z');
+    // The linked entry is display truth; duration preserved (30 min).
+    expect(entry.start_at).toBe('2026-07-13T18:00:00Z');
+    expect(entry.end_at).toBe('2026-07-13T18:30:00Z');
+    expect(entry.status).toBe('UNCONFIRMED');
+  });
+
+  it('fixed-days: refuses to leave its day — that is a skip, not a move', () => {
+    const db = setup();
+    const inst = fixedDaysInstance(db);
+    expect(() =>
+      moveHabitInstance(db, inst.id, '2026-07-14T09:00:00Z'),
+    ).toThrow(/skip, not a move/);
+  });
+
+  it('times_per_week: moves anywhere within its Mon-Sun week, not beyond', () => {
+    const db = setup();
+    const h = createHabit(db, {
+      project_id: 'me',
+      title: 'Workout',
+      duration_minutes: 45,
+      times_per_week: 3,
+      start_time: '17:30',
+      timezone: 'UTC',
+    });
+    // Candidates land Mon/Tue/Wed of 2026-07-13..19.
+    const [inst] = generateHabitInstances(db, h.id, '2026-07-13', '2026-07-19');
+
+    // Monday → Saturday, same week: allowed.
+    const { entry } = moveHabitInstance(db, inst.id, '2026-07-18T10:00:00Z');
+    expect(entry.start_at).toBe('2026-07-18T10:00:00Z');
+    expect(entry.end_at).toBe('2026-07-18T10:45:00Z');
+
+    // Next Monday: out of the week — refused.
+    expect(() =>
+      moveHabitInstance(db, inst.id, '2026-07-20T10:00:00Z'),
+    ).toThrow(/out of its week.*skip, not a move/);
+  });
+
+  it('refuses non-PLANNED instances and unknown ids', () => {
+    const db = setup();
+    const inst = fixedDaysInstance(db);
+    completeHabitInstance(db, inst.id);
+    expect(() =>
+      moveHabitInstance(db, inst.id, '2026-07-13T12:00:00Z'),
+    ).toThrow(/not PLANNED/);
+    expect(() =>
+      moveHabitInstance(db, 9999, '2026-07-13T12:00:00Z'),
+    ).toThrow(/not found/);
+  });
+
+  it('regeneration after a move creates no duplicate instance or entry', () => {
+    const db = setup();
+    const inst = fixedDaysInstance(db);
+    moveHabitInstance(db, inst.id, '2026-07-13T18:00:00Z');
+
+    // Re-running for the same range must dedupe on the untouched
+    // scheduled_start, not resurrect a block at 09:00.
+    generateHabitInstances(db, inst.habit_id, '2026-07-13', '2026-07-13');
+    const instances = db
+      .prepare('SELECT COUNT(*) AS n FROM habit_instances WHERE habit_id = ?')
+      .get(inst.habit_id) as { n: number };
+    expect(instances.n).toBe(1);
+    const entries = db
+      .prepare(`SELECT COUNT(*) AS n FROM time_entry WHERE source = 'habit'`)
+      .get() as { n: number };
+    expect(entries.n).toBe(1);
+    const entry = db
+      .prepare(`SELECT start_at FROM time_entry WHERE source = 'habit'`)
+      .get() as { start_at: string };
+    expect(entry.start_at).toBe('2026-07-13T18:00:00Z');
+  });
+
+  it('enforces the day in the habit timezone, not UTC', () => {
+    const db = setup();
+    // 23:00 America/Chicago Friday = 04:00 UTC Saturday. Moving to
+    // 21:00 local (02:00 UTC Saturday) is the same local day — allowed.
+    const h = createHabit(db, {
+      project_id: 'me',
+      title: 'Late check-in',
+      duration_minutes: 30,
+      days_of_week: '5',
+      start_time: '23:00',
+      timezone: 'America/Chicago',
+    });
+    const [inst] = generateHabitInstances(db, h.id, '2026-05-04', '2026-05-10');
+    expect(inst.scheduled_start).toBe('2026-05-09T04:00:00Z'); // Fri 23:00 CDT
+    const { entry } = moveHabitInstance(db, inst.id, '2026-05-09T02:00:00Z');
+    expect(entry.start_at).toBe('2026-05-09T02:00:00Z');
+    // 10:00 UTC Saturday = 05:00 CDT Saturday — a different local day.
+    expect(() =>
+      moveHabitInstance(db, inst.id, '2026-05-09T10:00:00Z'),
+    ).toThrow(/skip, not a move/);
   });
 });
 

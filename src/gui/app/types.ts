@@ -46,10 +46,22 @@ export interface Placement {
 export interface HabitInstance {
   id: number;
   habit_id: number;
+  /** Immutable slot identity (regeneration dedupe) — never moves. */
   scheduled_start: string;
+  scheduled_end: string;
+  /** SKIPPED instances stay in the payload for the weekly meter but
+   *  are filtered out of the timeline in buildDays. */
+  status: 'PLANNED' | 'COMPLETE' | 'SKIPPED';
+  time_entry_id: number | null;
+  /** Display truth: linked entry's span, falling back to the slot. */
+  start_at: string;
+  end_at: string;
   habit_title: string;
   project_id: string;
   habit_duration: number;
+  /** Frequency form: null = fixed-days (drag within its own day);
+   *  set = N-per-week target (drag anywhere in its week). */
+  times_per_week: number | null;
 }
 
 export interface TimeLog {
