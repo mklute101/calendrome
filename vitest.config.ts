@@ -5,5 +5,7 @@ export default defineConfig({
     globals: true,
     include: ['tests/**/*.test.ts'],
     environment: 'node',
+    // Preloads sql.js when CALENDROME_TEST_ENGINE=sqljs; no-op otherwise.
+    setupFiles: ['tests/setup-engine.ts'],
   },
 });

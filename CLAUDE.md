@@ -80,6 +80,12 @@ sentence — never a click path.
 - **MCP stdio server** — low-level `Server` class with JSON schemas
 - **GUI is a separate Express process** — reads same SQLite file,
   fresh DB connection per request for cross-process visibility
+- **Browser playground** — the same GUI SPA running fully in-browser
+  on sql.js (WASM), seeded with fictional demo data per visit, built
+  by `npm run build:playground` into `website/playground/` and
+  deployed with the website (#110). It swaps the HTTP backend for
+  `src/gui/app/local-backend.ts`, which calls the same core functions
+  the server routes call.
 - **Skills are the UX layer** — `/week`, `/calendrome`, `/focus`
 - **Calendar events synced in** — planner skills fetch the whole
   visible week from the Google Calendar MCP and push it via
@@ -100,12 +106,28 @@ sentence — never a click path.
   `toCanonicalUtc` in `src/day-range.ts`, and `migrate()` normalizes
   legacy mixed-form rows (#95)
 - Tests use in-memory SQLite (`freshDb()`) — isolated, no cleanup
+- **Never import `better-sqlite3` outside `src/db/connection.ts`.**
+  Core code targets the `DB` interface (`src/db/types.ts`) and must
+  stay engine-agnostic: the playground runs the same code on sql.js,
+  whose bundled SQLite is older than better-sqlite3's — avoid
+  bleeding-edge SQL features. `CALENDROME_TEST_ENGINE=sqljs npm test`
+  runs the whole suite on the WASM engine; CI runs both legs.
+- **New GUI client operations go through the `Backend` interface** in
+  `src/gui/app/api.ts` — TypeScript then forces both the HTTP backend
+  and `local-backend.ts` to implement them. Never call `fetch`
+  directly from components.
+- **GUI server routes stay one-liners** over core functions
+  (`src/gui/mutations.ts`, `week-data.ts`, …). Response shaping in a
+  route would drift from the playground's local backend, which calls
+  the same functions directly.
 - No PII in the repo — fictional names, `<FILL IN>` markers in skills
 
 ## What Claude should know
 
-- `npm test` runs vitest (270+ tests); `npm run test:e2e` runs the
-  Playwright browser tests (build first)
+- `npm test` runs vitest (280+ tests); `npm run test:e2e` runs the
+  Playwright browser tests (build first). CI (`.github/workflows/
+  ci.yml`) runs tests on both DB engines, the build, the exact
+  Netlify build command (parsed from `netlify.toml`), and e2e.
 - `npm run build` compiles TS, builds the GUI SPA (Vite), copies
   schema.sql + docs.html, regenerates docs.json
 - `npm start` launches the MCP server, `npm run gui` the web app;

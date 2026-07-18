@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # native = better-sqlite3 (what the servers run); sqljs = the
+        # WASM adapter the browser playground runs. The sqljs leg
+        # catches SQL that better-sqlite3's newer bundled SQLite
+        # accepts but sql.js's older build does not.
+        engine: [native, sqljs]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm test
+        env:
+          CALENDROME_TEST_ENGINE: ${{ matrix.engine == 'sqljs' && 'sqljs' || '' }}
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm run build:playground
+
+  # Run the exact command Netlify runs (read from netlify.toml so it
+  # can't drift), in a clean install. Catches --ignore-scripts breakage
+  # (e.g. a dependency that starts requiring a postinstall script)
+  # before it breaks the deploy instead of after.
+  netlify-command:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Run Netlify build command from netlify.toml
+        run: |
+          CMD=$(sed -n 's/^  command = "\(.*\)"$/\1/p' netlify.toml)
+          test -n "$CMD" || { echo "could not extract command from netlify.toml"; exit 1; }
+          echo "+ $CMD"
+          eval "$CMD"
+
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm run build:playground
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
