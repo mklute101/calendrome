@@ -41,6 +41,15 @@ describe('MCP tools layer', () => {
       'create_habit',
       'list_habits',
       'generate_habit_instances',
+      'create_goal',
+      'list_goals',
+      'update_goal',
+      'deactivate_goal',
+      'place_goal_block',
+      'assign_hours',
+      'pull_hours',
+      'list_envelope_moves',
+      'get_envelopes',
       'get_project_budget',
       'get_all_budgets',
       'get_week_layout',
@@ -680,5 +689,149 @@ describe('MCP tools layer', () => {
       .map((t: any) => t.title);
     expect(taskTitlesVisibleToWork).toContain('Build report');
     expect(taskTitlesVisibleToWork).not.toContain('Therapy appointment');
+  });
+});
+
+describe('commitments prototype tools (#106)', () => {
+  // 2026-07-13 is a Monday.
+  const WEEK = '2026-07-13';
+
+  async function setupTools() {
+    const db = freshDb();
+    createProject(db, {
+      id: 'acme',
+      name: 'Acme Corp',
+      prefix: 'ACME',
+      weekly_budget_minutes: 1200,
+    });
+    createProject(db, { id: 'personal', name: 'Personal', prefix: 'PERS' });
+    return buildTools(db);
+  }
+
+  it('create_goal → list_goals embeds progress for the week', async () => {
+    const tools = await setupTools();
+    const { goal } = await getTool(tools, 'create_goal').handler({
+      project_id: 'personal',
+      title: 'Spanish practice',
+      target_minutes: 180,
+      refill_period: 'week',
+    });
+    expect(goal.id).toBeGreaterThan(0);
+
+    const listed = await getTool(tools, 'list_goals').handler({
+      week_start: WEEK,
+    });
+    expect(listed.week_start).toBe(WEEK);
+    expect(listed.goals).toHaveLength(1);
+    expect(listed.goals[0].progress.weekly_ask).toBe(180);
+    expect(listed.goals[0].progress.status).toBe('on_track');
+  });
+
+  it('place_goal_block schedules an UNCONFIRMED entry against the goal', async () => {
+    const tools = await setupTools();
+    const { goal } = await getTool(tools, 'create_goal').handler({
+      project_id: 'personal',
+      title: 'Spanish practice',
+      target_minutes: 180,
+      refill_period: 'week',
+    });
+    const { entry } = await getTool(tools, 'place_goal_block').handler({
+      goal_id: goal.id,
+      start: '2026-07-14T18:00:00Z',
+      duration_minutes: 60,
+    });
+    expect(entry.goal_id).toBe(goal.id);
+    expect(entry.project_id).toBe('personal');
+    expect(entry.status).toBe('UNCONFIRMED');
+    expect(entry.source).toBe('placement');
+    expect(entry.end_at).toBe('2026-07-14T19:00:00Z');
+
+    const listed = await getTool(tools, 'list_goals').handler({
+      week_start: WEEK,
+    });
+    expect(listed.goals[0].progress.week_scheduled).toBe(60);
+
+    await expect(
+      getTool(tools, 'place_goal_block').handler({
+        goal_id: 999,
+        start: '2026-07-14T18:00:00Z',
+        duration_minutes: 60,
+      }),
+    ).rejects.toThrow(/goal 999 not found/);
+  });
+
+  it('assign_hours / pull_hours / list_envelope_moves / get_envelopes round-trip', async () => {
+    const tools = await setupTools();
+    await getTool(tools, 'assign_hours').handler({
+      envelope_type: 'project',
+      envelope_id: 'personal',
+      week_start: WEEK,
+      minutes: 300,
+    });
+    const { move } = await getTool(tools, 'pull_hours').handler({
+      week_start: WEEK,
+      from: { type: 'project', id: 'personal' },
+      to: { type: 'project', id: 'acme' },
+      minutes: 120,
+      note: 'launch crunch',
+    });
+    expect(move.minutes).toBe(120);
+
+    const { moves } = await getTool(tools, 'list_envelope_moves').handler({
+      week_start: WEEK,
+    });
+    expect(moves).toHaveLength(1);
+    expect(moves[0].note).toBe('launch crunch');
+
+    const { envelopes } = await getTool(tools, 'get_envelopes').handler({
+      week_start: WEEK,
+    });
+    const acme = envelopes.find((r: any) => r.envelope_id === 'acme');
+    const personal = envelopes.find((r: any) => r.envelope_id === 'personal');
+    expect(acme.assigned).toBe(1320);
+    expect(personal.assigned).toBe(180);
+    for (const row of envelopes) {
+      expect(row).toHaveProperty('title');
+      expect(row).toHaveProperty('activity.confirmed_minutes');
+      expect(row).toHaveProperty('activity.scheduled_minutes');
+      expect(row).toHaveProperty('available');
+      expect(row).toHaveProperty('funding');
+      expect(row).toHaveProperty('status_line');
+    }
+  });
+
+  it('update_goal and deactivate_goal handlers work', async () => {
+    const tools = await setupTools();
+    const { goal } = await getTool(tools, 'create_goal').handler({
+      project_id: 'acme',
+      title: 'Prospecting',
+      target_minutes: 600,
+      due: '2026-08-10',
+    });
+    const updated = await getTool(tools, 'update_goal').handler({
+      id: goal.id,
+      target_minutes: 720,
+    });
+    expect(updated.goal.target_minutes).toBe(720);
+
+    await getTool(tools, 'deactivate_goal').handler({ id: goal.id });
+    const listed = await getTool(tools, 'list_goals').handler({
+      active: true,
+      week_start: WEEK,
+    });
+    expect(listed.goals).toHaveLength(0);
+  });
+
+  it('create_habit accepts times_per_week', async () => {
+    const tools = await setupTools();
+    const { habit } = await getTool(tools, 'create_habit').handler({
+      project_id: 'personal',
+      title: 'Workout',
+      duration_minutes: 45,
+      times_per_week: 4,
+      start_time: '17:30',
+    });
+    expect(habit.times_per_week).toBe(4);
+    expect(habit.days_of_week).toBe('');
   });
 });

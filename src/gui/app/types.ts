@@ -32,11 +32,13 @@ export interface Project {
 export interface Placement {
   time_entry_id: number;
   task_id: number | null;
+  goal_id: number | null;
   start_at: string;
   end_at: string;
   status: 'UNCONFIRMED';
   duration_minutes: number;
   task_title: string | null;
+  goal_title: string | null;
   priority: Priority | null;
   project_id: string | null;
 }
@@ -53,11 +55,13 @@ export interface HabitInstance {
 export interface TimeLog {
   id: number;
   task_id: number | null;
+  goal_id: number | null;
   started_at: string;
   stopped_at: string;
   duration_minutes: number;
   notes: string | null;
   task_title: string | null;
+  goal_title: string | null;
   project_id: string | null;
 }
 

@@ -11,7 +11,10 @@ export interface Habit {
   title: string;
   notes: string | null;
   duration_minutes: number;
+  /** Fixed-days form: CSV of weekday numbers. '' when times_per_week is set. */
   days_of_week: string;
+  /** N-per-week target form (#106). NULL for fixed-days habits. */
+  times_per_week: number | null;
   start_time: string;
   timezone: string;
   active: number;
@@ -33,7 +36,9 @@ export interface CreateHabitInput {
   title: string;
   notes?: string | null;
   duration_minutes: number;
-  days_of_week: string;
+  /** Exactly one of days_of_week / times_per_week must be provided. */
+  days_of_week?: string;
+  times_per_week?: number;
   start_time: string;
   timezone?: string;
 }
@@ -43,9 +48,35 @@ export interface UpdateHabitInput {
   notes?: string | null;
   duration_minutes?: number;
   days_of_week?: string;
+  times_per_week?: number | null;
   start_time?: string;
   timezone?: string;
   active?: number;
+}
+
+/**
+ * A habit's frequency comes in exactly one of two forms (#106):
+ * fixed days (`days_of_week` CSV) or an N-per-week target
+ * (`times_per_week`). The DB keeps `days_of_week NOT NULL` for legacy
+ * compatibility, so the target form stores `''` there. Enforced here,
+ * not by CHECK — migration constraints on existing tables aren't
+ * available.
+ */
+function validateFrequency(
+  daysOfWeek: string | null,
+  timesPerWeek: number | null,
+): void {
+  const hasDays = daysOfWeek !== null && daysOfWeek !== '';
+  const hasTimes = timesPerWeek !== null;
+  if (hasDays === hasTimes) {
+    throw new Error(
+      'a habit must have exactly one of days_of_week or times_per_week',
+    );
+  }
+  if (hasDays) parseDaysOfWeek(daysOfWeek as string);
+  if (hasTimes && (!Number.isInteger(timesPerWeek) || (timesPerWeek as number) < 1 || (timesPerWeek as number) > 7)) {
+    throw new Error(`times_per_week must be an integer 1..7, got: ${timesPerWeek}`);
+  }
 }
 
 function parseDaysOfWeek(s: string): number[] {
@@ -126,19 +157,22 @@ function weekdayOfIsoDate(date: string): number {
 }
 
 export function createHabit(db: DB, input: CreateHabitInput): Habit {
-  parseDaysOfWeek(input.days_of_week); // validates
+  const daysOfWeek = input.days_of_week ?? null;
+  const timesPerWeek = input.times_per_week ?? null;
+  validateFrequency(daysOfWeek, timesPerWeek);
   const result = db
     .prepare(
       `INSERT INTO habits
-        (project_id, title, notes, duration_minutes, days_of_week, start_time, timezone)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        (project_id, title, notes, duration_minutes, days_of_week, times_per_week, start_time, timezone)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       input.project_id,
       input.title,
       input.notes ?? null,
       input.duration_minutes,
-      input.days_of_week,
+      daysOfWeek ?? '',
+      timesPerWeek,
       input.start_time,
       input.timezone ?? 'UTC',
     );
@@ -157,10 +191,34 @@ export function updateHabit(
   id: number,
   patch: UpdateHabitInput,
 ): Habit {
-  if (patch.days_of_week !== undefined) parseDaysOfWeek(patch.days_of_week);
+  const existing = getHabit(db, id);
+  if (!existing) throw new Error(`habit ${id} not found`);
+
+  // Switching forms: setting one side implicitly clears the other,
+  // so "make this a 4×/week habit" is a one-field patch. Passing both
+  // (non-empty days + non-null times) is rejected by validateFrequency.
+  const resolved = { ...patch };
+  if (patch.times_per_week != null && patch.days_of_week === undefined) {
+    resolved.days_of_week = '';
+  }
+  if (
+    patch.days_of_week !== undefined &&
+    patch.days_of_week !== '' &&
+    patch.times_per_week === undefined
+  ) {
+    resolved.times_per_week = null;
+  }
+  const days =
+    resolved.days_of_week !== undefined ? resolved.days_of_week : existing.days_of_week;
+  const times =
+    resolved.times_per_week !== undefined
+      ? resolved.times_per_week
+      : existing.times_per_week;
+  validateFrequency(days === '' ? null : days, times);
+
   const fields: string[] = [];
   const values: unknown[] = [];
-  for (const [k, v] of Object.entries(patch)) {
+  for (const [k, v] of Object.entries(resolved)) {
     fields.push(`${k} = ?`);
     values.push(v);
   }
@@ -207,7 +265,6 @@ export function generateHabitInstances(
   const habit = getHabit(db, habitId);
   if (!habit) throw new Error(`habit ${habitId} not found`);
 
-  const days = new Set(parseDaysOfWeek(habit.days_of_week));
   const [hh, mm] = habit.start_time.split(':').map(Number);
   const dur = habit.duration_minutes;
   const tz = habit.timezone || 'UTC';
@@ -216,6 +273,27 @@ export function generateHabitInstances(
   if (Number.isNaN(Date.parse(`${fromDate}T00:00:00Z`)) ||
       Number.isNaN(Date.parse(`${toDate}T00:00:00Z`))) {
     throw new Error(`invalid date range: ${fromDate}..${toDate}`);
+  }
+
+  // Which dates in the range get an instance?
+  //  - Fixed-days form: every date whose weekday is in days_of_week.
+  //  - N-per-week target form (#106): the first N days of the range.
+  //    These are *candidates* — mobility lets them slide anywhere in
+  //    the week; the anchor is just a materialization convenience.
+  const dates: string[] = [];
+  if (habit.times_per_week != null) {
+    for (
+      let date = fromDate;
+      date <= toDate && dates.length < habit.times_per_week;
+      date = addDaysIsoDate(date, 1)
+    ) {
+      dates.push(date);
+    }
+  } else {
+    const days = new Set(parseDaysOfWeek(habit.days_of_week));
+    for (let date = fromDate; date <= toDate; date = addDaysIsoDate(date, 1)) {
+      if (days.has(weekdayOfIsoDate(date))) dates.push(date);
+    }
   }
 
   const insert = db.prepare(
@@ -233,8 +311,7 @@ export function generateHabitInstances(
   const touchedIds: number[] = [];
 
   const generateTx = db.transaction(() => {
-    for (let date = fromDate; date <= toDate; date = addDaysIsoDate(date, 1)) {
-      if (!days.has(weekdayOfIsoDate(date))) continue;
+    for (const date of dates) {
       const [y, m, d] = date.split('-').map(Number);
 
       const startDt = zonedWallclockToUtc(y, m, d, hh, mm, tz);
@@ -295,6 +372,41 @@ export function completeHabitInstance(
   return db
     .prepare('SELECT * FROM habit_instances WHERE id = ?')
     .get(id) as HabitInstance;
+}
+
+/**
+ * Weekly frequency meter for a habit (#106): COMPLETE instances in the
+ * week over the habit's target — `times_per_week` for the N-per-week
+ * form, the number of listed days for the fixed-days form. "3/4 this
+ * week", not a skip list.
+ */
+export function habitWeekScore(
+  db: DB,
+  habitId: number,
+  weekStart: string,
+): { done: number; target: number } {
+  const habit = getHabit(db, habitId);
+  if (!habit) throw new Error(`habit ${habitId} not found`);
+  const start = Date.parse(`${weekStart}T00:00:00Z`);
+  if (Number.isNaN(start)) throw new Error(`invalid week_start: ${weekStart}`);
+  const startIso = new Date(start).toISOString().replace(/\.\d{3}Z$/, 'Z');
+  const endIso = new Date(start + 7 * 86_400_000 - 1)
+    .toISOString()
+    .replace(/\.\d{3}Z$/, 'Z');
+
+  const row = db
+    .prepare(
+      `SELECT COUNT(*) AS n FROM habit_instances
+        WHERE habit_id = ? AND status = 'COMPLETE'
+          AND scheduled_start >= ? AND scheduled_start <= ?`,
+    )
+    .get(habitId, startIso, endIso) as { n: number };
+
+  const target =
+    habit.times_per_week != null
+      ? habit.times_per_week
+      : parseDaysOfWeek(habit.days_of_week).length;
+  return { done: row.n, target };
 }
 
 export function skipHabitInstance(db: DB, id: number): HabitInstance {

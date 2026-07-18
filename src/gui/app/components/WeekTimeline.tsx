@@ -1,6 +1,6 @@
 import type { Placement, ProjectMeta } from '../types';
 import type { DayBucket } from '../lib/weekdays';
-import { isOverdueEvent, isOverduePlacement } from '../lib/weekdays';
+import { isOverdueEvent, isOverduePlacement, placementLabel } from '../lib/weekdays';
 import { colorOf, UNASSIGNED_COLOR } from '../lib/colors';
 import { DAYS, fmtDate, fmtHours, fmtTime, localISODate } from '../lib/dates';
 import {
@@ -150,7 +150,7 @@ export function WeekTimeline({
                         onStartDrag(e, { kind: 'move', placement: p, color })
                       }
                     >
-                      <div className="title">{p.task_title}</div>
+                      <div className="title">{placementLabel(p)}</div>
                       {height > 30 && (
                         <div className="meta">
                           {fmtHours(p.duration_minutes)} · {p.project_id}
@@ -196,7 +196,7 @@ export function WeekTimeline({
                       className="timeline-block logged"
                       style={cssBlock(colorOf(meta, log.project_id), top, height)}
                     >
-                      <div className="title">{log.task_title ?? log.notes ?? '(untitled)'}</div>
+                      <div className="title">{log.task_title ?? log.goal_title ?? log.notes ?? '(untitled)'}</div>
                       {height > 30 && <div className="meta">{fmtHours(log.duration_minutes)} logged</div>}
                     </div>
                   );
@@ -232,7 +232,7 @@ function isDraggedPlacement(ghost: DragGhost, p: Placement): boolean {
   // The ghost doesn't carry the placement id; label match is enough
   // for the dim-the-origin affordance (worst case two same-titled
   // blocks both dim during the drag).
-  return ghost.label === (p.task_title ?? '(untitled)');
+  return ghost.label === placementLabel(p);
 }
 
 function fmtGhostTime(minutes: number): string {

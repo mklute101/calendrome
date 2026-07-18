@@ -224,7 +224,13 @@ function extractEndpoints() {
 // ---------- DB schema ----------
 
 function extractTables() {
-  const sql = readFileSync(join(ROOT, SCHEMA_FILE), 'utf8');
+  // Strip -- comments first: comment lines inside CREATE TABLE bodies
+  // would otherwise glue onto the next column after the comma split
+  // and hide it from the column regex.
+  const sql = readFileSync(join(ROOT, SCHEMA_FILE), 'utf8').replace(
+    /--[^\n]*/g,
+    '',
+  );
   const out = [];
   const re = /CREATE\s+TABLE(?:\s+IF\s+NOT\s+EXISTS)?\s+(\w+)\s*\(([\s\S]*?)\);/gi;
   let m;

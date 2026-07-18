@@ -7,6 +7,7 @@ export type TimeEntrySource = 'placement' | 'gcal-sync' | 'habit' | 'manual';
 export interface TimeEntryInput {
   task_id?: number | null;
   project_id?: string | null;
+  goal_id?: number | null;
   start_at: string;
   end_at: string;
   actual_minutes?: number | null;
@@ -23,14 +24,15 @@ export interface TimeEntryInput {
 export function insertTimeEntry(db: DB, input: TimeEntryInput): number {
   const stmt = db.prepare(`
     INSERT INTO time_entry (
-      task_id, project_id, start_at, end_at, actual_minutes,
+      task_id, project_id, goal_id, start_at, end_at, actual_minutes,
       status, confirmed_at, source, external_id, is_meeting,
       synced_at, harvest_entry_id, notes
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const result = stmt.run(
     input.task_id ?? null,
     input.project_id ?? null,
+    input.goal_id ?? null,
     toCanonicalUtc(input.start_at, 'start_at'),
     toCanonicalUtc(input.end_at, 'end_at'),
     input.actual_minutes ?? null,
@@ -138,6 +140,7 @@ export interface TimeEntryRow {
   id: number;
   task_id: number | null;
   project_id: string | null;
+  goal_id: number | null;
   start_at: string;
   end_at: string;
   actual_minutes: number | null;

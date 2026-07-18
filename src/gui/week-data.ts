@@ -61,21 +61,26 @@ export function buildWeekPayload(db: DB, start: string) {
 
   // UNCONFIRMED placement entries — the planned blocks on the
   // timeline. The time_entry row, not task.due, says where a task
-  // sits on the calendar (#79).
+  // sits on the calendar (#79). LEFT JOINs: a placement may be
+  // task-linked, goal-linked (place_goal_block), or bare
+  // project-level — all of them must render, not just task rows.
   const placements = db
     .prepare(
       `SELECT
          te.id                                         AS time_entry_id,
          te.task_id                                    AS task_id,
+         te.goal_id                                    AS goal_id,
          te.start_at                                   AS start_at,
          te.end_at                                     AS end_at,
          te.status                                     AS status,
          ${DURATION_SQL}                               AS duration_minutes,
          t.title                                       AS task_title,
+         g.title                                       AS goal_title,
          t.priority                                    AS priority,
-         COALESCE(te.project_id, t.project_id)         AS project_id
+         COALESCE(te.project_id, t.project_id, g.project_id) AS project_id
        FROM time_entry te
-       JOIN tasks t ON t.id = te.task_id
+       LEFT JOIN tasks t ON t.id = te.task_id
+       LEFT JOIN goals g ON g.id = te.goal_id
        WHERE te.source = 'placement'
          AND te.status = 'UNCONFIRMED'
          AND DATE(te.start_at) >= ? AND DATE(te.start_at) <= ?
@@ -94,14 +99,17 @@ export function buildWeekPayload(db: DB, start: string) {
       `SELECT
          te.id                                         AS id,
          te.task_id                                    AS task_id,
+         te.goal_id                                    AS goal_id,
          te.start_at                                   AS started_at,
          te.end_at                                     AS stopped_at,
          ${DURATION_SQL}                               AS duration_minutes,
          te.notes                                      AS notes,
          t.title                                       AS task_title,
-         COALESCE(te.project_id, t.project_id)         AS project_id
+         g.title                                       AS goal_title,
+         COALESCE(te.project_id, t.project_id, g.project_id) AS project_id
        FROM time_entry te
        LEFT JOIN tasks t ON t.id = te.task_id
+       LEFT JOIN goals g ON g.id = te.goal_id
        WHERE te.status = 'CONFIRMED'
          AND te.source IN ('manual', 'placement')
          AND DATE(te.start_at) >= ? AND DATE(te.start_at) <= ?

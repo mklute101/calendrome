@@ -1,11 +1,14 @@
 import type { DB } from './db/connection.js';
 import { toCanonicalUtc } from './day-range.js';
+import { getGoal } from './goals.js';
 import { getTask, setTaskStatus, type Task } from './tasks.js';
 import { insertTimeEntry } from './time-entry.js';
 
 export interface LogTimeInput {
   task_id?: number;
   project_id?: string;
+  /** Count this time toward a goal's bucket (#106). */
+  goal_id?: number;
   started_at: string;
   stopped_at: string;
   notes?: string | null;
@@ -14,6 +17,7 @@ export interface LogTimeInput {
 export interface LogTimeResult {
   id: number;
   task_id: number | null;
+  goal_id: number | null;
   project_id: string;
   started_at: string;
   stopped_at: string;
@@ -50,12 +54,17 @@ function parseIso(value: string, label: string): Date {
  * `v_task_time_spent` view, so we no longer bump `tasks.time_spent_minutes`.
  */
 export function logTime(db: DB, input: LogTimeInput): LogTimeResult {
-  if (input.task_id === undefined && input.project_id === undefined) {
-    throw new Error('log_time requires either task_id or project_id');
+  if (
+    input.task_id === undefined &&
+    input.project_id === undefined &&
+    input.goal_id === undefined
+  ) {
+    throw new Error('log_time requires one of task_id, project_id, or goal_id');
   }
 
   let projectId: string | null = input.project_id ?? null;
   let taskId: number | null = input.task_id ?? null;
+  const goalId: number | null = input.goal_id ?? null;
 
   if (taskId !== null) {
     const task = getTask(db, taskId);
@@ -63,8 +72,14 @@ export function logTime(db: DB, input: LogTimeInput): LogTimeResult {
     if (projectId === null) projectId = task.project_id;
   }
 
+  if (goalId !== null) {
+    const goal = getGoal(db, goalId);
+    if (!goal) throw new Error(`goal ${goalId} not found`);
+    if (projectId === null) projectId = goal.project_id;
+  }
+
   if (!projectId) {
-    throw new Error('log_time requires either task_id or project_id');
+    throw new Error('log_time requires one of task_id, project_id, or goal_id');
   }
 
   const startedAt = parseIso(input.started_at, 'started_at');
@@ -93,6 +108,7 @@ export function logTime(db: DB, input: LogTimeInput): LogTimeResult {
   const id = insertTimeEntry(db, {
     task_id: taskId,
     project_id: projectId,
+    goal_id: goalId,
     start_at: startIso,
     end_at: stopIso,
     actual_minutes: durationMinutes,
@@ -105,6 +121,7 @@ export function logTime(db: DB, input: LogTimeInput): LogTimeResult {
   return {
     id,
     task_id: taskId,
+    goal_id: goalId,
     project_id: projectId,
     started_at: startIso,
     stopped_at: stopIso,
