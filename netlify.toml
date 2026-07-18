@@ -1,9 +1,12 @@
 [build]
   publish = "website"
-  command = "npm ci --ignore-scripts --no-audit --no-fund && node scripts/extract-docs.mjs && cp dist/src/gui/public/docs.json website/docs.json"
-  # Skip the build (and PR preview) unless the website or anything that
-  # feeds the auto-generated /docs page changed. Keeps app PRs silent.
-  ignore = "git diff --quiet HEAD^ HEAD -- website/ netlify.toml scripts/extract-docs.mjs src/db/schema.sql src/mcp/ src/gui/server.ts src/calendar-sync.ts src/categories.ts src/availability.ts src/db/connection.ts"
+  command = "npm ci --ignore-scripts --no-audit --no-fund && node scripts/extract-docs.mjs && cp dist/src/gui/public/docs.json website/docs.json && npm run build:playground"
+  # Skip the build (and PR preview) unless the website, the docs
+  # sources, or the playground changed. The playground bundles the GUI
+  # app plus the core modules it calls, so src/ is included wholesale —
+  # app PRs now trigger a (cheap, static) website deploy, which keeps
+  # the in-browser demo honest about matching the code.
+  ignore = "git diff --quiet HEAD^ HEAD -- website/ netlify.toml scripts/extract-docs.mjs src/ vite.playground.config.ts package.json package-lock.json"
 
 [build.environment]
   NODE_VERSION = "20"

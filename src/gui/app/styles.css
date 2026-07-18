@@ -508,3 +508,30 @@ body.dragging * { cursor: grabbing !important; }
   font-size: 0.7rem;
   padding: 2px;
 }
+
+/* Playground mode (website demo — playground.tsx). Small banner above
+   the app; the chip echoes .nav-btn.active, the note uses muted text. */
+.playground-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 14px;
+  margin-bottom: 16px;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+.playground-banner-chip {
+  flex-shrink: 0;
+  border: 1px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 15%, var(--surface));
+  color: var(--text);
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.playground-banner-error { border-color: #f85149; color: var(--text); }

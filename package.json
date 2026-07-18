@@ -9,6 +9,7 @@
     "test:watch": "vitest",
     "typecheck:app": "tsc -p src/gui/app/tsconfig.json",
     "build": "tsc -p tsconfig.json && cp src/db/schema.sql dist/src/db/schema.sql && npm run typecheck:app && vite build && mkdir -p dist/src/gui/public && cp -R src/gui/public/. dist/src/gui/public/ && node scripts/extract-docs.mjs",
+    "build:playground": "vite build --config vite.playground.config.ts",
     "dev": "vite",
     "start": "node dist/src/mcp/server.js",
     "gui": "node dist/src/gui/server.js",
