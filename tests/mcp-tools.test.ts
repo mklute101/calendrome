@@ -50,6 +50,7 @@ describe('MCP tools layer', () => {
       'pull_hours',
       'list_envelope_moves',
       'get_envelopes',
+      'get_supply',
       'get_project_budget',
       'get_all_budgets',
       'get_week_layout',
