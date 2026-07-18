@@ -5,6 +5,10 @@
  * in toasts.
  */
 import type {
+  EnvelopeMove,
+  EnvelopeType,
+  EnvelopesPayload,
+  MovesPayload,
   Placement,
   Project,
   Task,
@@ -88,3 +92,27 @@ export const reopenTask = (id: number, status: 'NEW' | 'SCHEDULED' | 'IN_PROGRES
 
 export const snoozeTask = (id: number, until: string | null) =>
   post<{ task: Task }>(`/api/tasks/${id}/snooze`, { until });
+
+// ---- budget view (#106 M2) ----
+
+export const fetchEnvelopes = (week: string) =>
+  request<EnvelopesPayload>(`/api/envelopes?week=${week}`);
+
+export const fetchMoves = (week: string) =>
+  request<MovesPayload>(`/api/moves?week=${week}`);
+
+export const assignEnvelope = (args: {
+  envelope_type: EnvelopeType;
+  envelope_id: string;
+  week_start: string;
+  minutes: number | null;
+  note?: string;
+}) => post<{ assignment: unknown }>('/api/assign', args);
+
+export const pullEnvelope = (args: {
+  week_start: string;
+  from?: { type: EnvelopeType; id: string };
+  to?: { type: EnvelopeType; id: string };
+  minutes: number;
+  note?: string;
+}) => post<{ move: EnvelopeMove }>('/api/pull', args);

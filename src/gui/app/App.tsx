@@ -1,13 +1,19 @@
 import { useEffect, useState } from 'react';
 import { WeekView } from './components/WeekView';
 import { TasksPage } from './components/TasksPage';
+import { BudgetView } from './components/BudgetView';
 import { ToastProvider } from './components/Toasts';
 
-type Route = 'week' | 'tasks';
+type Route = 'week' | 'tasks' | 'budget';
 type ViewMode = 'compact' | 'timeline';
 
 function useHashRoute(): Route {
-  const read = () => (window.location.hash.startsWith('#/tasks') ? 'tasks' : 'week');
+  const read = (): Route =>
+    window.location.hash.startsWith('#/tasks')
+      ? 'tasks'
+      : window.location.hash.startsWith('#/budget')
+        ? 'budget'
+        : 'week';
   const [route, setRoute] = useState<Route>(read);
   useEffect(() => {
     const onHash = () => setRoute(read());
@@ -69,6 +75,8 @@ export default function App() {
           </header>
           <TasksPage categoryView={categoryView} />
         </>
+      ) : route === 'budget' ? (
+        <BudgetView categoryView={categoryView} setCategoryView={setCategoryView} />
       ) : (
         <WeekView
           viewMode={viewMode}

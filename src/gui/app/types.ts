@@ -157,6 +157,51 @@ export interface TasksPayload {
   tasks: Task[];
 }
 
+/* ---- Budget view (#106 M2) — mirrors src/gui/budget-data.ts ---- */
+
+export type EnvelopeType = 'project' | 'goal' | 'habit';
+export type EnvelopeFunding = 'overspent' | 'underfunded' | 'on_track' | 'snoozed';
+
+export interface BudgetEnvelope {
+  envelope_type: EnvelopeType;
+  envelope_id: string;
+  title: string;
+  /** NULL = snoozed (unfunded) for the week. */
+  assigned: number | null;
+  activity: { confirmed_minutes: number; scheduled_minutes: number };
+  /** assigned − (confirmed + scheduled). */
+  available: number;
+  funding: EnvelopeFunding;
+  status_line: string;
+  /** Minutes of this week's ask not yet covered; 0 for projects. */
+  needed_minutes: number;
+  week_score?: { done: number; target: number };
+  /** Owning project — the grouping key. */
+  project_id: string;
+}
+
+export interface EnvelopeMove {
+  id: number;
+  week_start: string;
+  from_type: EnvelopeType | null;
+  from_id: string | null;
+  to_type: EnvelopeType | null;
+  to_id: string | null;
+  minutes: number;
+  note: string | null;
+  created_at: string;
+}
+
+export interface EnvelopesPayload {
+  week: string;
+  envelopes: BudgetEnvelope[];
+}
+
+export interface MovesPayload {
+  week: string;
+  moves: EnvelopeMove[];
+}
+
 /** projectId → display metadata, built from /api/projects. */
 export type ProjectMeta = Record<
   string,

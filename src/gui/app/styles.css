@@ -540,6 +540,145 @@ body.dragging * { cursor: grabbing !important; }
 .habit-dots { font-size: 0.6rem; letter-spacing: 2px; color: var(--c, var(--accent)); }
 .habit-frac { font-size: 0.68rem; color: var(--text-muted); }
 
+/* ===== BUDGET VIEW — #/budget (#106 M2) ===== */
+.budget-view { max-width: 880px; margin: 0 auto; }
+.env-group { margin-bottom: 24px; }
+.env-group-head {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+.env-table {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: visible;
+}
+.env-row {
+  display: grid;
+  grid-template-columns: 1fr 110px 90px 110px;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.env-row:last-child { border-bottom: none; }
+.env-head-row {
+  padding: 8px 14px;
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+.env-head-row .env-cell { font-size: 0.65rem; }
+/* Goal/habit envelopes nest under their project row, YNAB-style. */
+.env-row.env-sub { padding-left: 30px; }
+.env-name { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.env-title-line { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.env-title {
+  font-weight: 500;
+  font-size: 0.82rem;
+  border-left: 3px solid var(--c, var(--accent));
+  padding-left: 8px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.env-row.env-sub .env-title { border-left-style: dashed; }
+.env-type {
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0 6px;
+}
+.env-bar { margin: 0; max-width: 260px; }
+.env-status { font-size: 0.68rem; color: var(--text-muted); }
+.env-status-overspent { color: #f85149; }
+.env-status-underfunded { color: #d29922; }
+.env-cell { font-size: 0.8rem; text-align: right; position: relative; }
+.env-assigned-btn {
+  background: none;
+  border: 1px dashed transparent;
+  color: var(--text);
+  font-size: 0.8rem;
+  padding: 3px 8px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.env-assigned-btn:hover { border-color: var(--accent); color: var(--accent); }
+.assign-input {
+  width: 74px;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--accent);
+  border-radius: 5px;
+  padding: 3px 6px;
+  font-size: 0.8rem;
+  text-align: right;
+}
+
+/* Available pill — echoes the budget-card over/under colors. */
+.pill {
+  border: 1px solid transparent;
+  border-radius: 10px;
+  padding: 2px 10px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  cursor: default;
+}
+.pill-on_track { background: color-mix(in srgb, #3fb950 20%, transparent); color: #3fb950; }
+.pill-underfunded { background: color-mix(in srgb, #d29922 20%, transparent); color: #d29922; cursor: pointer; }
+.pill-overspent { background: color-mix(in srgb, #f85149 20%, transparent); color: #f85149; cursor: pointer; }
+.pill-snoozed { background: color-mix(in srgb, #8b949e 18%, transparent); color: #8b949e; }
+.pill-underfunded:hover, .pill-overspent:hover { border-color: currentColor; }
+.pill:disabled { cursor: default; }
+
+/* "Cover from…" popover — the click-to-pull menu. */
+.pull-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  z-index: 30;
+  min-width: 200px;
+  text-align: left;
+}
+.pull-menu-head {
+  padding: 6px 10px;
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+}
+.pull-menu .snooze-option { display: flex; justify-content: space-between; gap: 12px; }
+.pull-surplus { color: #3fb950; font-size: 0.68rem; }
+.pull-menu .empty { padding: 10px; }
+
+/* Recent Moves drawer (reuses the tasks-panel shell). */
+.move-row {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin-bottom: 7px;
+  background: var(--bg);
+}
+.move-main { display: flex; align-items: baseline; gap: 8px; }
+.move-minutes { font-weight: 600; font-size: 0.8rem; white-space: nowrap; }
+.move-path { flex: 1; font-size: 0.75rem; min-width: 0; }
+.move-note { font-size: 0.68rem; color: var(--text-muted); margin-top: 3px; }
+
 /* Toasts */
 .toast-stack {
   position: fixed;

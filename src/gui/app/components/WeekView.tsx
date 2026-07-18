@@ -293,6 +293,9 @@ export function WeekView({
             All
           </button>
           <span className="nav-sep" />
+          <a className="nav-btn" href="#/budget" title="Envelope budget view">
+            Budget
+          </a>
           <button
             className={`nav-btn${panelOpen ? ' active' : ''}`}
             onClick={() => setPanelOpen(!panelOpen)}
