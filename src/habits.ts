@@ -1,8 +1,11 @@
 import type { DB } from './db/connection.js';
+import { toCanonicalUtc } from './day-range.js';
 import {
   confirmTimeEntry,
   insertTimeEntry,
+  moveTimeEntry,
   skipTimeEntry,
+  type TimeEntryRow,
 } from './time-entry.js';
 
 export interface Habit {
@@ -24,11 +27,14 @@ export interface Habit {
 export interface HabitInstance {
   id: number;
   habit_id: number;
+  /** Immutable slot identity — the regeneration dedupe key; never
+   *  rewritten by a move. The linked entry's start/end is display truth. */
   scheduled_start: string;
   scheduled_end: string;
   status: 'PLANNED' | 'COMPLETE' | 'SKIPPED';
   calendar_event_id: string | null;
   completed_at: string | null;
+  time_entry_id: number | null;
 }
 
 export interface CreateHabitInput {
@@ -154,6 +160,23 @@ function addDaysIsoDate(date: string, days: number): string {
 function weekdayOfIsoDate(date: string): number {
   const [y, m, d] = date.split('-').map(Number);
   return new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+}
+
+/** Calendar date (YYYY-MM-DD) a UTC instant falls on in `timeZone`. */
+function isoDateInZone(isoUtc: string, timeZone: string): string {
+  // en-CA formats as YYYY-MM-DD directly.
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date(isoUtc));
+}
+
+/** Monday of the ISO week containing `date` (YYYY-MM-DD). */
+function mondayOfIsoDate(date: string): string {
+  const dow = weekdayOfIsoDate(date); // 0=Sun..6=Sat
+  return addDaysIsoDate(date, -((dow + 6) % 7));
 }
 
 export function createHabit(db: DB, input: CreateHabitInput): Habit {
@@ -372,6 +395,84 @@ export function completeHabitInstance(
   return db
     .prepare('SELECT * FROM habit_instances WHERE id = ?')
     .get(id) as HabitInstance;
+}
+
+/**
+ * Move a PLANNED habit instance's linked time_entry within the habit's
+ * frequency range (#118, spec: 2026-07-17-commitment-taxonomy-design).
+ *
+ * The frequency range is the load-bearing rule: sliding *within* it is
+ * a move; leaving it is a skip, never a move. Enforced server-side:
+ *  - fixed-days form: the new start must land on the same local day
+ *    (in the habit's timezone) as `scheduled_start` — a Mon/Wed/Fri
+ *    instance slides within its own day only.
+ *  - times_per_week form: the new start must stay inside the instance's
+ *    Mon-Sun week — an N-per-week candidate slides anywhere in its week.
+ *
+ * `habit_instances.scheduled_start` is the immutable slot identity
+ * (UNIQUE(habit_id, scheduled_start) is the regeneration dedupe) and is
+ * never rewritten; the linked entry's start/end is the display truth.
+ * `newEnd` exists for parity with `moveTimeEntry` but a habit's chunk
+ * size is its instance duration (non-combinable) — callers normally
+ * omit it and the duration is preserved.
+ */
+export function moveHabitInstance(
+  db: DB,
+  id: number,
+  newStart: string,
+  opts: { newEnd?: string } = {},
+): { instance: HabitInstance; entry: TimeEntryRow } {
+  const moveTx = db.transaction(() => {
+    const inst = db
+      .prepare('SELECT * FROM habit_instances WHERE id = ?')
+      .get(id) as HabitInstance | undefined;
+    if (!inst) throw new Error(`habit_instance ${id} not found`);
+    if (inst.status !== 'PLANNED') {
+      throw new Error(
+        `cannot move habit_instance ${id}: status is ${inst.status}, not PLANNED`,
+      );
+    }
+    if (inst.time_entry_id == null) {
+      throw new Error(`habit_instance ${id} has no linked time_entry`);
+    }
+    const habit = getHabit(db, inst.habit_id);
+    if (!habit) throw new Error(`habit ${inst.habit_id} not found`);
+
+    const startCanon = toCanonicalUtc(newStart, 'new_start');
+    const tz = habit.timezone || 'UTC';
+    if (habit.times_per_week != null) {
+      // Target form: anywhere in the instance's Mon-Sun week.
+      const fromWeek = mondayOfIsoDate(isoDateInZone(inst.scheduled_start, tz));
+      const toWeek = mondayOfIsoDate(isoDateInZone(startCanon, tz));
+      if (fromWeek !== toWeek) {
+        throw new Error(
+          `cannot move habit_instance ${id} out of its week (${fromWeek}): leaving the frequency range is a skip, not a move`,
+        );
+      }
+    } else {
+      // Fixed-days form: within its own day only.
+      const fromDay = isoDateInZone(inst.scheduled_start, tz);
+      const toDay = isoDateInZone(startCanon, tz);
+      if (fromDay !== toDay) {
+        throw new Error(
+          `cannot move habit_instance ${id} off its day (${fromDay}): leaving the frequency range is a skip, not a move`,
+        );
+      }
+    }
+
+    moveTimeEntry(db, inst.time_entry_id, startCanon, {
+      new_end_at: opts.newEnd,
+    });
+  });
+  moveTx();
+
+  const instance = db
+    .prepare('SELECT * FROM habit_instances WHERE id = ?')
+    .get(id) as HabitInstance;
+  const entry = db
+    .prepare('SELECT * FROM time_entry WHERE id = ?')
+    .get(instance.time_entry_id) as TimeEntryRow;
+  return { instance, entry };
 }
 
 /**

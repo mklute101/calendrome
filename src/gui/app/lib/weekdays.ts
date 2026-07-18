@@ -56,7 +56,12 @@ export function buildDays(data: WeekPayload, weekStart: string): DayBucket[] {
     if (day) day.deadlines.push(t);
   }
   for (const hi of data.habit_instances) {
-    const day = days.find((d) => d.date === hi.scheduled_start.slice(0, 10));
+    // SKIPPED stays in the payload for the weekly meter but never
+    // renders (#118). Bucketing uses `start_at` (the linked entry's
+    // span — display truth), not the immutable `scheduled_start` slot,
+    // so a moved instance lands on its new day.
+    if (hi.status === 'SKIPPED') continue;
+    const day = days.find((d) => d.date === hi.start_at.slice(0, 10));
     if (day) {
       day.habits.push(hi);
       day.totalMin += hi.habit_duration || 0;
@@ -118,6 +123,11 @@ export function isOverduePlacement(p: Placement): boolean {
   return p.status === 'UNCONFIRMED' && Date.parse(p.start_at) < Date.now();
 }
 
+/** Same cue for habit instances (#118): started but neither ✓ nor ✕ yet. */
+export function isOverdueHabit(hi: HabitInstance): boolean {
+  return hi.status === 'PLANNED' && Date.parse(hi.start_at) < Date.now();
+}
+
 /**
  * Display label for a placement/logged block: task title when
  * task-linked, goal title for goal blocks (place_goal_block), else
@@ -172,7 +182,10 @@ export function findOverlap(
     spans.push({ start: s, end: s + m.duration_minutes, label: m.summary });
   }
   for (const h of day.habits) {
-    const s = minutesOfDay(h.scheduled_start);
+    // A moving habit excludes itself via its linked entry id, same as
+    // a moving placement (#118).
+    if (h.time_entry_id != null && h.time_entry_id === excludeEntryId) continue;
+    const s = minutesOfDay(h.start_at);
     spans.push({ start: s, end: s + (h.habit_duration || 30), label: h.habit_title });
   }
   for (const l of day.logs) {

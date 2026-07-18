@@ -403,6 +403,12 @@ body.dragging * { cursor: grabbing !important; }
   z-index: 3;
 }
 .timeline-block.placement:hover .block-actions { display: flex; }
+.timeline-block.habit:hover .block-actions { display: flex; }
+
+/* Habit blocks (#118): PLANNED slide within their frequency range and
+   take ✓/✕; COMPLETE render dimmed (✓-prefixed title) and inert. */
+.timeline-block.habit:not(.complete) { cursor: grab; }
+.timeline-block.habit.complete { opacity: 0.45; }
 .block-action {
   background: var(--bg);
   border: 1px solid var(--border);

@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from 'react';
 import * as api from '../api';
-import type { Goal, Placement, Task } from '../types';
+import type { Goal, HabitInstance, Placement, Task } from '../types';
 import { useWeekData } from '../hooks/useWeekData';
 import { useTasksData } from '../hooks/useTasksData';
 import { usePolling } from '../hooks/usePolling';
@@ -183,6 +183,33 @@ export function WeekView({
             },
           });
         });
+      } else if (source.kind === 'move-habit') {
+        // Slide within the frequency range (#118). The ghost already
+        // refused out-of-range days; the server re-enforces the rule.
+        const hi = source.habit;
+        const prior = { start: hi.start_at, end: hi.end_at };
+        const endIso = localDateTimeIso(
+          dayDate,
+          target.startMinutes + target.durationMinutes,
+        );
+        applyLocal((d) => ({
+          ...d,
+          habit_instances: d.habit_instances.map((x) =>
+            x.id === hi.id ? { ...x, start_at: startIso, end_at: endIso } : x,
+          ),
+        }));
+        warnOverlap(target, hi.time_entry_id ?? undefined);
+        void runMutation(async () => {
+          await api.moveHabitInstance(hi.id, { start: startIso });
+          show({
+            kind: 'info',
+            message: `Moved “${hi.habit_title}” to ${fmtDate(dayDate)} ${fmtTime(startIso)}`,
+            undo: async () => {
+              await api.moveHabitInstance(hi.id, { start: prior.start });
+              await refetchAll();
+            },
+          });
+        });
       } else {
         const task = source.task;
         warnOverlap(target);
@@ -233,6 +260,41 @@ export function WeekView({
                 await refetchAll();
               }
             : undefined,
+        });
+      }),
+    [runMutation, show, refetchAll],
+  );
+
+  // Habit ✓/✕ (#118) mirror confirm/skip; both undo via /reopen — the
+  // GUI-only path back to PLANNED (skip deleted the entry, so undo
+  // re-inserts it at the scheduled slot server-side).
+  const completeHabit = useCallback(
+    (hi: HabitInstance) =>
+      runMutation(async () => {
+        await api.completeHabitInstance(hi.id);
+        show({
+          kind: 'info',
+          message: `Done “${hi.habit_title}”`,
+          undo: async () => {
+            await api.reopenHabitInstance(hi.id);
+            await refetchAll();
+          },
+        });
+      }),
+    [runMutation, show, refetchAll],
+  );
+
+  const skipHabit = useCallback(
+    (hi: HabitInstance) =>
+      runMutation(async () => {
+        await api.skipHabitInstance(hi.id);
+        show({
+          kind: 'info',
+          message: `Skipped “${hi.habit_title}”`,
+          undo: async () => {
+            await api.reopenHabitInstance(hi.id);
+            await refetchAll();
+          },
         });
       }),
     [runMutation, show, refetchAll],
@@ -340,6 +402,8 @@ export function WeekView({
               onStartDrag={startDrag}
               onConfirm={confirmPlacement}
               onSkip={skipPlacement}
+              onCompleteHabit={completeHabit}
+              onSkipHabit={skipHabit}
             />
           )}
         </>
