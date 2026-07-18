@@ -131,3 +131,154 @@ describe('GUI write API over HTTP', () => {
     expect(payload.time_logs.length).toBeGreaterThan(0);
   });
 });
+
+/**
+ * Budget-view API over HTTP (#106 M2): envelopes/moves reads, the
+ * assign/pull writes, their validation 400s, and the Origin guard on
+ * /api/assign. Core mechanics are covered in assignments.test.ts and
+ * gui-mutations.test.ts — this proves the HTTP wiring.
+ */
+describe('GUI budget API over HTTP', () => {
+  let dir: string;
+  let server: Server;
+  let base: string;
+  let goalId: number;
+  const WEEK = '2026-07-13'; // Monday
+
+  beforeAll(async () => {
+    dir = mkdtempSync(join(tmpdir(), 'calendrome-http-budget-'));
+    const dbPath = join(dir, 'calendrome.db');
+    const db = openDatabase(dbPath);
+    migrate(db);
+    db.prepare(
+      `INSERT INTO projects (id, name, prefix, weekly_budget_minutes)
+       VALUES ('acme', 'Acme', 'ACME', 1200), ('hobby', 'Hobby', 'HOBBY', 300)`,
+    ).run();
+    goalId = Number(
+      db
+        .prepare(
+          `INSERT INTO goals (project_id, title, target_minutes, refill_period)
+           VALUES ('acme', 'Spanish practice', 180, 'week')`,
+        )
+        .run().lastInsertRowid,
+    );
+    db.close();
+
+    const app = createApp(dbPath, new FakeCalendarClient());
+    await new Promise<void>((resolve) => {
+      server = app.listen(0, '127.0.0.1', () => resolve());
+    });
+    const addr = server.address();
+    if (addr === null || typeof addr === 'string') throw new Error('no port');
+    base = `http://127.0.0.1:${addr.port}`;
+  });
+
+  afterAll(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const json = (r: Response): Promise<any> => r.json() as Promise<any>;
+  const post = (path: string, body?: unknown, headers: Record<string, string> = {}) =>
+    fetch(base + path, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...headers },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+
+  it('GET /api/envelopes returns rows for the seeded goal, with project_id', async () => {
+    const res = await fetch(`${base}/api/envelopes?week=${WEEK}`);
+    expect(res.status).toBe(200);
+    const payload = await json(res);
+    expect(payload.week).toBe(WEEK);
+    const goalRow = payload.envelopes.find(
+      (e: any) => e.envelope_type === 'goal' && e.envelope_id === String(goalId),
+    );
+    expect(goalRow).toBeDefined();
+    expect(goalRow.title).toBe('Spanish practice');
+    expect(goalRow.project_id).toBe('acme');
+    expect(goalRow.assigned).toBe(180); // standing weekly ask
+    expect(goalRow.funding).toBe('underfunded');
+  });
+
+  it('GET /api/envelopes validates the week param', async () => {
+    expect((await fetch(`${base}/api/envelopes`)).status).toBe(400);
+    // Well-formed but not a Monday → core assertMonday → 400.
+    expect((await fetch(`${base}/api/envelopes?week=2026-07-14`)).status).toBe(400);
+  });
+
+  it('POST /api/assign sets the assignment; malformed bodies 400', async () => {
+    const ok = await post('/api/assign', {
+      envelope_type: 'project',
+      envelope_id: 'acme',
+      week_start: WEEK,
+      minutes: 600,
+      note: 'light week',
+    });
+    expect(ok.status).toBe(200);
+    expect((await json(ok)).assignment.minutes).toBe(600);
+
+    const bad = await post('/api/assign', {
+      envelope_type: 'castle',
+      envelope_id: 'acme',
+      week_start: WEEK,
+      minutes: 600,
+    });
+    expect(bad.status).toBe(400);
+    const noMinutes = await post('/api/assign', {
+      envelope_type: 'project',
+      envelope_id: 'acme',
+      week_start: WEEK,
+    });
+    expect(noMinutes.status).toBe(400);
+  });
+
+  it('POST /api/assign rejects cross-origin writes (Origin guard)', async () => {
+    const evil = await post(
+      '/api/assign',
+      {
+        envelope_type: 'project',
+        envelope_id: 'acme',
+        week_start: WEEK,
+        minutes: 0,
+      },
+      { origin: 'https://evil.example.com' },
+    );
+    expect(evil.status).toBe(403);
+    expect((await json(evil)).error).toMatch(/cross-origin/);
+  });
+
+  it('POST /api/pull moves minutes and GET /api/moves lists it newest-first', async () => {
+    const pulled = await post('/api/pull', {
+      week_start: WEEK,
+      from: { type: 'project', id: 'hobby' },
+      to: { type: 'goal', id: goalId }, // numeric id must coerce
+      minutes: 60,
+      note: 'launch crunch',
+    });
+    expect(pulled.status).toBe(200);
+    const { move } = await json(pulled);
+    expect(move.from_id).toBe('hobby');
+    expect(move.to_id).toBe(String(goalId));
+
+    const moves = await json(await fetch(`${base}/api/moves?week=${WEEK}`));
+    expect(moves.moves[0].note).toBe('launch crunch');
+
+    const badRef = await post('/api/pull', {
+      week_start: WEEK,
+      from: { kind: 'project', id: 'hobby' },
+      minutes: 60,
+    });
+    expect(badRef.status).toBe(400);
+
+    // Domain guard passes through mutate(): overdraw → 409.
+    const overdraw = await post('/api/pull', {
+      week_start: WEEK,
+      from: { type: 'project', id: 'hobby' },
+      to: { type: 'project', id: 'acme' },
+      minutes: 100000,
+    });
+    expect(overdraw.status).toBe(409);
+    expect((await json(overdraw)).error).toMatch(/assigned this week/);
+  });
+});

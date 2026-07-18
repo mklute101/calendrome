@@ -29,6 +29,7 @@ import { listProjects } from '../projects.js';
 import { listCategories } from '../categories.js';
 import { buildWeekPayload } from './week-data.js';
 import { buildTasksPayload } from './tasks-data.js';
+import { buildEnvelopesPayload, buildMovesPayload } from './budget-data.js';
 import {
   GoogleCalendarClient,
   LocalCalendarClient,
@@ -43,7 +44,10 @@ import {
   guiComplete,
   reopenTask,
   guiSnooze,
+  guiAssign,
+  guiPull,
 } from './mutations.js';
+import type { EnvelopeRef, EnvelopeType } from '../assignments.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DB_PATH = process.env.CALENDROME_DB ?? 'calendrome.db';
@@ -278,6 +282,130 @@ export function createApp(
     mutate(res, () => guiSnooze(db, idParam(req), body.until)).finally(() =>
       db.close(),
     );
+  });
+
+  // Budget view (#106 M2) — shared query/body parsing helpers.
+  const ENVELOPE_TYPES: EnvelopeType[] = ['project', 'goal', 'habit'];
+  /** `?week=` must be a Monday ISO date; returns null after sending 400. */
+  const weekParam = (req: express.Request, res: express.Response): string | null => {
+    const week = String(req.query.week ?? '');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(week)) {
+      res.status(400).json({ error: 'week param required (YYYY-MM-DD, a Monday)' });
+      return null;
+    }
+    return week;
+  };
+  /** Parse an optional `{type, id}` envelope ref; throws on bad shape. */
+  const envelopeRef = (v: unknown, label: string): EnvelopeRef | null => {
+    if (v === undefined || v === null) return null;
+    const ref = v as { type?: unknown; id?: unknown };
+    if (
+      typeof ref !== 'object' ||
+      !ENVELOPE_TYPES.includes(ref.type as EnvelopeType) ||
+      (typeof ref.id !== 'string' && typeof ref.id !== 'number')
+    ) {
+      throw new Error(`${label} must be {type: project|goal|habit, id}`);
+    }
+    return { type: ref.type as EnvelopeType, id: String(ref.id) };
+  };
+
+  /**
+   * Envelope rows for a week — the budget view's read (#106 M2).
+   * `?week=` is a Monday ISO date. Each row is a `getEnvelopes` row
+   * (assigned / activity / available / funding / status_line) plus
+   * the owning `project_id` so the client can group by category →
+   * project. 400 on a missing or non-Monday week.
+   */
+  app.get('/api/envelopes', (req, res) => {
+    const week = weekParam(req, res);
+    if (!week) return;
+    const db = getDb();
+    try {
+      res.json(buildEnvelopesPayload(db, week));
+    } catch (err) {
+      res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+    } finally {
+      db.close();
+    }
+  });
+
+  /**
+   * Recent Moves for a week, newest first — the pull audit trail the
+   * budget view renders (and undoes via reverse pulls). `?week=` is a
+   * Monday ISO date.
+   */
+  app.get('/api/moves', (req, res) => {
+    const week = weekParam(req, res);
+    if (!week) return;
+    const db = getDb();
+    try {
+      res.json(buildMovesPayload(db, week));
+    } catch (err) {
+      res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+    } finally {
+      db.close();
+    }
+  });
+
+  /**
+   * Set an envelope's weekly assignment (inline-assign in the budget
+   * view; same core as the `assign_hours` MCP tool). Body:
+   * `{envelope_type, envelope_id, week_start, minutes, note?}` —
+   * `minutes: null` snoozes the envelope for the week.
+   */
+  app.post('/api/assign', (req, res) => {
+    const { envelope_type, envelope_id, week_start, minutes, note } = req.body ?? {};
+    if (
+      !ENVELOPE_TYPES.includes(envelope_type) ||
+      (typeof envelope_id !== 'string' && typeof envelope_id !== 'number') ||
+      typeof week_start !== 'string' ||
+      (minutes !== null && typeof minutes !== 'number')
+    ) {
+      res.status(400).json({
+        error:
+          'body requires envelope_type (project|goal|habit), envelope_id, week_start (string), minutes (number | null)',
+      });
+      return;
+    }
+    const db = getDb();
+    mutate(res, () =>
+      guiAssign(db, {
+        envelope_type,
+        envelope_id: String(envelope_id),
+        week_start,
+        minutes,
+        note,
+      }),
+    ).finally(() => db.close());
+  });
+
+  /**
+   * Move minutes between two envelopes in a week — the YNAB pull
+   * (click-to-pull in the budget view; same core as the `pull_hours`
+   * MCP tool). Body: `{week_start, from?, to?, minutes, note?}` with
+   * `from`/`to` as `{type, id}`; omit `from` to fund from unassigned
+   * supply, omit `to` to release back to it. Undo is the reverse pull
+   * — the client swaps from/to, no dedicated endpoint.
+   */
+  app.post('/api/pull', (req, res) => {
+    const { week_start, from, to, minutes, note } = req.body ?? {};
+    let refs: { from: EnvelopeRef | null; to: EnvelopeRef | null };
+    try {
+      refs = { from: envelopeRef(from, 'from'), to: envelopeRef(to, 'to') };
+    } catch (err) {
+      res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+      return;
+    }
+    if (typeof week_start !== 'string' || typeof minutes !== 'number') {
+      res.status(400).json({
+        error: 'body requires week_start (string) and minutes (number)',
+      });
+      return;
+    }
+    const db = getDb();
+    mutate(res, () =>
+      guiPull(db, { week_start, from: refs.from, to: refs.to, minutes, note }),
+    ).finally(() => db.close());
   });
 
   /**
