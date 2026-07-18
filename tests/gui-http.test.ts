@@ -281,4 +281,19 @@ describe('GUI budget API over HTTP', () => {
     expect(overdraw.status).toBe(409);
     expect((await json(overdraw)).error).toMatch(/assigned this week/);
   });
+  it('GET /api/supply returns totals and validates the week param', async () => {
+    const res = await fetch(`${base}/api/supply?week=${WEEK}`);
+    expect(res.status).toBe(200);
+    const supply = await json(res);
+    expect(supply.week_start).toBe(WEEK);
+    // Seeded windows: work Mon-Fri 9-17 (2400) + personal daily 18-22 (1680).
+    expect(supply.total_supply_minutes).toBe(4080);
+    expect(typeof supply.assigned_minutes).toBe('number');
+    expect(supply.to_be_assigned_minutes).toBe(
+      supply.total_supply_minutes - supply.assigned_minutes,
+    );
+
+    const bad = await fetch(`${base}/api/supply?week=2026-07-14`);
+    expect(bad.status).toBe(400);
+  });
 });

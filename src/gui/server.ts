@@ -30,6 +30,7 @@ import { listCategories } from '../categories.js';
 import { buildWeekPayload } from './week-data.js';
 import { buildTasksPayload } from './tasks-data.js';
 import { buildEnvelopesPayload, buildMovesPayload } from './budget-data.js';
+import { computeWeekSupply } from '../supply.js';
 import {
   GoogleCalendarClient,
   LocalCalendarClient,
@@ -340,6 +341,25 @@ export function createApp(
     const db = getDb();
     try {
       res.json(buildMovesPayload(db, week));
+    } catch (err) {
+      res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+    } finally {
+      db.close();
+    }
+  });
+
+  /**
+   * The week's hour supply (#106 M4) — category windows − events −
+   * blocks + opens, plus assigned and To-Be-Assigned totals for the
+   * budget-view header. Negative to_be_assigned = overcommitted.
+   * `?week=` is a Monday ISO date.
+   */
+  app.get('/api/supply', (req, res) => {
+    const week = weekParam(req, res);
+    if (!week) return;
+    const db = getDb();
+    try {
+      res.json(computeWeekSupply(db, week));
     } catch (err) {
       res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
     } finally {

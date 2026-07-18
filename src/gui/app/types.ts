@@ -202,6 +202,14 @@ export interface MovesPayload {
   moves: EnvelopeMove[];
 }
 
+/** GET /api/supply — mirrors WeekSupply in src/supply.ts. */
+export interface SupplyPayload {
+  week_start: string;
+  total_supply_minutes: number;
+  assigned_minutes: number;
+  to_be_assigned_minutes: number;
+}
+
 /** projectId → display metadata, built from /api/projects. */
 export type ProjectMeta = Record<
   string,

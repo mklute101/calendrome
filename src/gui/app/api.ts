@@ -8,6 +8,7 @@ import type {
   EnvelopeMove,
   EnvelopeType,
   EnvelopesPayload,
+  SupplyPayload,
   MovesPayload,
   Placement,
   Project,
@@ -100,6 +101,9 @@ export const fetchEnvelopes = (week: string) =>
 
 export const fetchMoves = (week: string) =>
   request<MovesPayload>(`/api/moves?week=${week}`);
+
+export const fetchSupply = (week: string) =>
+  request<SupplyPayload>(`/api/supply?week=${week}`);
 
 export const assignEnvelope = (args: {
   envelope_type: EnvelopeType;
