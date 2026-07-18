@@ -67,7 +67,7 @@ Parse `$ARGUMENTS`:
 | Input | Duration | Title | Intent |
 |---|---|---|---|
 | `(none)` | 30m (after asking) | (asked) | (asked) |
-| `45m ATN: Deploy hotfix` | 45m | ATN: Deploy hotfix | placement |
+| `45m ACME: Deploy hotfix` | 45m | ACME: Deploy hotfix | placement |
 | `1h SAN: Code review PR #142` | 60m | SAN: Code review PR #142 | placement |
 | `PR review` | 30m | PR review | placement |
 | `Tuesday night off` | (range) | — | availability (`block_time`) |
@@ -83,7 +83,7 @@ If the title doesn't already start with a known prefix from `project_prefixes`, 
 
 Example with `project_prefixes`:
 ```
-- prefix: ATN, name: Athletech News
+- prefix: ACME, name: Acme Corp
 - prefix: SAN, name: Sportsnaut
 - prefix: AP,  name: Alpha Particle
 ```
@@ -91,8 +91,8 @@ Example with `project_prefixes`:
 | Input title | Prefixed title |
 |---|---|
 | "Deploy hotfix" | "Deploy hotfix" (no match) |
-| "Athletech bug fix" | "ATN: Athletech bug fix" |
-| "ATN: Deploy" | "ATN: Deploy" (already prefixed) |
+| "Acme bug fix" | "ACME: Acme bug fix" |
+| "ACME: Deploy" | "ACME: Deploy" (already prefixed) |
 
 ### Step 3 — Find or create the task
 
@@ -121,7 +121,7 @@ Placed: [title] [HH:MM]-[HH:MM] — confirm in tomorrow's /calendrome:today.
 
 Example:
 ```
-Placed: ATN: Deploy hotfix 14:30-15:15 — confirm in tomorrow's /calendrome:today.
+Placed: ACME: Deploy hotfix 14:30-15:15 — confirm in tomorrow's /calendrome:today.
 ```
 
 ## Workflow (availability intent)

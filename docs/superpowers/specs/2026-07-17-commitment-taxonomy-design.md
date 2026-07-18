@@ -206,8 +206,8 @@ Placements and confirmed hours are the activity; the row goes red at
 either or both** (review round 4). A client cap points its nag *down*
 — over is the failure, and there's no virtue in hitting 20h exactly.
 A refill goal points its nag *up* — under is the failure, over is
-fine. The interesting middle is broad ongoing work ("give the ATN-ish
-client ~10h/week of general attention"): that's a *floor* wearing
+fine. The interesting middle is broad ongoing work ("give ACME ~10h/
+week of general attention"): that's a *floor* wearing
 project clothes, which is exactly why it never fit
 `weekly_budget_minutes`. Modeled: a refill goal scoped to the
 project, living inside the project's cap. "At least 8h broad, at most
