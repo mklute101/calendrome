@@ -164,6 +164,56 @@ gcal-specific. gcal-sync is today's source, but the type is "something
 outside calendrome claimed this slot." Occupies supply, tracked for
 meeting time, owned elsewhere. No change.
 
+## The model on a real week (worked examples)
+
+The taxonomy is only right if real commitments pass through it without
+squinting. One of each, end to end:
+
+**Daily stretch, 15 min — Habit, fixed days.**
+Ask: 7 × 15 min = 1.75h/week. Done: did today's or skipped it.
+Mobility: slides within its day; "move Tuesday's to Wednesday" is a
+Tuesday skip. Chunking: seven 15-min chunks, non-combinable — a
+105-minute Sunday stretch marathon is not the commitment.
+Budget row: `Stretch — assigned 1.75h · activity 1.25h · 5/7`.
+
+**Work out 4×/week — Habit, N-per-week target.**
+Ask: 4 × duration, any days. Done: per-instance, scored as a weekly
+meter (3/4), not as skips against days never promised. Mobility: an
+instance slides anywhere in its week. Chunking: non-combinable — two
+workouts back-to-back is still one workout.
+Budget row: `Workout — 3/4 this week`, yellow at week's end if under.
+
+**Spanish practice, ~3h/week — Goal, recurring refill.**
+Ask: 3h refill each week, forever; no finish line by design. Done:
+cumulative — hours poured in. Mobility/chunking: fully floating,
+combinable; six 30-min sessions or one rainy-Saturday 3h block both
+fill the envelope. Budget row: `Spanish — assigned 3h · activity 2h ·
+1h more needed this week`.
+
+**10h prospecting before the event — Goal, by-date.**
+Ask: remaining ÷ weeks left, re-paced weekly (fall behind → the ask
+grows — the "Quarterly Tax: $400 more needed this month" row in YNAB
+terms). `min_chunk_minutes: 120` — no 20-minute confetti. Done: the
+bucket fills or the date arrives. Budget row: funding-status line
+driven by pace.
+
+**Client retainer, 20h/week cap — the cap side of a project envelope.**
+Not a new type: the project's assignment carries a ceiling (#99/#100).
+Placements and confirmed hours are the activity; the row goes red at
+21h. A "client paused this week" snooze is an unfunded envelope.
+
+**The beautiful-day MTB afternoon — not a commitment, a pull.**
+One sentence blocks the afternoon; the displaced work commitments'
+envelopes get covered from personal supply by default, or something
+gets snoozed and its hours consciously perish. Appears in Recent
+Moves, undoable.
+
+Nothing above needed a fifth type, and no example needed two types at
+once — the seams hold so far. The stress case remains the workout
+habit drifting toward "just make it 4h/week of movement" (a goal); if
+that ever feels natural, the chunking line is where the argument
+happens.
+
 ## The north star: envelope budgeting for time
 
 The YNAB loop, translated honestly:
@@ -284,6 +334,68 @@ Deferred until this doc is ratified: detach-to-one-off (may be
 unnecessary once Goals exist), template management in the GUI, any
 renaming, all envelope mechanics.
 
+## Data-model sketch (proposal — round-3 bait, not ratified)
+
+The incremental shape that gets to the taxonomy without a big-bang
+migration. Three moves:
+
+**1. A `goals` table** — the one genuinely new entity. Tasks and
+habits keep their tables; `time_entry` stays the substrate.
+
+```sql
+CREATE TABLE IF NOT EXISTS goals (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id        TEXT NOT NULL REFERENCES projects(id),
+  title             TEXT NOT NULL,
+  target_minutes    INTEGER NOT NULL,       -- the bucket
+  due               TEXT,                   -- by-date flavor; NULL = refill
+  refill_period     TEXT,                   -- 'week' (v1); NULL = by-date
+  min_chunk_minutes INTEGER,                -- Reclaim's "minimum hours"
+  active            INTEGER NOT NULL DEFAULT 1,
+  created_at        TEXT NOT NULL DEFAULT (datetime('now'))
+);
+```
+
+Placements against a goal are ordinary `time_entry` rows with a
+`goal_id` (one nullable FK column added to `time_entry` — the same
+sidecar move `habit_instances.time_entry_id` already made in the
+unification). Confirmed minutes sum into the bucket exactly the way
+`v_task_time_spent` works for tasks.
+
+**2. Habits gain the N-per-week form** — `times_per_week INTEGER`
+alongside `days_of_week` (exactly one set). Generation for the target
+form materializes candidates on demand instead of per-day rows;
+scoring is `COUNT(status='COMPLETE') / times_per_week` for the week.
+
+**3. One `assignments` table answers "where does 12h-this-week
+live"** — #100's `budget_overrides` built once, generally:
+
+```sql
+CREATE TABLE IF NOT EXISTS assignments (
+  envelope_type  TEXT NOT NULL,             -- 'project' | 'goal' | 'habit'
+  envelope_id    TEXT NOT NULL,             -- project id or goal/habit rowid
+  week_start     TEXT NOT NULL,             -- Monday ISO date
+  minutes        INTEGER,                   -- NULL = snoozed (unfunded)
+  note           TEXT,
+  PRIMARY KEY (envelope_type, envelope_id, week_start)
+);
+```
+
+Caps, overrides, snoozes, and goal/habit funding are all this one
+row shape. The standing config (`projects.weekly_budget_minutes`,
+a goal's derived weekly ask, a habit's frequency ask) is the
+*default*; an `assignments` row is *this week's word* — the same
+standing-vs-this-week split as supply. Pulls are then just paired
+writes to two rows in the same week, logged for Recent Moves
+(`moves` table or an append-only log — v1 can defer this until the
+budget view lands).
+
+What this sketch deliberately does **not** do: rename anything,
+touch `time_entry`'s shape beyond one nullable FK, merge habit/task/
+goal tables into a `commitments` supertable (the umbrella is a
+concept, not a table), or build supply computation (that's the
+envelope milestone, not the taxonomy one).
+
 ## Resolved in review rounds 1–2 (2026-07-18)
 
 1. **Umbrella naming** — the parent concept is **Commitment**; the
@@ -311,15 +423,10 @@ renaming, all envelope mechanics.
 
 1. **Type-level naming.** "Goal" vs "target"; whether the "habit"
    type keeps its Reclaim-heritage name.
-2. **Where does an assignment live?** In plain terms: when you say
-   "ACME gets 12h this week," some row has to remember that sentence
-   for that week. Today the closest shape is #100's proposed
-   `budget_overrides (project_id, week_start, budget_minutes)` — one
-   row per project per week. The question is whether to build that
-   same three-column idea once, generally — `assignments (envelope,
-   week, minutes)` where an envelope can be a project *or* a goal
-   *or* a habit — so caps, overrides, snoozes, and target funding are
-   all the one mechanism instead of four parallel tables.
+2. **Where does an assignment live?** Now proposed concretely as the
+   `assignments` table in the data-model sketch above — one row shape
+   for caps, overrides, snoozes, and goal/habit funding. Veto or
+   ratify there.
 3. **Pull gesture in the budget view** — drag between rows vs.
    conversational-only at v1 (YNAB does both; Recent Moves implies
    move-logging either way).
