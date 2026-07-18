@@ -79,8 +79,8 @@ export interface TimeLog {
 
 export interface Budget {
   project_id: string;
-  allocated_minutes: number | null;
-  spent_minutes: number;
+  assigned_minutes: number | null;
+  confirmed_minutes: number;
   scheduled_minutes: number;
 }
 

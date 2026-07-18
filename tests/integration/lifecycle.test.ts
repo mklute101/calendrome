@@ -62,10 +62,10 @@ describe('integration: full lifecycle', () => {
     insertTimeLog(db, b.id, '2026-04-15T11:00:00Z', 30); // 0.5h
 
     const budget = getProjectBudget(db, 'acme', WEEK_START);
-    expect(budget.allocated_minutes).toBe(300);
-    expect(budget.spent_minutes).toBe(120);
-    expect(budget.remaining_minutes).toBe(180);
-    expect(budget.over_budget).toBe(false);
+    expect(budget.assigned_minutes).toBe(300);
+    expect(budget.confirmed_minutes).toBe(120);
+    expect(budget.available_minutes).toBe(180);
+    expect(budget.overspent).toBe(false);
 
     const csv = exportTimesheet(db, '2026-04-13', '2026-04-19');
     const lines = csv.trim().split('\n');
@@ -107,7 +107,7 @@ describe('integration: full lifecycle', () => {
     const budget = getProjectBudget(db, 'me', WEEK_START);
     // All 5 instances live in the week, even after completion/skipping
     expect(budget.scheduled_minutes).toBeGreaterThanOrEqual(60);
-    expect(budget.over_budget).toBe(true);
+    expect(budget.overspent).toBe(true);
   });
 
   it('using the real task lifecycle helpers end-to-end', () => {

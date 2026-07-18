@@ -2,10 +2,11 @@
  * Envelope assignments + pulls (#106 prototype) — YNAB for time.
  *
  * An *envelope* is anything that claims weekly hours: a project (its
- * budget cap), a goal (its weekly ask), or a habit (its frequency
- * ask). The standing config is the default; an `assignments` row is
- * "this week's word" — same standing-vs-this-week split as budget
- * overrides. `minutes NULL` = snoozed (unfunded envelope).
+ * standing assignment), a goal (its weekly ask), or a habit (its
+ * frequency ask). The standing config is the default; an
+ * `assignments` row is "this week's word" — same standing-vs-this-week
+ * split as availability overrides. `minutes NULL` = snoozed (unfunded
+ * envelope).
  *
  * The *pull* is the mechanic that matters: moving minutes between two
  * envelopes in the same week is zero-sum and logged to
@@ -109,8 +110,9 @@ function assertEnvelopeExists(db: DB, type: EnvelopeType, id: string): void {
 
 /**
  * The standing weekly default for an envelope, used when no
- * assignments row exists: project → its budget cap (0 when unset),
- * goal → its weekly ask, habit → instances-per-week × duration.
+ * assignments row exists: project → its standing default assignment
+ * (`weekly_budget_minutes`, the cap side of the envelope; 0 when
+ * unset), goal → its weekly ask, habit → instances-per-week × duration.
  */
 export function standingDefault(
   db: DB,

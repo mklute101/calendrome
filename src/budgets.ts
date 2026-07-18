@@ -4,11 +4,11 @@ import { listProjects } from './projects.js';
 export interface BudgetStatus {
   project_id: string;
   week_start: string;
-  allocated_minutes: number | null;
-  spent_minutes: number;
+  assigned_minutes: number | null;
+  confirmed_minutes: number;
   scheduled_minutes: number;
-  remaining_minutes: number | null;
-  over_budget: boolean;
+  available_minutes: number | null;
+  overspent: boolean;
 }
 
 function weekRange(weekStart: string): { startIso: string; endIso: string } {
@@ -24,9 +24,14 @@ function weekRange(weekStart: string): { startIso: string; endIso: string } {
 }
 
 /**
- * Per-project weekly budget rollup. Reads exclusively from `time_entry`:
- *   - CONFIRMED rows in the week range count as `spent_minutes`
+ * Per-project weekly envelope rollup. Reads exclusively from `time_entry`:
+ *   - CONFIRMED rows in the week range count as `confirmed_minutes`
  *   - UNCONFIRMED rows in the week range count as `scheduled_minutes`
+ *
+ * `assigned_minutes` is the project's standing default assignment
+ * (`projects.weekly_budget_minutes` — column name kept for history);
+ * `available_minutes` is assigned − activity, matching the envelope
+ * nomenclature of `/api/envelopes`.
  *
  * Minute totals prefer `actual_minutes` when present, falling back to
  * the wall-clock span between `start_at` and `end_at`. This mirrors the
@@ -42,7 +47,7 @@ export function getProjectBudget(
   const project = db
     .prepare('SELECT weekly_budget_minutes FROM projects WHERE id = ?')
     .get(projectId) as { weekly_budget_minutes: number | null } | undefined;
-  const allocated = project?.weekly_budget_minutes ?? null;
+  const assigned = project?.weekly_budget_minutes ?? null;
 
   const minutesExpr = `COALESCE(
     te.actual_minutes,
@@ -52,31 +57,31 @@ export function getProjectBudget(
   const row = db
     .prepare(
       `SELECT
-         COALESCE(SUM(CASE WHEN te.status = 'CONFIRMED'   THEN ${minutesExpr} ELSE 0 END), 0) AS spent,
+         COALESCE(SUM(CASE WHEN te.status = 'CONFIRMED'   THEN ${minutesExpr} ELSE 0 END), 0) AS confirmed,
          COALESCE(SUM(CASE WHEN te.status = 'UNCONFIRMED' THEN ${minutesExpr} ELSE 0 END), 0) AS scheduled
          FROM time_entry te
         WHERE te.project_id = ?
           AND te.start_at >= ?
           AND te.start_at <= ?`,
     )
-    .get(projectId, startIso, endIso) as { spent: number; scheduled: number };
+    .get(projectId, startIso, endIso) as { confirmed: number; scheduled: number };
 
-  const spent_minutes = Math.round(row.spent);
+  const confirmed_minutes = Math.round(row.confirmed);
   const scheduled_minutes = Math.round(row.scheduled);
 
-  const remaining_minutes =
-    allocated === null ? null : allocated - (spent_minutes + scheduled_minutes);
-  const over_budget =
-    allocated !== null && spent_minutes + scheduled_minutes > allocated;
+  const available_minutes =
+    assigned === null ? null : assigned - (confirmed_minutes + scheduled_minutes);
+  const overspent =
+    assigned !== null && confirmed_minutes + scheduled_minutes > assigned;
 
   return {
     project_id: projectId,
     week_start: weekStart,
-    allocated_minutes: allocated,
-    spent_minutes,
+    assigned_minutes: assigned,
+    confirmed_minutes,
     scheduled_minutes,
-    remaining_minutes,
-    over_budget,
+    available_minutes,
+    overspent,
   };
 }
 

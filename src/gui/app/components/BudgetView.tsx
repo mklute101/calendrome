@@ -255,7 +255,7 @@ export function BudgetView({
             onClick={() => setMovesOpen(!movesOpen)}
             title="Recent Moves — the pull history"
           >
-            Moves
+            Recent Moves
           </button>
         </div>
       </header>
@@ -266,7 +266,7 @@ export function BudgetView({
           {supply && (
             <div
               className={`supply-strip${supply.to_be_assigned_minutes < 0 ? ' overcommitted' : ''}`}
-              title="Supply = category windows − meetings − blocks + opens. Negative To Assign = you promised more hours than the week holds."
+              title="Supply = category windows − meetings − blocks + opens. Negative To Be Assigned = you promised more hours than the week holds."
             >
               <span>supply {fmtHours(supply.total_supply_minutes)}</span>
               <span className="nav-sep" />
@@ -275,7 +275,7 @@ export function BudgetView({
               <span className="supply-tba">
                 {supply.to_be_assigned_minutes < 0
                   ? `overcommitted by ${fmtHours(-supply.to_be_assigned_minutes)}`
-                  : `to assign ${fmtHours(supply.to_be_assigned_minutes)}`}
+                  : `To Be Assigned: ${fmtHours(supply.to_be_assigned_minutes)}`}
               </span>
             </div>
           )}

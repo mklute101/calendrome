@@ -141,7 +141,7 @@ export function buildTools(
     {
       name: 'create_project',
       description:
-        'Create a project with calendar mapping and weekly budget. ' +
+        'Create a project with calendar mapping and a standing weekly assignment (weekly_budget_minutes). ' +
         "category_id defaults to 'work'.",
       inputSchema: {
         type: 'object',
@@ -568,7 +568,7 @@ export function buildTools(
     {
       name: 'get_project_budget',
       description:
-        'For a project + week, return allocated/spent/scheduled/remaining/over_budget',
+        'For a project + week, return assigned/confirmed/scheduled/available/overspent',
       inputSchema: {
         type: 'object',
         required: ['project_id', 'week_start'],
@@ -589,7 +589,8 @@ export function buildTools(
     },
     {
       name: 'get_all_budgets',
-      description: 'Get budgets for every active project for a given week',
+      description:
+        'Get the assigned/confirmed/scheduled/available rollup for every active project for a given week',
       inputSchema: {
         type: 'object',
         required: ['week_start'],
@@ -1971,7 +1972,7 @@ export function buildTools(
      * Set this week's word on an envelope's minutes (#106).
      *
      * Upserts the `assignments` row for (envelope, week). Without a
-     * row, the standing default applies (project budget cap, goal
+     * row, the standing default applies (project standing assignment, goal
      * weekly ask, habit frequency ask); an explicit row overrides it
      * for that week only. `minutes: null` snoozes the envelope —
      * unfunded, hours consciously perish. week_start must be a Monday.
