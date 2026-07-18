@@ -169,6 +169,67 @@ Output:
 - [TICKET-XX] Summary (Priority)
 ```
 
+### Step 2.5 — Budget meeting (envelopes)
+
+The envelope half of the budget conversation — reconcile what each
+commitment *asks* against what the week got *assigned*, YNAB-style.
+Right after the unified view, call:
+
+```
+mcp__calendrome__get_envelopes { week_start: "<this Monday ISO date>" }
+```
+
+(Envelope weeks are always Monday ISO dates.) If it returns no rows —
+no goals, habits, or assignments yet — skip this step silently; the
+Step 2 budget table already covers plain project caps.
+
+Otherwise render the rows alongside the Step 2 budget table:
+
+```
+### Envelopes (week of <Monday>)
+| Envelope | Assigned | Activity | Available | Status |
+|--------------------|---------:|---------:|----------:|--------|
+| ACME (project) | 12h | 5h | 7h | On track |
+| Spanish (goal) | 3h | 2h | 1h | 1h more needed this week |
+| Prospecting (goal) | 2.5h | 0h | 2.5h | Behind pace |
+| Stretch (habit) | 1.75h | 1.25h | 0.5h | 5/7 |
+```
+
+Include each row's `status_line` verbatim — that's the funding story.
+
+Then reconcile in one-sentence moves, same friction floor as
+`block_time`:
+
+- *"ACME gets 12 hours this week."* →
+  `mcp__calendrome__assign_hours { envelope_type: "project", envelope_id: "acme", week_start, minutes: 720 }`
+- *"Snooze hobby this week."* →
+  `mcp__calendrome__assign_hours { envelope_type: "project", envelope_id: "hobby", week_start, minutes: null }`
+  (`minutes: null` = snoozed, unfunded for the week)
+- *"Take 2h from hobby for ACME."* →
+  `mcp__calendrome__pull_hours { week_start, from: { type: "project", id: "hobby" }, to: { type: "project", id: "acme" }, minutes: 120 }`
+  — zero-sum and logged; `mcp__calendrome__list_envelope_moves`
+  shows the week's Recent Moves if the user asks what changed.
+
+**Underfunded goals are placement candidates.** Any refill goal whose
+status line says "Nh more needed this week", and any by-date goal
+behind pace, goes on the Step 4 planning menu ("Spanish needs 2h
+more — want me to find it a slot?"). Place with:
+
+```
+mcp__calendrome__place_goal_block {
+  goal_id: <id>,
+  start: "<ISO datetime with calendar_timezone offset>",
+  duration_minutes: <n>
+}
+```
+
+Respect the goal's `min_chunk_minutes`: never propose a slot smaller
+than the minimum — skip small gaps rather than confetti the bucket.
+
+If a `get_supply` tool exists, lead the table with its to-be-assigned
+header (`supply Nh · assigned Nh · free Nh`); if it doesn't exist
+yet, omit the header — don't guess at supply.
+
 ### Step 3 — Readiness check
 
 For each major task this week, assess preparedness:
@@ -189,6 +250,7 @@ After the view:
 
 > "What would you like to prioritize this week? I can:
 > - Block calendar time for unplanned Jira tickets (creates both the event and a calendrome task so it counts toward budget)
+> - Place blocks for underfunded goals from the envelope table (respecting their minimum chunk)
 > - Adjust or move existing blocks (and keep calendrome in sync)
 > - Flag tickets to defer or delegate
 > - Dig deeper into any task that needs more context"

@@ -135,6 +135,21 @@ sentence to Claude.
 - `get_project_budget` — allocated/spent/scheduled/remaining for one project
 - `get_all_budgets` — same, for every active project
 
+### Commitments (prototype)
+Goals (buckets of hours) plus YNAB-style envelope budgeting (#106). Prototype
+surface — try it in a sandbox DB first
+(`plugin/skills/sandbox/scripts/seed-commitments.mjs`).
+
+- `create_goal` — bucket of hours toward a project: by-date or weekly refill, optional minimum chunk
+- `list_goals` — goals with weekly-ask progress for a week
+- `update_goal` — patch goal fields (null one of due/refill_period to flip flavor)
+- `deactivate_goal` — soft delete; entries keep their goal link
+- `place_goal_block` — schedule an unconfirmed block against a goal's bucket
+- `assign_hours` — set a week's assigned minutes for an envelope (null = snoozed)
+- `pull_hours` — move minutes between envelopes: zero-sum, logged
+- `list_envelope_moves` — a week's pull history (Recent Moves), newest first
+- `get_envelopes` — YNAB-style rows: assigned/activity/available + status line
+
 ### Calendar placement
 - `place_task` — create a calendar event for a task (requires calendar client)
 - `unplace_task` — remove the calendar event
