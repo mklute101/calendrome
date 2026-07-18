@@ -370,20 +370,22 @@ export function createApp(
   /**
    * Set an envelope's weekly assignment (inline-assign in the budget
    * view; same core as the `assign_hours` MCP tool). Body:
-   * `{envelope_type, envelope_id, week_start, minutes, note?}` —
-   * `minutes: null` snoozes the envelope for the week.
+   * `{envelope_type, envelope_id, week, minutes, note?}` —
+   * `minutes: null` snoozes the envelope for the week. The GUI API
+   * says `week` everywhere, GETs and POSTs alike (#120); the core
+   * (and the MCP surface) keeps `week_start`.
    */
   app.post('/api/assign', (req, res) => {
-    const { envelope_type, envelope_id, week_start, minutes, note } = req.body ?? {};
+    const { envelope_type, envelope_id, week, minutes, note } = req.body ?? {};
     if (
       !ENVELOPE_TYPES.includes(envelope_type) ||
       (typeof envelope_id !== 'string' && typeof envelope_id !== 'number') ||
-      typeof week_start !== 'string' ||
+      typeof week !== 'string' ||
       (minutes !== null && typeof minutes !== 'number')
     ) {
       res.status(400).json({
         error:
-          'body requires envelope_type (project|goal|habit), envelope_id, week_start (string), minutes (number | null)',
+          'body requires envelope_type (project|goal|habit), envelope_id, week (string), minutes (number | null)',
       });
       return;
     }
@@ -392,7 +394,7 @@ export function createApp(
       guiAssign(db, {
         envelope_type,
         envelope_id: String(envelope_id),
-        week_start,
+        week_start: week,
         minutes,
         note,
       }),
@@ -402,13 +404,13 @@ export function createApp(
   /**
    * Move minutes between two envelopes in a week — the YNAB pull
    * (click-to-pull in the budget view; same core as the `pull_hours`
-   * MCP tool). Body: `{week_start, from?, to?, minutes, note?}` with
+   * MCP tool). Body: `{week, from?, to?, minutes, note?}` with
    * `from`/`to` as `{type, id}`; omit `from` to fund from unassigned
    * supply, omit `to` to release back to it. Undo is the reverse pull
    * — the client swaps from/to, no dedicated endpoint.
    */
   app.post('/api/pull', (req, res) => {
-    const { week_start, from, to, minutes, note } = req.body ?? {};
+    const { week, from, to, minutes, note } = req.body ?? {};
     let refs: { from: EnvelopeRef | null; to: EnvelopeRef | null };
     try {
       refs = { from: envelopeRef(from, 'from'), to: envelopeRef(to, 'to') };
@@ -416,15 +418,15 @@ export function createApp(
       res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
       return;
     }
-    if (typeof week_start !== 'string' || typeof minutes !== 'number') {
+    if (typeof week !== 'string' || typeof minutes !== 'number') {
       res.status(400).json({
-        error: 'body requires week_start (string) and minutes (number)',
+        error: 'body requires week (string) and minutes (number)',
       });
       return;
     }
     const db = getDb();
     mutate(res, () =>
-      guiPull(db, { week_start, from: refs.from, to: refs.to, minutes, note }),
+      guiPull(db, { week_start: week, from: refs.from, to: refs.to, minutes, note }),
     ).finally(() => db.close());
   });
 

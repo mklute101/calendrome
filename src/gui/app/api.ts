@@ -105,16 +105,19 @@ export const fetchMoves = (week: string) =>
 export const fetchSupply = (week: string) =>
   request<SupplyPayload>(`/api/supply?week=${week}`);
 
+// The GUI API says `week` everywhere — GETs and POSTs alike (#120).
+// (The MCP surface keeps its `week_start` convention.)
+
 export const assignEnvelope = (args: {
   envelope_type: EnvelopeType;
   envelope_id: string;
-  week_start: string;
+  week: string;
   minutes: number | null;
   note?: string;
 }) => post<{ assignment: unknown }>('/api/assign', args);
 
 export const pullEnvelope = (args: {
-  week_start: string;
+  week: string;
   from?: { type: EnvelopeType; id: string };
   to?: { type: EnvelopeType; id: string };
   minutes: number;

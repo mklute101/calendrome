@@ -13,6 +13,7 @@ import {
 import { useToasts } from './Toasts';
 import { buildDays, filterWeekData, findOverlap, placementLabel } from '../lib/weekdays';
 import { addDays, fmtDate, fmtHours, fmtTime, getMonday } from '../lib/dates';
+import { routeWeek, setRouteWeek, weekHref } from '../lib/route';
 import { localDateTimeIso } from '../lib/geometry';
 import { BudgetCards } from './BudgetCards';
 import { CompactGrid } from './CompactGrid';
@@ -38,7 +39,19 @@ export function WeekView({
   categoryView: string;
   setCategoryView: (v: string) => void;
 }) {
-  const [weekStart, setWeekStart] = useState(() => getMonday(new Date()));
+  // Week comes from the hash route so it survives the trip to the
+  // budget view and back (#120); navigation writes it back there.
+  const [weekStart, setWeekStart] = useState(
+    () => routeWeek() ?? getMonday(new Date()),
+  );
+  const gotoWeek = useCallback((week: string) => {
+    setWeekStart(week);
+    setRouteWeek(week);
+  }, []);
+  const gotoToday = useCallback(() => {
+    setWeekStart(getMonday(new Date()));
+    setRouteWeek(null); // no param = current week
+  }, []);
   const [panelOpen, setPanelOpen] = useState(false);
   const [dragActive, setDragActive] = useState(false);
   const [mutating, setMutating] = useState(false);
@@ -242,16 +255,16 @@ export function WeekView({
       <header>
         <h1>Calendrome</h1>
         <div className="nav-group">
-          <button className="nav-btn" onClick={() => setWeekStart(addDays(weekStart, -7))} aria-label="Previous week">
+          <button className="nav-btn" onClick={() => gotoWeek(addDays(weekStart, -7))} aria-label="Previous week">
             ←
           </button>
           <span className="week-label">
             {data ? `${fmtDate(data.start)} – ${fmtDate(data.end)}` : '…'}
           </span>
-          <button className="nav-btn" onClick={() => setWeekStart(addDays(weekStart, 7))} aria-label="Next week">
+          <button className="nav-btn" onClick={() => gotoWeek(addDays(weekStart, 7))} aria-label="Next week">
             →
           </button>
-          <button className="nav-btn" onClick={() => setWeekStart(getMonday(new Date()))}>
+          <button className="nav-btn" onClick={gotoToday}>
             Today
           </button>
           {data?.envelope_summary && (
@@ -293,7 +306,11 @@ export function WeekView({
             All
           </button>
           <span className="nav-sep" />
-          <a className="nav-btn" href="#/budget" title="Envelope budget view">
+          <a
+            className="nav-btn"
+            href={weekHref('#/budget', weekStart)}
+            title="Envelope budget view"
+          >
             Budget
           </a>
           <button

@@ -3,6 +3,7 @@ import * as api from '../api';
 import type { BudgetEnvelope, EnvelopeMove, ProjectMeta, SupplyPayload } from '../types';
 import { buildProjectMeta, colorOf } from '../lib/colors';
 import { addDays, fmtDate, fmtHours, getMonday } from '../lib/dates';
+import { routeWeek, setRouteWeek, weekHref } from '../lib/route';
 import { usePolling } from '../hooks/usePolling';
 import { useToasts } from './Toasts';
 
@@ -25,7 +26,19 @@ export function BudgetView({
   categoryView: string;
   setCategoryView: (v: string) => void;
 }) {
-  const [weekStart, setWeekStart] = useState(() => getMonday(new Date()));
+  // Week comes from the hash route so it survives the trip from the
+  // timeline view (#120); navigation writes it back there.
+  const [weekStart, setWeekStart] = useState(
+    () => routeWeek() ?? getMonday(new Date()),
+  );
+  const gotoWeek = useCallback((week: string) => {
+    setWeekStart(week);
+    setRouteWeek(week);
+  }, []);
+  const gotoToday = useCallback(() => {
+    setWeekStart(getMonday(new Date()));
+    setRouteWeek(null); // no param = current week
+  }, []);
   const [envelopes, setEnvelopes] = useState<BudgetEnvelope[] | null>(null);
   const [supply, setSupply] = useState<SupplyPayload | null>(null);
   const [moves, setMoves] = useState<EnvelopeMove[]>([]);
@@ -108,7 +121,7 @@ export function BudgetView({
         await api.assignEnvelope({
           envelope_type: row.envelope_type,
           envelope_id: row.envelope_id,
-          week_start: weekStart,
+          week: weekStart,
           minutes,
         });
         show({ kind: 'info', message: `Assigned ${fmtHours(minutes)} to ${row.title}` });
@@ -130,7 +143,7 @@ export function BudgetView({
     ) => {
       setPullFor(null);
       const args = {
-        week_start: weekStart,
+        week: weekStart,
         from: from ? { type: from.envelope_type, id: from.envelope_id } : undefined,
         to: to ? { type: to.envelope_type, id: to.envelope_id } : undefined,
         minutes,
@@ -144,7 +157,7 @@ export function BudgetView({
           undo: async () => {
             // Undo = the reverse pull, from/to swapped.
             await api.pullEnvelope({
-              week_start: weekStart,
+              week: weekStart,
               from: args.to,
               to: args.from,
               minutes,
@@ -166,7 +179,7 @@ export function BudgetView({
     async (m: EnvelopeMove) => {
       try {
         await api.pullEnvelope({
-          week_start: m.week_start,
+          week: m.week_start,
           from: m.to_type && m.to_id ? { type: m.to_type, id: m.to_id } : undefined,
           to: m.from_type && m.from_id ? { type: m.from_type, id: m.from_id } : undefined,
           minutes: m.minutes,
@@ -197,13 +210,13 @@ export function BudgetView({
       <header>
         <h1>Calendrome</h1>
         <div className="nav-group">
-          <a className="nav-btn" href="#/">
+          <a className="nav-btn" href={weekHref('#/', weekStart)}>
             ← Week
           </a>
           <span className="nav-sep" />
           <button
             className="nav-btn"
-            onClick={() => setWeekStart(addDays(weekStart, -7))}
+            onClick={() => gotoWeek(addDays(weekStart, -7))}
             aria-label="Previous week"
           >
             ←
@@ -213,12 +226,12 @@ export function BudgetView({
           </span>
           <button
             className="nav-btn"
-            onClick={() => setWeekStart(addDays(weekStart, 7))}
+            onClick={() => gotoWeek(addDays(weekStart, 7))}
             aria-label="Next week"
           >
             →
           </button>
-          <button className="nav-btn" onClick={() => setWeekStart(getMonday(new Date()))}>
+          <button className="nav-btn" onClick={gotoToday}>
             Today
           </button>
           <span className="nav-sep" />

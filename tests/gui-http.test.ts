@@ -211,7 +211,7 @@ describe('GUI budget API over HTTP', () => {
     const ok = await post('/api/assign', {
       envelope_type: 'project',
       envelope_id: 'acme',
-      week_start: WEEK,
+      week: WEEK,
       minutes: 600,
       note: 'light week',
     });
@@ -221,16 +221,27 @@ describe('GUI budget API over HTTP', () => {
     const bad = await post('/api/assign', {
       envelope_type: 'castle',
       envelope_id: 'acme',
-      week_start: WEEK,
+      week: WEEK,
       minutes: 600,
     });
     expect(bad.status).toBe(400);
     const noMinutes = await post('/api/assign', {
       envelope_type: 'project',
       envelope_id: 'acme',
-      week_start: WEEK,
+      week: WEEK,
     });
     expect(noMinutes.status).toBe(400);
+
+    // The GUI API says `week` everywhere (#120): the legacy body key
+    // is rejected, and the 400 names the right one.
+    const legacyKey = await post('/api/assign', {
+      envelope_type: 'project',
+      envelope_id: 'acme',
+      week_start: WEEK,
+      minutes: 600,
+    });
+    expect(legacyKey.status).toBe(400);
+    expect((await json(legacyKey)).error).toMatch(/week \(string\)/);
   });
 
   it('POST /api/assign rejects cross-origin writes (Origin guard)', async () => {
@@ -239,7 +250,7 @@ describe('GUI budget API over HTTP', () => {
       {
         envelope_type: 'project',
         envelope_id: 'acme',
-        week_start: WEEK,
+        week: WEEK,
         minutes: 0,
       },
       { origin: 'https://evil.example.com' },
@@ -250,7 +261,7 @@ describe('GUI budget API over HTTP', () => {
 
   it('POST /api/pull moves minutes and GET /api/moves lists it newest-first', async () => {
     const pulled = await post('/api/pull', {
-      week_start: WEEK,
+      week: WEEK,
       from: { type: 'project', id: 'hobby' },
       to: { type: 'goal', id: goalId }, // numeric id must coerce
       minutes: 60,
@@ -265,15 +276,25 @@ describe('GUI budget API over HTTP', () => {
     expect(moves.moves[0].note).toBe('launch crunch');
 
     const badRef = await post('/api/pull', {
-      week_start: WEEK,
+      week: WEEK,
       from: { kind: 'project', id: 'hobby' },
       minutes: 60,
     });
     expect(badRef.status).toBe(400);
 
+    // Missing `week` (e.g. the pre-#120 `week_start` key) → 400
+    // naming the current param.
+    const legacyKey = await post('/api/pull', {
+      week_start: WEEK,
+      from: { type: 'project', id: 'hobby' },
+      minutes: 30,
+    });
+    expect(legacyKey.status).toBe(400);
+    expect((await json(legacyKey)).error).toMatch(/week \(string\)/);
+
     // Domain guard passes through mutate(): overdraw → 409.
     const overdraw = await post('/api/pull', {
-      week_start: WEEK,
+      week: WEEK,
       from: { type: 'project', id: 'hobby' },
       to: { type: 'project', id: 'acme' },
       minutes: 100000,
