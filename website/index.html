@@ -733,7 +733,7 @@
         <p>Even when client work drops, it still somehow takes all week — unless you budget deliberately. Without explicit hour caps, low-priority work absorbs every gap.</p>
         <p>Calendrome makes hour budgets visible so you can see the drift and push back.</p>
         <div class="answer">
-          <strong>How:</strong> YNAB-style weekly hour caps per project. Soft warnings, not hard blocks — you decide what to do about overages.
+          <strong>How:</strong> YNAB-style weekly hour caps per project. Soft warnings, not hard blocks — you decide what to do about overages. <a href="#commitments" style="color:var(--accent);">See the full envelope model ↓</a>
         </div>
       </div>
       <div class="visual">
@@ -856,6 +856,71 @@
         <div class="label">What Claude does</div>
         <p>Pulls Jira tickets, places events on Google Calendar, pushes time logs to Harvest. Calendrome stays local and dumb on purpose — Claude is the smart, networked, reasoning part that ties everything together.</p>
       </div>
+    </div>
+  </div>
+</section>
+
+<section id="commitments">
+  <div class="container">
+    <div class="section-eyebrow">The model</div>
+    <h2 class="section-title">Give every hour a job.</h2>
+    <p class="section-lede">Everything that claims your time is a <strong>commitment</strong>, and Calendrome budgets them the way YNAB budgets dollars — envelope budgeting, the same idea that works for money, applied to the actually-finite resource.</p>
+
+    <div class="budgets-row" style="margin-bottom:32px;">
+      <div class="budget-card">
+        <h4 style="color:#58a6ff">TASK</h4>
+        <p style="font-size:0.85rem;color:var(--text-muted);margin-top:6px;">Ship the login spec. An estimate and a definitive finish line. Its blocks float wherever they fit.</p>
+      </div>
+      <div class="budget-card">
+        <h4 style="color:#3fb950">HABIT</h4>
+        <p style="font-size:0.85rem;color:var(--text-muted);margin-top:6px;">Stretch, daily, 15 minutes — or work out 4×/week, any days. Done or skipped per instance. You can't do the week's stretching in one sitting; the spreading-out <em>is</em> the commitment.</p>
+      </div>
+      <div class="budget-card">
+        <h4 style="color:#bc8cff">GOAL</h4>
+        <p style="font-size:0.85rem;color:var(--text-muted);margin-top:6px;">Ten hours of prospecting before launch, or 3h of Spanish a week, forever. A bucket of hours — big chunks welcome, and the weekly ask re-paces itself when you fall behind.</p>
+      </div>
+      <div class="budget-card">
+        <h4 style="color:#d29922">EVENT</h4>
+        <p style="font-size:0.85rem;color:var(--text-muted);margin-top:6px;">The standup. Owned by an external calendar. It just takes hours off the week's supply.</p>
+      </div>
+    </div>
+
+    <div class="principle">
+      <div class="text">
+        <h3>Your week has a real supply of hours. Spend it on purpose.</h3>
+        <p>Calendrome computes what a week actually holds — your working windows, minus meetings, minus time you've blocked off. You assign that supply to envelopes: client caps that warn when you run over, goal floors that nag when you're falling short.</p>
+        <p>When something needs more than its envelope — the beautiful day, the client fire — you don't silently absorb it. You <em>pull</em> hours from another envelope, zero-sum, and the tradeoff gets named. Caps stay soft: warn loudly, never block. But drift can no longer happen unconsciously.</p>
+        <div class="answer">
+          <strong>How:</strong> A YNAB-style budget view — Assigned / Activity / Available per envelope, To Be Assigned up top, every pull logged in Recent Moves and undoable.
+        </div>
+      </div>
+      <div class="visual">
+        <div class="transcript">
+          <div class="msg user">
+            <div class="who">YOU</div>
+            It's gorgeous out — taking the afternoon for the trail. Take 2 hours from hobby, give it to ACME.
+          </div>
+          <div class="msg tool">
+            <div class="who">→ calendrome.pull_hours</div>
+<pre>{
+  "week_start": "2026-07-13",
+  "from": { "type": "project", "id": "hobby" },
+  "to":   { "type": "project", "id": "acme" },
+  "minutes": 120,
+  "note": "trail afternoon"
+}</pre>
+          </div>
+          <div class="msg assistant">
+            <div class="who">CLAUDE</div>
+            Done — 2h moved from Hobby to ACME, afternoon's clear. It's in Recent Moves if you change your mind.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="hero-actions" style="margin-top:28px;">
+      <a href="playground/" class="btn">Try the live demo</a>
+      <a href="https://github.com/mklute101/calendrome/blob/main/docs/superpowers/specs/2026-07-17-commitment-taxonomy-design.md" class="btn secondary">Read the design doc</a>
     </div>
   </div>
 </section>
