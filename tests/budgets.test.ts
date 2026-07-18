@@ -62,7 +62,7 @@ describe('budgets', () => {
   // Mon 2026-04-13 -> Sun 2026-04-19
   const WEEK_START = '2026-04-13';
 
-  it('returns allocated/spent/scheduled/remaining/over_budget per project', () => {
+  it('returns assigned/confirmed/scheduled/available/overspent per project', () => {
     const db = freshDb();
     createProject(db, {
       id: 'acme',
@@ -77,17 +77,17 @@ describe('budgets', () => {
       task_id: t.id,
       started_at: '2026-04-14T10:00:00Z',
       duration_minutes: 120,
-    }); // 2h spent in week
+    }); // 2h confirmed in week
 
     const budget = getProjectBudget(db, 'acme', WEEK_START);
-    expect(budget.allocated_minutes).toBe(600);
-    expect(budget.spent_minutes).toBe(120);
+    expect(budget.assigned_minutes).toBe(600);
+    expect(budget.confirmed_minutes).toBe(120);
     expect(budget.scheduled_minutes).toBe(0);
-    expect(budget.remaining_minutes).toBe(480);
-    expect(budget.over_budget).toBe(false);
+    expect(budget.available_minutes).toBe(480);
+    expect(budget.overspent).toBe(false);
   });
 
-  it('UNCONFIRMED rows count as scheduled, not spent', () => {
+  it('UNCONFIRMED rows count as scheduled, not confirmed', () => {
     const db = freshDb();
     createProject(db, {
       id: 'acme',
@@ -104,7 +104,7 @@ describe('budgets', () => {
     });
 
     const budget = getProjectBudget(db, 'acme', WEEK_START);
-    expect(budget.spent_minutes).toBe(0);
+    expect(budget.confirmed_minutes).toBe(0);
     expect(budget.scheduled_minutes).toBe(90);
   });
 
@@ -130,8 +130,8 @@ describe('budgets', () => {
 
     const budget = getProjectBudget(db, 'me', WEEK_START);
     expect(budget.scheduled_minutes).toBe(30 * 5); // 150 min
-    expect(budget.over_budget).toBe(true);
-    expect(budget.remaining_minutes).toBe(60 - 150);
+    expect(budget.overspent).toBe(true);
+    expect(budget.available_minutes).toBe(60 - 150);
   });
 
   it('counts placement-style UNCONFIRMED time_entry rows as scheduled time', () => {
@@ -166,7 +166,7 @@ describe('budgets', () => {
       prefix: 'ACME',
       weekly_budget_minutes: 600,
     });
-    // gcal-synced confirmed meeting — counts as spent, like any other
+    // gcal-synced confirmed meeting — counts as confirmed activity, like any other
     // CONFIRMED time_entry on the project.
     insertTimeEntry(db, {
       project_id: 'acme',
@@ -181,7 +181,7 @@ describe('budgets', () => {
     });
 
     const budget = getProjectBudget(db, 'acme', WEEK_START);
-    expect(budget.spent_minutes).toBe(60);
+    expect(budget.confirmed_minutes).toBe(60);
   });
 
   it('ignores time_entry rows outside the week range', () => {
@@ -216,10 +216,10 @@ describe('budgets', () => {
     });
 
     const budget = getProjectBudget(db, 'acme', WEEK_START);
-    expect(budget.spent_minutes).toBe(45);
+    expect(budget.confirmed_minutes).toBe(45);
   });
 
-  it('over_budget=true when spent + scheduled exceeds allocation', () => {
+  it('overspent=true when confirmed + scheduled exceeds the assignment', () => {
     const db = freshDb();
     createProject(db, {
       id: 'acme',
@@ -236,10 +236,10 @@ describe('budgets', () => {
     });
 
     const budget = getProjectBudget(db, 'acme', WEEK_START);
-    expect(budget.over_budget).toBe(true);
+    expect(budget.overspent).toBe(true);
   });
 
-  it('null budget never warns', () => {
+  it('null assignment never warns', () => {
     const db = freshDb();
     createProject(db, { id: 'p', name: 'P', prefix: 'P' });
     const t = createTask(db, { project_id: 'p', title: 'X' });
@@ -251,9 +251,9 @@ describe('budgets', () => {
     });
 
     const budget = getProjectBudget(db, 'p', WEEK_START);
-    expect(budget.allocated_minutes).toBeNull();
-    expect(budget.over_budget).toBe(false);
-    expect(budget.remaining_minutes).toBeNull();
+    expect(budget.assigned_minutes).toBeNull();
+    expect(budget.overspent).toBe(false);
+    expect(budget.available_minutes).toBeNull();
   });
 
   it('getAllBudgets returns one row per active project', () => {

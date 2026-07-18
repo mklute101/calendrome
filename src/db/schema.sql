@@ -4,6 +4,8 @@ CREATE TABLE IF NOT EXISTS projects (
   prefix      TEXT NOT NULL UNIQUE,
   calendar_id TEXT,
   color       TEXT,
+  -- Standing default assignment for the project's envelope (the cap
+  -- side). Column name kept for history (#121).
   weekly_budget_minutes INTEGER,
   harvest_project_id INTEGER,
   harvest_task_id INTEGER,

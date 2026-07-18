@@ -6,6 +6,10 @@ export interface Project {
   prefix: string;
   calendar_id: string | null;
   color: string | null;
+  /**
+   * Standing default assignment (the cap side of the project's
+   * envelope). Column name kept for history (#121).
+   */
   weekly_budget_minutes: number | null;
   harvest_project_id: number | null;
   harvest_task_id: number | null;
