@@ -450,6 +450,78 @@ separate generators — the same call the time-entry unification made),
    conversational-only at v1 (YNAB does both; Recent Moves implies
    move-logging either way).
 
+## Making it sing — roadmap from the prototype (round 4)
+
+The prototype (PR #111) makes the model *operable* over MCP. What
+makes it sing is two steps more: **visible** (envelope state is
+ambient, not queried) and **tactile** (the pull is a gesture). In
+rough order of leverage:
+
+### M1 — Watchable (small; timeline polish)
+
+- Goal blocks styled distinctly (bucket accent) with a progress chip
+  ("4.5/10h") that updates as blocks confirm.
+- Side panel grows a **Goals section**: title, progress bar, "Nh more
+  needed this week", behind-pace glow. Habits get their weekly meter
+  (●●●○ 3/4) in the panel.
+- Header strip: `assigned 34h · confirmed 12h` for the week — the
+  first ambient envelope signal, before the full budget view.
+
+### M2 — Budget view v1 (the flagship; new `#/budget` route)
+
+The YNAB category screen, hours edition (per round 2):
+
+- Envelope rows grouped by category → project; columns **Assigned /
+  Activity / Available**; funding-status line + colored pill;
+  progress bar driven by the ask. Same week selector as the timeline.
+- **Inline assign**: click the Assigned cell, type hours (YNAB's
+  edit-in-place).
+- **Click-to-pull**: click an underfunded/overspent pill → "Cover
+  from…" menu listing envelopes with surplus → one click executes
+  `pull_hours`. (Drag-between-rows can come later; the menu is
+  YNAB's overspend flow and is 90% of the value.)
+- **Recent Moves** panel: the `envelope_moves` log, newest first,
+  each with an undo (reverse pull).
+- All writes through `src/gui/mutations.ts` wrappers over the same
+  core fns as the MCP tools — the no-drift rule holds.
+
+### M3 — Tactile economy (the pull leaves the budget page)
+
+- **Drag a goal from the panel onto the timeline** → creates a
+  `place_goal_block` (default size: `min_chunk_minutes`, else the
+  remaining weekly ask, else 1h).
+- **Overspend-at-confirm**: confirming a block whose actual_minutes
+  blows the envelope pops the same "Cover from…" toast — the pull
+  offered at the moment of overspend, YNAB's overspend flow.
+- N-per-week habit candidates render as light "candidate" blocks
+  draggable anywhere in their week (the mobility rule made tactile;
+  merges with the #103 mechanics track's complete/skip-on-block
+  work).
+
+### M4 — Supply (the "income" side becomes real)
+
+- Compute the week's supply (category windows − events − blocks +
+  open_time) and show **To Be Assigned** in the budget-view header:
+  `supply 38h · assigned 34h · free 4h`, red when assigned > supply —
+  scheduling debt made visible (YNAB's "you assigned more than you
+  have").
+- One-sentence per-week supply edits already exist (`block_time` /
+  `open_time`); the header makes their effect legible.
+- `/week` becomes the actual budget meeting: reconcile asks vs
+  supply, propose assignments and pulls, surface the envelope table
+  in the brief.
+
+### M5 — Cutover (after the parallel run decides)
+
+Per the compat posture: fold `projects.weekly_budget_minutes` into
+assignments as standing targets, migrate bucket-tasks to goals,
+settle names. The dashboard's budget cards retire in favor of the
+budget view.
+
+Deliberately not on this list: auto-scheduling (still
+suggest-approve, per PLAN.md), and a min_chunk-aware free-slot
+suggester (planner-skill work riding on `get_free_slots`, not GUI).
+
 ## References
 
 - `CLAUDE.md` — three principles ("work expands to fill the time
