@@ -11,6 +11,7 @@
  */
 import { useCallback, useRef, useState } from 'react';
 import type { Placement, Task } from '../types';
+import { placementLabel } from '../lib/weekdays';
 import {
   HOUR_END,
   HOUR_START,
@@ -72,7 +73,7 @@ export function useTimelineDrag(opts: {
       const label =
         source.kind === 'place'
           ? source.task.title
-          : (source.placement.task_title ?? '(untitled)');
+          : placementLabel(source.placement);
       const duration =
         source.kind === 'place'
           ? source.task.duration_minutes

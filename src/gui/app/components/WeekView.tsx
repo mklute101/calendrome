@@ -11,7 +11,7 @@ import {
   type DropTarget,
 } from '../hooks/useTimelineDrag';
 import { useToasts } from './Toasts';
-import { buildDays, filterWeekData, findOverlap } from '../lib/weekdays';
+import { buildDays, filterWeekData, findOverlap, placementLabel } from '../lib/weekdays';
 import { addDays, fmtDate, fmtTime, getMonday } from '../lib/dates';
 import { localDateTimeIso } from '../lib/geometry';
 import { BudgetCards } from './BudgetCards';
@@ -123,7 +123,7 @@ export function WeekView({
           await api.movePlacement(p.time_entry_id, { start: startIso });
           show({
             kind: 'info',
-            message: `Moved “${p.task_title}” to ${fmtDate(dayDate)} ${fmtTime(startIso)}`,
+            message: `Moved “${placementLabel(p)}” to ${fmtDate(dayDate)} ${fmtTime(startIso)}`,
             undo: async () => {
               await api.movePlacement(p.time_entry_id, {
                 start: prior.start,
@@ -152,7 +152,7 @@ export function WeekView({
           await api.movePlacement(p.time_entry_id, { start: p.start_at, end: endIso });
           show({
             kind: 'info',
-            message: `Resized “${p.task_title}” to ${target.durationMinutes} min`,
+            message: `Resized “${placementLabel(p)}” to ${target.durationMinutes} min`,
             undo: async () => {
               await api.movePlacement(p.time_entry_id, {
                 start: prior.start,
@@ -190,7 +190,7 @@ export function WeekView({
     (p: Placement) =>
       runMutation(async () => {
         await api.confirmPlacement(p.time_entry_id);
-        show({ kind: 'info', message: `Confirmed “${p.task_title ?? 'entry'}”` });
+        show({ kind: 'info', message: `Confirmed “${placementLabel(p)}”` });
       }),
     [runMutation, show],
   );
@@ -201,7 +201,7 @@ export function WeekView({
         const { deleted } = await api.skipPlacement(p.time_entry_id);
         show({
           kind: 'info',
-          message: `Skipped “${p.task_title ?? 'entry'}”`,
+          message: `Skipped “${placementLabel(p)}”`,
           undo: deleted.task_id
             ? async () => {
                 await api.placeTask({

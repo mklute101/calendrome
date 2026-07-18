@@ -1,6 +1,6 @@
 import type { ProjectMeta } from '../types';
 import type { DayBucket } from '../lib/weekdays';
-import { isOverdueEvent, isOverduePlacement } from '../lib/weekdays';
+import { isOverdueEvent, isOverduePlacement, placementLabel } from '../lib/weekdays';
 import { colorOf, UNASSIGNED_COLOR } from '../lib/colors';
 import { DAYS, fmtDate, fmtHours, fmtTime, localISODate } from '../lib/dates';
 
@@ -57,7 +57,7 @@ export function CompactGrid({
                   className={`block${isOverduePlacement(p) ? ' overdue-review' : ''}`}
                   style={cssColor(colorOf(meta, p.project_id))}
                 >
-                  <div className="title">{p.task_title}</div>
+                  <div className="title">{placementLabel(p)}</div>
                   <div className="meta">
                     {fmtHours(p.duration_minutes)} · {p.priority} · {p.project_id}
                   </div>
@@ -71,7 +71,7 @@ export function CompactGrid({
               ))}
               {d.logs.map((tl) => (
                 <div key={`l-${tl.id}`} className="block logged" style={cssColor(colorOf(meta, tl.project_id))}>
-                  <div className="title">{tl.task_title ?? tl.notes ?? '(untitled)'}</div>
+                  <div className="title">{tl.task_title ?? tl.goal_title ?? tl.notes ?? '(untitled)'}</div>
                   <div className="meta">
                     {fmtHours(tl.duration_minutes)} logged at {fmtTime(tl.started_at)}
                   </div>

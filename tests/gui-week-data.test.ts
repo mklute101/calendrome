@@ -119,3 +119,54 @@ describe('buildWeekPayload placements', () => {
     expect(payload.time_logs[0].duration_minutes).toBe(45);
   });
 });
+
+describe('buildWeekPayload goal blocks (#111 review)', () => {
+  it('task-less goal placements render: goal_title + project from the goal', async () => {
+    const { db, tools } = setup();
+    const g = await getTool(tools, 'create_goal').handler({
+      project_id: 'acme',
+      title: 'Prospecting',
+      target_minutes: 600,
+      due: '2026-07-13',
+    });
+
+    await getTool(tools, 'place_goal_block').handler({
+      goal_id: g.goal.id,
+      start: SLOT,
+      duration_minutes: 60,
+    });
+
+    const payload = buildWeekPayload(db, WEEK);
+    expect(payload.placements).toHaveLength(1);
+    const p = payload.placements[0];
+    expect(p.task_id).toBeNull();
+    expect(p.goal_id).toBe(g.goal.id);
+    expect(p.goal_title).toBe('Prospecting');
+    expect(p.project_id).toBe('acme');
+  });
+
+  it('confirmed goal hours surface in time_logs with the goal title', async () => {
+    const { db, tools } = setup();
+    const g = await getTool(tools, 'create_goal').handler({
+      project_id: 'acme',
+      title: 'Spanish practice',
+      target_minutes: 180,
+      refill_period: 'week',
+    });
+
+    const placed = await getTool(tools, 'place_goal_block').handler({
+      goal_id: g.goal.id,
+      start: SLOT,
+      duration_minutes: 60,
+    });
+    await getTool(tools, 'confirm_placement').handler({
+      time_entry_id: placed.entry.id,
+    });
+
+    const payload = buildWeekPayload(db, WEEK);
+    expect(payload.placements).toHaveLength(0);
+    expect(payload.time_logs).toHaveLength(1);
+    expect(payload.time_logs[0].goal_title).toBe('Spanish practice');
+    expect(payload.time_logs[0].goal_id).toBe(g.goal.id);
+  });
+});

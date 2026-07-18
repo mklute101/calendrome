@@ -115,6 +115,19 @@ export function isOverduePlacement(p: Placement): boolean {
   return p.status === 'UNCONFIRMED' && Date.parse(p.start_at) < Date.now();
 }
 
+/**
+ * Display label for a placement/logged block: task title when
+ * task-linked, goal title for goal blocks (place_goal_block), else
+ * untitled. Shared by the timeline, toasts, and the drag ghost so a
+ * block never changes name mid-gesture.
+ */
+export function placementLabel(p: {
+  task_title: string | null;
+  goal_title?: string | null;
+}): string {
+  return p.task_title ?? p.goal_title ?? '(untitled)';
+}
+
 export function minutesOfDay(iso: string): number {
   const d = new Date(iso);
   return d.getHours() * 60 + d.getMinutes();
