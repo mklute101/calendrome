@@ -66,6 +66,34 @@ The seed script populates:
 
 (The seed script is the SQL fixtures equivalent of the in-memory tests in `tests/`.)
 
+### Step 4b: Commitments seed (on request)
+
+If the user wants to try the commitments prototype (#106 — goals,
+assignments, envelope pulls), there is a second seeder:
+
+```bash
+CALENDROME_DB=<calendrome_repo_path>/sandbox.db node <calendrome_repo_path>/plugin/skills/sandbox/scripts/seed-commitments.mjs
+```
+
+It seeds the worked examples from the commitment-taxonomy design doc:
+
+- **ACME retainer** — project with a 20h/week cap, plus a budget-less
+  **Personal** project
+- **Daily stretch** — Habit, fixed days (7×15min)
+- **Workout** — Habit, N-per-week target (4×45min)
+- **Spanish practice** — Goal, recurring refill (3h/week)
+- **Prospecting before launch** — Goal, by-date (10h due ~4 weeks
+  out, 2h minimum chunk)
+- A few confirmed/unconfirmed time entries so `get_envelopes` has
+  activity to show
+
+On success it prints a cheat-sheet of envelope calls to try
+(`get_envelopes`, `assign_hours`, `pull_hours`, `place_goal_block`, …)
+with this week's Monday and the seeded goal ids already filled in —
+paste-ready for a first budget-meeting run. It is idempotent (wipes
+and re-seeds its own projects) and refuses to touch a DB that looks
+like the real `calendrome.db`.
+
 ### Step 5: Confirm + show URL
 
 Tell the user:
@@ -112,3 +140,5 @@ Real lifecycle management for two background node processes from inside a Claude
 ## Additional resources
 
 - `scripts/seed-demo.mjs` — demo data seeder used by `/calendrome:sandbox demo`
+- `scripts/seed-commitments.mjs` — commitments-prototype seeder (the
+  design doc's worked examples); prints an envelope-call cheat-sheet

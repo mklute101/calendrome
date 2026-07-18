@@ -29,8 +29,21 @@ sentence — never a click path.
 - Weekly hour budgets per project, YNAB-style: soft caps that warn
   loudly but never block. You decide what to do about overages.
 - Tasks can be "fill the bucket" (30h total toward a certification)
-  or recurring (20h/week for a client). The bucket is just a task
-  with a large duration and a due date.
+  or recurring (20h/week for a client). The bucket is a **goal** —
+  first-class, not a task convention: by-date ("10h before the
+  event", the weekly ask re-paces as remaining ÷ weeks left) or
+  weekly-refill ("3h of Spanish per week, forever"), done-ness is
+  cumulative hours, and `min_chunk_minutes` keeps the planner from
+  confetti-ing the bucket across tiny gaps.
+- **Commitment taxonomy** (prototype): Task / Habit / Goal / Event
+  are the four commitment types over the unified `time_entry`
+  substrate, plus YNAB-for-time envelope budgeting — weekly
+  assignments per envelope (`assign_hours`; NULL = snoozed) and
+  zero-sum pulls (`pull_hours`, logged in `envelope_moves`). Spec:
+  `docs/superpowers/specs/2026-07-17-commitment-taxonomy-design.md`
+  (#106). Posture is parallel-run: the real DB keeps today's
+  behavior until the new tools are used, the sandbox is the proving
+  ground, and branch `pre-commitments` is the way back.
 - The `/week` planner skill is the primary UX — collaborative weekly
   planning that pulls from Jira, Google Calendar, and calendrome.
 - The GUI is an interactive weekly planner (React SPA + optional
@@ -118,6 +131,9 @@ sentence — never a click path.
 - When adding tools: update `src/mcp/tools/index.ts` + the surface
   check in `tests/mcp-tools.test.ts`
 - Schema: `src/db/schema.sql` (idempotent `IF NOT EXISTS`)
+- Commitments tools live in the `// -------- commitments (prototype)
+  --------` section of `src/mcp/tools/index.ts`; envelope weeks are
+  Monday ISO dates (`week_start`)
 - **Keep the website in sync.** When changing how calendrome is
   installed, distributed, or invoked (MCP setup, plugin install,
   slash command names), update `website/index.html` (§install) and
