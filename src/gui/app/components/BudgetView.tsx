@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as api from '../api';
-import type { BudgetEnvelope, EnvelopeMove, ProjectMeta } from '../types';
+import type { BudgetEnvelope, EnvelopeMove, ProjectMeta, SupplyPayload } from '../types';
 import { buildProjectMeta, colorOf } from '../lib/colors';
 import { addDays, fmtDate, fmtHours, getMonday } from '../lib/dates';
 import { usePolling } from '../hooks/usePolling';
@@ -25,6 +25,7 @@ export function BudgetView({
 }) {
   const [weekStart, setWeekStart] = useState(() => getMonday(new Date()));
   const [envelopes, setEnvelopes] = useState<BudgetEnvelope[] | null>(null);
+  const [supply, setSupply] = useState<SupplyPayload | null>(null);
   const [moves, setMoves] = useState<EnvelopeMove[]>([]);
   const [meta, setMeta] = useState<ProjectMeta>({});
   const [error, setError] = useState<string | null>(null);
@@ -37,15 +38,17 @@ export function BudgetView({
   const refetch = useCallback(async () => {
     const mySeq = ++seq.current;
     try {
-      const [projects, env, mv] = await Promise.all([
+      const [projects, env, mv, sup] = await Promise.all([
         api.fetchProjects(),
         api.fetchEnvelopes(weekStart),
         api.fetchMoves(weekStart),
+        api.fetchSupply(weekStart),
       ]);
       if (mySeq !== seq.current) return; // stale response — drop it
       setMeta(buildProjectMeta(projects));
       setEnvelopes(env.envelopes);
       setMoves(mv.moves);
+      setSupply(sup);
       setError(null);
     } catch (err) {
       if (mySeq !== seq.current) return;
@@ -245,6 +248,22 @@ export function BudgetView({
       {error && <div className="empty">Error: {error}</div>}
       {envelopes && !error && (
         <main className="budget-view">
+          {supply && (
+            <div
+              className={`supply-strip${supply.to_be_assigned_minutes < 0 ? ' overcommitted' : ''}`}
+              title="Supply = category windows − meetings − blocks + opens. Negative To Assign = you promised more hours than the week holds."
+            >
+              <span>supply {fmtHours(supply.total_supply_minutes)}</span>
+              <span className="nav-sep" />
+              <span>assigned {fmtHours(supply.assigned_minutes)}</span>
+              <span className="nav-sep" />
+              <span className="supply-tba">
+                {supply.to_be_assigned_minutes < 0
+                  ? `overcommitted by ${fmtHours(-supply.to_be_assigned_minutes)}`
+                  : `to assign ${fmtHours(supply.to_be_assigned_minutes)}`}
+              </span>
+            </div>
+          )}
           {groups.length === 0 ? (
             <div className="empty">
               No envelopes yet — envelopes appear once you have projects, goals,

@@ -542,6 +542,21 @@ body.dragging * { cursor: grabbing !important; }
 
 /* ===== BUDGET VIEW — #/budget (#106 M2) ===== */
 .budget-view { max-width: 880px; margin: 0 auto; }
+
+/* Supply strip (#106 M4): the To-Be-Assigned header. Amber when
+   overcommitted — promising more hours than the week holds should
+   never look calm. */
+.supply-strip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  justify-content: center;
+  font-size: 13px;
+  color: var(--muted, #667);
+  padding: 8px 0 14px;
+}
+.supply-strip .supply-tba { font-weight: 600; }
+.supply-strip.overcommitted .supply-tba { color: #c0392b; }
 .env-group { margin-bottom: 24px; }
 .env-group-head {
   font-size: 0.72rem;
