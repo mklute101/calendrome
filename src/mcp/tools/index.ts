@@ -77,6 +77,7 @@ import {
   updateCategory,
   type CategoryWindow,
 } from '../../categories.js';
+import { computeWeekSupply } from '../../supply.js';
 import {
   createAvailabilityOverride,
   listAvailabilityOverrides,
@@ -2134,6 +2135,50 @@ export function buildTools(
       async handler(args) {
         const weekStart = args?.week_start ?? currentWeekMonday();
         return { week_start: weekStart, envelopes: getEnvelopes(db, weekStart) };
+      },
+    },
+
+    // -------- supply --------
+    /**
+     * Compute the week's hour supply (#106, M4) — the "income" side of
+     * envelope budgeting for time.
+     *
+     * Supply = category scheduling windows (work Mon–Fri 9–5, personal
+     * evenings/weekends — `categories.default_window`) − synced
+     * calendar events − `block_time` reservations + `open_time`
+     * carve-outs. Returned per category (fungible pools, not walls)
+     * plus the header numbers: total supply, assigned (sum of
+     * effective envelope assignments from `get_envelopes`), and
+     * To-Be-Assigned = supply − assigned — negative means the week is
+     * overcommitted, YNAB's "you assigned more than you have".
+     * Overlapping events are merged before subtracting, and a block
+     * over an event never double-subtracts (see src/supply.ts for
+     * every edge decision). All values are minutes.
+     *
+     * @example
+     * get_supply({ week_start: '2026-07-13' })
+     *
+     * @see get_envelopes, assign_hours, block_time, open_time
+     */
+    {
+      name: 'get_supply',
+      description:
+        "Compute the week's hour supply: category windows − synced events " +
+        '− block_time + open_time, per category, with total supply, ' +
+        'assigned, and To-Be-Assigned (supply − assigned; negative = ' +
+        'overcommitted).',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          week_start: {
+            type: 'string',
+            description: "Monday ISO date. Default: current week's Monday.",
+          },
+        },
+      },
+      async handler(args) {
+        const weekStart = args?.week_start ?? currentWeekMonday();
+        return { supply: computeWeekSupply(db, weekStart) };
       },
     },
 
