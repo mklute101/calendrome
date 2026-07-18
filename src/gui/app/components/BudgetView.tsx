@@ -11,9 +11,11 @@ import { useToasts } from './Toasts';
  * Envelope rows grouped by category (work first) then project, with
  * Assigned / Activity / Available columns, the funding status line,
  * and the colored Available pill. Writes: inline assign (click the
- * Assigned cell) and click-to-pull (click an underfunded/overspent
- * pill → "Cover from…"), both through /api/assign + /api/pull —
- * the same core functions as the MCP tools. Recent Moves is the pull
+ * Assigned cell) and click-to-pull (click an *overspent* pill →
+ * "Cover from…"), both through /api/assign + /api/pull — the same
+ * core functions as the MCP tools. Cover-pull is a cap remedy only
+ * (#119): an underfunded floor needs sessions placed, not hours
+ * moved, so its pill is informational. Recent Moves is the pull
  * audit trail; every move undoes via the reverse pull.
  */
 export function BudgetView({
@@ -414,11 +416,29 @@ function EnvelopeRowView({
     row.activity.confirmed_minutes + row.activity.scheduled_minutes;
   const assigned = row.assigned ?? 0;
   const pct = assigned > 0 ? Math.min(100, (activityTotal / assigned) * 100) : 0;
-  // Pulls fix an assignment gap: overspend first, else the uncovered ask.
-  const shortfall =
-    row.funding === 'overspent' ? -row.available : row.needed_minutes;
-  const pullable =
-    (row.funding === 'overspent' || row.funding === 'underfunded') && shortfall > 0;
+  // Cover-pull is a cap remedy (#119): raising the assignment absorbs
+  // an overage, so only overspent pills open the donor picker. An
+  // underfunded floor's gap is intrinsic (ask − activity) — moving
+  // assignment into it can't shrink it; the remedy is placing
+  // sessions, so that pill stays inert.
+  const shortfall = Math.max(0, activityTotal - assigned);
+  const pullable = row.funding === 'overspent' && shortfall > 0;
+  // The pill's number shares a basis with the status line beneath it:
+  // overspent → the overage, underfunded → the uncovered ask,
+  // snoozed → nothing assigned, else → available (assigned − activity).
+  const pillText =
+    row.funding === 'snoozed'
+      ? '—'
+      : row.funding === 'overspent'
+        ? fmtHours(activityTotal - assigned)
+        : row.funding === 'underfunded'
+          ? fmtHours(row.needed_minutes)
+          : fmtHours(row.available);
+  const pillTitle = pullable
+    ? `${FUNDING_LABEL[row.funding]} — click to cover the overage from another envelope`
+    : row.funding === 'underfunded'
+      ? 'underfunded — needs sessions placed, not hours moved'
+      : FUNDING_LABEL[row.funding];
 
   return (
     <div
@@ -463,15 +483,11 @@ function EnvelopeRowView({
       <span className="env-cell env-available">
         <button
           className={`pill pill-${row.funding}`}
-          title={
-            pullable
-              ? `${FUNDING_LABEL[row.funding]} — click to cover from another envelope`
-              : FUNDING_LABEL[row.funding]
-          }
+          title={pillTitle}
           onClick={pullable ? onTogglePull : undefined}
           disabled={!pullable}
         >
-          {fmtHours(row.available)}
+          {pillText}
         </button>
         {pullOpen && (
           <div className="pull-menu">
