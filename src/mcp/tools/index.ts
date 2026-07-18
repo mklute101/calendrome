@@ -56,6 +56,22 @@ import {
 } from '../../habits.js';
 import { getProjectBudget, getAllBudgets } from '../../budgets.js';
 import {
+  createGoal,
+  listGoals,
+  updateGoal,
+  deactivateGoal,
+  getGoal,
+  goalProgress,
+  currentWeekMonday,
+} from '../../goals.js';
+import {
+  assignHours,
+  pullHours,
+  listMoves,
+  getEnvelopes,
+  type EnvelopeType,
+} from '../../assignments.js';
+import {
   createCategory,
   listCategories,
   updateCategory,
@@ -357,6 +373,10 @@ export function buildTools(
         properties: {
           task_id: { type: 'integer' },
           project_id: { type: 'string' },
+          goal_id: {
+            type: 'integer',
+            description: "Count this time toward a goal's bucket (#106).",
+          },
           started_at: { type: 'string' },
           stopped_at: { type: 'string' },
           notes: { type: ['string', 'null'] },
@@ -369,9 +389,13 @@ export function buildTools(
         const projectId = args.project_id === undefined || args.project_id === null
           ? undefined
           : String(args.project_id);
+        const goalId = args.goal_id === undefined || args.goal_id === null
+          ? undefined
+          : Number(args.goal_id);
         const entry = logTime(db, {
           task_id: taskId,
           project_id: projectId,
+          goal_id: goalId,
           started_at: requireString(args, 'started_at'),
           stopped_at: requireString(args, 'stopped_at'),
           notes: (args.notes as string | null | undefined) ?? null,
@@ -445,21 +469,19 @@ export function buildTools(
     // -------- habits --------
     {
       name: 'create_habit',
-      description: 'Create a recurring habit time block',
+      description:
+        'Create a recurring habit time block. Frequency is exactly one of ' +
+        'days_of_week (fixed days, e.g. "1,3,5") or times_per_week ' +
+        '(N-per-week target, any days).',
       inputSchema: {
         type: 'object',
-        required: [
-          'project_id',
-          'title',
-          'duration_minutes',
-          'days_of_week',
-          'start_time',
-        ],
+        required: ['project_id', 'title', 'duration_minutes', 'start_time'],
         properties: {
           project_id: { type: 'string' },
           title: { type: 'string' },
           duration_minutes: { type: 'integer' },
           days_of_week: { type: 'string' },
+          times_per_week: { type: 'integer' },
           start_time: { type: 'string' },
           timezone: { type: 'string' },
           notes: { type: ['string', 'null'] },
@@ -471,7 +493,8 @@ export function buildTools(
             project_id: requireString(args, 'project_id'),
             title: requireString(args, 'title'),
             duration_minutes: requireNumber(args, 'duration_minutes'),
-            days_of_week: requireString(args, 'days_of_week'),
+            days_of_week: args.days_of_week,
+            times_per_week: args.times_per_week,
             start_time: requireString(args, 'start_time'),
             timezone: args.timezone,
             notes: args.notes ?? null,
@@ -1714,6 +1737,403 @@ export function buildTools(
           category_id: args.category_id,
         });
         return { removed };
+      },
+    },
+
+    // -------- commitments (prototype) --------
+    // #106: goals (bucket-of-hours commitments) + YNAB-style envelope
+    // assignments and pulls. Prototype surface — play with it in a
+    // sandbox DB via plugin/skills/sandbox/scripts/seed-commitments.mjs.
+    /**
+     * Create a goal — a bucket of hours poured into a project (#106).
+     *
+     * Two flavors, exactly one of `due` / `refill_period`:
+     * by-date ("600 min of prospecting before Sept 12" — the weekly
+     * ask re-paces as remaining ÷ weeks left) or recurring refill
+     * ("180 min of Spanish per week, forever"). `min_chunk_minutes`
+     * tells the planner not to schedule slivers smaller than the
+     * minimum. Hours flow in via time_entry rows carrying `goal_id`
+     * (`place_goal_block` forward, `log_time` retroactively).
+     *
+     * @example
+     * create_goal({
+     *   project_id: 'personal',
+     *   title: 'Spanish practice',
+     *   target_minutes: 180,
+     *   refill_period: 'week'
+     * })
+     *
+     * @see list_goals, update_goal, deactivate_goal, place_goal_block, get_envelopes
+     */
+    {
+      name: 'create_goal',
+      description:
+        'Create a goal (bucket of hours toward a project). Exactly one of ' +
+        'due (by-date flavor) or refill_period ("week", recurring refill).',
+      inputSchema: {
+        type: 'object',
+        required: ['project_id', 'title', 'target_minutes'],
+        properties: {
+          project_id: { type: 'string' },
+          title: { type: 'string' },
+          notes: { type: ['string', 'null'] },
+          target_minutes: { type: 'integer' },
+          due: {
+            type: ['string', 'null'],
+            description: 'By-date flavor: fill the bucket before this ISO date.',
+          },
+          refill_period: {
+            type: ['string', 'null'],
+            enum: ['week', null],
+            description: 'Refill flavor: the bucket refills each week.',
+          },
+          min_chunk_minutes: { type: ['integer', 'null'] },
+        },
+      },
+      async handler(args) {
+        return {
+          goal: createGoal(db, {
+            project_id: requireString(args, 'project_id'),
+            title: requireString(args, 'title'),
+            notes: args.notes ?? null,
+            target_minutes: requireNumber(args, 'target_minutes'),
+            due: args.due ?? null,
+            refill_period: args.refill_period ?? null,
+            min_chunk_minutes: args.min_chunk_minutes ?? null,
+          }),
+        };
+      },
+    },
+    /**
+     * List goals with their weekly progress.
+     *
+     * Each goal is returned with a `progress` object relative to
+     * `week_start` (defaults to the current week's Monday):
+     * confirmed/scheduled minutes, the weekly ask (refill target, or
+     * remaining ÷ weeks left for by-date), `needed_this_week`, and a
+     * status of on_track | behind | funded | complete.
+     *
+     * @example
+     * list_goals({ week_start: '2026-07-13' })
+     *
+     * @see create_goal, get_envelopes
+     */
+    {
+      name: 'list_goals',
+      description:
+        'List goals, each with weekly-ask progress for week_start ' +
+        "(defaults to the current week's Monday). Pass active to filter.",
+      inputSchema: {
+        type: 'object',
+        properties: {
+          active: { type: 'boolean' },
+          week_start: {
+            type: 'string',
+            description: "Monday ISO date. Default: current week's Monday.",
+          },
+        },
+      },
+      async handler(args) {
+        const weekStart = args?.week_start ?? currentWeekMonday();
+        const goals = listGoals(db, { active: args?.active });
+        return {
+          week_start: weekStart,
+          goals: goals.map((g) => ({
+            ...g,
+            progress: goalProgress(db, g.id, weekStart),
+          })),
+        };
+      },
+    },
+    /**
+     * Update goal fields by id.
+     *
+     * Patch-style: only fields you pass change. Flipping flavor
+     * (by-date ↔ refill) requires setting one side and explicitly
+     * nulling the other — a goal always has exactly one of
+     * due / refill_period.
+     *
+     * @example
+     * update_goal({ id: 2, target_minutes: 240 })
+     *
+     * @see create_goal, deactivate_goal
+     */
+    {
+      name: 'update_goal',
+      description:
+        'Update goal fields (patch-style). A goal keeps exactly one of ' +
+        'due / refill_period — null the other side to flip flavor.',
+      inputSchema: {
+        type: 'object',
+        required: ['id'],
+        properties: {
+          id: { type: 'integer' },
+          title: { type: 'string' },
+          notes: { type: ['string', 'null'] },
+          target_minutes: { type: 'integer' },
+          due: { type: ['string', 'null'] },
+          refill_period: { type: ['string', 'null'] },
+          min_chunk_minutes: { type: ['integer', 'null'] },
+          active: { type: 'integer' },
+        },
+      },
+      async handler(args) {
+        const { id, ...patch } = args;
+        return { goal: updateGoal(db, requireNumber(args, 'id'), patch) };
+      },
+    },
+    /**
+     * Deactivate a goal — it stops appearing in list_goals({active:true})
+     * and the envelope view. Existing time entries keep their goal_id.
+     *
+     * @example
+     * deactivate_goal({ id: 2 })
+     *
+     * @see create_goal, update_goal
+     */
+    {
+      name: 'deactivate_goal',
+      description: 'Deactivate a goal (soft delete; entries keep goal_id).',
+      inputSchema: {
+        type: 'object',
+        required: ['id'],
+        properties: { id: { type: 'integer' } },
+      },
+      async handler(args) {
+        const id = requireNumber(args, 'id');
+        deactivateGoal(db, id);
+        return { deactivated: true, goal_id: id };
+      },
+    },
+    /**
+     * Schedule a block of goal work on the calendar (#106).
+     *
+     * Inserts an UNCONFIRMED `time_entry` (source 'placement')
+     * carrying the goal's id — the forward-scheduled way to drain a
+     * goal bucket. Confirm it with `confirm_placement` when the work
+     * happened and the minutes pour into the bucket; `skip_placement`
+     * if it didn't. Goals are combinable: any chunk size works
+     * (respect `min_chunk_minutes` when set).
+     *
+     * @example
+     * place_goal_block({ goal_id: 2, start: '2026-07-14T18:00:00Z', duration_minutes: 60 })
+     *
+     * @see create_goal, confirm_placement, skip_placement, log_time
+     */
+    {
+      name: 'place_goal_block',
+      description:
+        "Schedule an UNCONFIRMED time_entry against a goal's bucket. " +
+        'Pass end or duration_minutes. Confirm via confirm_placement.',
+      inputSchema: {
+        type: 'object',
+        required: ['goal_id', 'start'],
+        properties: {
+          goal_id: { type: 'integer' },
+          start: { type: 'string' },
+          end: { type: 'string' },
+          duration_minutes: { type: 'integer' },
+          notes: { type: ['string', 'null'] },
+        },
+      },
+      async handler(args) {
+        const goalId = requireNumber(args, 'goal_id');
+        const goal = getGoal(db, goalId);
+        if (!goal) throw new Error(`goal ${goalId} not found`);
+        const start = requireString(args, 'start');
+        let end: string;
+        if (typeof args.end === 'string') {
+          end = args.end;
+        } else {
+          const dur = requireNumber(args, 'duration_minutes');
+          const startMs = Date.parse(start);
+          if (Number.isNaN(startMs)) {
+            throw new Error(`start is not a valid ISO 8601 timestamp: ${start}`);
+          }
+          end = new Date(startMs + dur * 60_000).toISOString();
+        }
+        const id = insertTimeEntry(db, {
+          project_id: goal.project_id,
+          goal_id: goalId,
+          start_at: start,
+          end_at: end,
+          status: 'UNCONFIRMED',
+          source: 'placement',
+          notes: (args.notes as string | null | undefined) ?? goal.title,
+        });
+        return {
+          entry: db.prepare('SELECT * FROM time_entry WHERE id = ?').get(id),
+        };
+      },
+    },
+    /**
+     * Set this week's word on an envelope's minutes (#106).
+     *
+     * Upserts the `assignments` row for (envelope, week). Without a
+     * row, the standing default applies (project budget cap, goal
+     * weekly ask, habit frequency ask); an explicit row overrides it
+     * for that week only. `minutes: null` snoozes the envelope —
+     * unfunded, hours consciously perish. week_start must be a Monday.
+     *
+     * @example
+     * assign_hours({ envelope_type: 'project', envelope_id: 'acme',
+     *                week_start: '2026-07-13', minutes: 900,
+     *                note: 'client paused two days' })
+     *
+     * @see pull_hours, get_envelopes, list_envelope_moves
+     */
+    {
+      name: 'assign_hours',
+      description:
+        "Upsert this week's assigned minutes for an envelope (project | " +
+        'goal | habit). minutes null = snoozed (unfunded) for the week.',
+      inputSchema: {
+        type: 'object',
+        required: ['envelope_type', 'envelope_id', 'week_start'],
+        properties: {
+          envelope_type: { type: 'string', enum: ['project', 'goal', 'habit'] },
+          envelope_id: { type: 'string' },
+          week_start: { type: 'string', description: 'Monday ISO date.' },
+          minutes: { type: ['integer', 'null'] },
+          note: { type: ['string', 'null'] },
+        },
+      },
+      async handler(args) {
+        return {
+          assignment: assignHours(db, {
+            envelope_type: requireString(args, 'envelope_type') as EnvelopeType,
+            envelope_id: requireString(args, 'envelope_id'),
+            week_start: requireString(args, 'week_start'),
+            minutes: args.minutes ?? null,
+            note: args.note ?? null,
+          }),
+        };
+      },
+    },
+    /**
+     * The YNAB pull: move minutes between two envelopes, zero-sum (#106).
+     *
+     * "Take 2h from hobby, give it to ACME" — one call. Omit `from`
+     * to fund from unassigned supply; omit `to` to release minutes
+     * back to supply. Envelopes without an explicit assignment are
+     * seeded from their standing default first, so pulling from a
+     * project still riding its cap just works. Never goes negative:
+     * a shortfall throws with the numbers. Every pull is logged to
+     * Recent Moves (`list_envelope_moves`).
+     *
+     * @example
+     * pull_hours({ week_start: '2026-07-13',
+     *              from: { type: 'project', id: 'hobby' },
+     *              to:   { type: 'project', id: 'acme' },
+     *              minutes: 120, note: 'launch crunch' })
+     *
+     * @see assign_hours, list_envelope_moves, get_envelopes
+     */
+    {
+      name: 'pull_hours',
+      description:
+        'Move minutes between envelopes for a week (zero-sum, logged). ' +
+        'Omit from = fund from supply; omit to = release to supply. ' +
+        'Throws on shortfall.',
+      inputSchema: {
+        type: 'object',
+        required: ['week_start', 'minutes'],
+        properties: {
+          week_start: { type: 'string', description: 'Monday ISO date.' },
+          from: {
+            type: ['object', 'null'],
+            properties: {
+              type: { type: 'string', enum: ['project', 'goal', 'habit'] },
+              id: { type: 'string' },
+            },
+            required: ['type', 'id'],
+          },
+          to: {
+            type: ['object', 'null'],
+            properties: {
+              type: { type: 'string', enum: ['project', 'goal', 'habit'] },
+              id: { type: 'string' },
+            },
+            required: ['type', 'id'],
+          },
+          minutes: { type: 'integer' },
+          note: { type: ['string', 'null'] },
+        },
+      },
+      async handler(args) {
+        return {
+          move: pullHours(db, {
+            week_start: requireString(args, 'week_start'),
+            from: args.from ?? null,
+            to: args.to ?? null,
+            minutes: requireNumber(args, 'minutes'),
+            note: args.note ?? null,
+          }),
+        };
+      },
+    },
+    /**
+     * Recent Moves: the pull audit trail for a week, newest first (#106).
+     *
+     * Every `pull_hours` call logs one row — from/to envelope (NULL =
+     * unassigned supply), minutes, note. The budget view's "where did
+     * my week go" history.
+     *
+     * @example
+     * list_envelope_moves({ week_start: '2026-07-13' })
+     *
+     * @see pull_hours, get_envelopes
+     */
+    {
+      name: 'list_envelope_moves',
+      description: 'List envelope pulls (Recent Moves) for a week, newest first.',
+      inputSchema: {
+        type: 'object',
+        required: ['week_start'],
+        properties: {
+          week_start: { type: 'string', description: 'Monday ISO date.' },
+        },
+      },
+      async handler(args) {
+        return { moves: listMoves(db, requireString(args, 'week_start')) };
+      },
+    },
+    /**
+     * The budget view read (#106): one envelope row per active
+     * project, goal, and habit for a week.
+     *
+     * Each row carries assigned (explicit row or standing default;
+     * null = snoozed), activity (confirmed + scheduled minutes
+     * attributed to that envelope — see src/assignments.ts for the
+     * attribution rule), available (assigned − activity), a funding
+     * status (overspent | underfunded | on_track | snoozed), and a
+     * human status_line ("Overspent: 11.5h of 10h", "2h more needed
+     * this week", "On track"). Habit rows add the weekly frequency
+     * meter (`week_score`: 3/4).
+     *
+     * @example
+     * get_envelopes({ week_start: '2026-07-13' })
+     *
+     * @see assign_hours, pull_hours, list_goals, get_all_budgets
+     */
+    {
+      name: 'get_envelopes',
+      description:
+        'YNAB-style budget view for a week: one row per active project, ' +
+        'goal, and habit with assigned/activity/available, funding status ' +
+        'and a human status_line.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          week_start: {
+            type: 'string',
+            description: "Monday ISO date. Default: current week's Monday.",
+          },
+        },
+      },
+      async handler(args) {
+        const weekStart = args?.week_start ?? currentWeekMonday();
+        return { week_start: weekStart, envelopes: getEnvelopes(db, weekStart) };
       },
     },
 
