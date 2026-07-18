@@ -1,7 +1,7 @@
 # Commitment taxonomy + time-envelope budgeting — design
 
 **Date:** 2026-07-17
-**Status:** Draft to play with — nothing here is ratified; the PR carrying this doc is the sandbox for the discussion
+**Status:** Draft to play with — review round 1 (2026-07-18 PR comments) folded in; resolved points moved out of Open questions
 **Tracking issue:** [#106](https://github.com/mklute101/calendrome/issues/106)
 **Reframes:** [#103](https://github.com/mklute101/calendrome/issues/103) (habit interaction model — the question that triggered this)
 **Builds on:** [#99](https://github.com/mklute101/calendrome/issues/99), [#100](https://github.com/mklute101/calendrome/issues/100) (budget caps), the [2026-05-13 time-entry unification](./2026-05-13-time-entry-unification-design.md)
@@ -54,14 +54,29 @@ windows (work Mon–Fri 9–5, personal evenings/weekends) minus synced
 meetings minus `block_time` reservations, plus `open_time` carve-outs.
 No other time tool knows this; calendrome already stores every input.
 
+Two properties of supply worth stating outright:
+
+- **Supply is swaths, not blocks.** Open time *exists* without being
+  scheduled — god forbid we schedule every little thing. Personal
+  time especially is a broad swath that backs envelopes without ever
+  materializing as calendar blocks. Scheduling is what commitments
+  do *to* supply, not what supply is.
+- **Supply is adjustable per week in one sentence.** "Short week,
+  I'm off Friday" changes this week's supply without touching the
+  standing windows — the same standing-config-vs-this-week split as
+  budget overrides (#100), and the same friction floor as
+  `block_time`. The windows are the default, never a marriage.
+
 **3. Budgeting is reconciling asks against supply.** Every commitment
 type produces a weekly ask. The sum of asks vs. the supply is the
 planning conversation — visible on Monday, not discovered on Friday.
 
 ## The taxonomy
 
-All four are **calendar items** — one `time_entry` shape on the
-timeline — distinguished only by the three axes:
+**Commitment** is the parent concept (ratified, review round 1): the
+broad term for anything that claims your time. The four below are its
+*types* — one `time_entry` shape on the timeline, distinguished only
+by the three axes:
 
 | Type | Ask | Done-ness | Mobility |
 | --- | --- | --- | --- |
@@ -91,6 +106,20 @@ recurring-event this/following/all machinery:
 - The template (time, days, duration, project) is edited on its own
   surface, never by dragging an instance.
 
+**Frequency can be a target, not a fixture.** The working-out case
+(review round 1): the intent is "work out most days," the reality is
+4 of 7. Pinning it to Mon/Tue/Thu/Sat and logging three skips a week
+punishes honesty. So a habit's frequency comes in two forms:
+
+- **Fixed days** (`days_of_week`, today's model): the 7:00 stretch,
+  the Monday standup. Misses are per-day skips.
+- **N-per-week target**: "work out 4×/week, any days." Instances
+  materialize as *candidates* (or on demand); the week scores 4/4,
+  3/4 — a frequency meter, not a skip list. Done-ness is still
+  per-instance (you did *today's* workout); only the schedule is
+  loose. The frequency range for mobility widens accordingly: an
+  N-per-week instance can slide anywhere in its week.
+
 A habit never finishes and never rolls over. Missing Tuesday does not
 make Wednesday 30 minutes long — that would make it a Goal.
 
@@ -107,7 +136,9 @@ with YNAB target semantics:
 - **Recurring refill:** "5h/week toward the newsletter, indefinitely."
   The envelope refills each week. This is the floor that has no home
   today — the inverse of a budget cap. Under-filling nags the way
-  over-spending a cap does.
+  over-spending a cap does. The canonical live example (review round
+  1): **Spanish practice** — already happening today, genuinely not
+  about a finish line, just hours poured in per week.
 
 A goal doesn't care *when* its hours happen. The planner drains it
 into whatever slots fit; blocks placed against a goal are ordinary
@@ -115,8 +146,10 @@ placements that count toward the bucket when confirmed.
 
 ### Event
 
-What gcal-sync already produces. Occupies supply, tracked for meeting
-time, owned elsewhere. No change.
+**Any externally scheduled event** — kept deliberately broad, not
+gcal-specific. gcal-sync is today's source, but the type is "something
+outside calendrome claimed this slot." Occupies supply, tracked for
+meeting time, owned elsewhere. No change.
 
 ## The north star: envelope budgeting for time
 
@@ -144,6 +177,23 @@ The `/week` planner is a brain — it can propose the pull ("HOBBY has
 3h unassigned; or Thursday evening is open supply"). The friction
 floor stays one sentence, per CLAUDE.md.
 
+**Envelopes are fungible across categories** (ratified, review
+round 1) — that's kinda the point. Category windows shape where the
+planner *suggests* hours land; they are not walls between pools. The
+canonical case is the spontaneity flow:
+
+> It's beautiful out and you want to hit the mountain bike during
+> work hours. One sentence — "taking the afternoon for MTB" — and the
+> afternoon's work commitments need covering. By default the pull
+> comes from personal time (tonight, the weekend); or you snooze
+> something and *lose those hours*, consciously. Either way the
+> tradeoff got named, which is the entire mechanic. The planner
+> proposes the options; you pick in the same sentence or the next one.
+
+Spontaneity is not an exception the model tolerates — it's a pull
+like any other, and the one-sentence friction floor is what keeps a
+beautiful day from turning into a settings exercise.
+
 Existing budget work slots straight in:
 
 - **#99 (monthly caps)** — a monthly assignment horizon alongside the
@@ -152,9 +202,22 @@ Existing budget work slots straight in:
   one week; a snooze is an unfunded one. Same table, same semantics.
 
 **Time differs from money in one place:** unspent hours perish.
-There is probably no "roll over the envelope" — an unfilled refill
-goal just nags; an unused assignment evaporates. (Open question
-below.)
+There is no "roll over the envelope" — an unfilled refill goal just
+nags; an unused assignment evaporates; by-date goals re-pace instead.
+(Ratified, review round 1.)
+
+### The budget view
+
+The calendar is not the only honest way to look at this model
+(review round 1): the envelope side wants its own surface — a
+**YNAB-style budget view** as a peer of the weekly timeline. Rows are
+envelopes (projects / goals / habits); columns are assigned /
+scheduled / spent / available; over- and under-funded rows glow the
+way budget cards do today; the pull is a drag between rows or one
+sentence. Same data, opposite projection: the calendar answers
+"when," the budget view answers "where is my week going." This also
+raises the bar on docs/website/UI generally — the model has to be
+*legible*, not just implemented.
 
 ## What this means for existing pieces
 
@@ -166,8 +229,8 @@ Deliberately incremental — no big-bang schema change is proposed here:
 | Bucket task (big duration + due) | Becomes a **Goal (by-date)**; tasks stop being overloaded |
 | `weekly_hours_target` in skill settings | Becomes a **Goal (recurring refill)** in the database |
 | `projects.weekly_budget_minutes` | The cap side of an envelope; assignment/target side grows alongside (#99/#100 compatible) |
-| `habits` table + generation | Unchanged mechanically; gains the frequency-range mobility rule and a template-edit surface |
-| "Habits" as a name | Open question — "routine" may fit better once Goal exists (Reclaim heritage, not a decision) |
+| `habits` table + generation | Unchanged mechanically; gains the frequency-range mobility rule, the N-per-week target form, and a template-edit surface |
+| "Calendar items" as the umbrella | **Commitments** (ratified); the four types are its flavors |
 
 ## Near-term work that survives regardless
 
@@ -193,24 +256,43 @@ Deferred until this doc is ratified: detach-to-one-off (may be
 unnecessary once Goals exist), template management in the GUI, any
 renaming, all envelope mechanics.
 
+## Resolved in review round 1 (2026-07-18)
+
+1. **Umbrella naming** — the parent concept is **Commitment**; the
+   four types are its flavors.
+2. **Supply pools are fungible** — that's the point. Categories shape
+   suggestions, not walls; MTB during work hours pulls from personal
+   time or you snooze and consciously lose the hours.
+3. **Rollover** — confirmed: time perishes. No envelope balances
+   across weeks; by-date goals re-pace.
+4. **Event stays broad** — any externally scheduled event, not
+   gcal-specific.
+5. **Open swaths matter** — supply exists without being scheduled,
+   and must be adjustable per-week in one sentence (short week ≠
+   config surgery).
+
 ## Open questions
 
-1. **Naming.** "Goal" vs "target" vs "commitment"; whether "habit"
-   survives (it came from Reclaim, not from first principles).
+1. **Type-level naming.** "Goal" vs "target"; whether the "habit"
+   type keeps its Reclaim-heritage name.
 2. **Is Habit a distinct type or a Goal flavor?** A habit is nearly a
    recurring-refill goal with a fixed slot and per-instance
-   done-ness. Collapsing them is tempting; the done-ness semantics
-   (did-today vs. hours-this-week) argue they're genuinely different.
-3. **Supply pools.** One supply per category (work hours vs. personal
-   hours are not fungible) or one global pool with category filters?
-   Probably per-category — you can't pull Tuesday 10am into a
-   personal-evening envelope.
-4. **Rollover.** Confirm "time perishes": no envelope carries a
-   balance across weeks; by-date goals re-pace instead. Any counter-
-   example?
-5. **Assignment storage.** Where do weekly assignments live —
-   generalize #100's `budget_overrides` table into
-   `assignments (envelope, week, minutes)`?
+   done-ness — and the new N-per-week target form sits right between
+   them. The done-ness semantics (did-today vs. hours-this-week)
+   still argue they're genuinely different; the workout case will be
+   the test.
+3. **Where does an assignment live?** In plain terms: when you say
+   "ACME gets 12h this week," some row has to remember that sentence
+   for that week. Today the closest shape is #100's proposed
+   `budget_overrides (project_id, week_start, budget_minutes)` — one
+   row per project per week. The question is whether to build that
+   same three-column idea once, generally — `assignments (envelope,
+   week, minutes)` where an envelope can be a project *or* a goal
+   *or* a habit — so caps, overrides, snoozes, and target funding are
+   all the one mechanism instead of four parallel tables.
+4. **Budget-view shape.** What the YNAB-style view shows at v1 and
+   how the pull gesture works there (drag between rows vs.
+   conversational only).
 
 ## References
 
