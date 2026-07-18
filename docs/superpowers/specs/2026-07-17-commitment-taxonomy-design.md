@@ -202,6 +202,18 @@ Not a new type: the project's assignment carries a ceiling (#99/#100).
 Placements and confirmed hours are the activity; the row goes red at
 21h. A "client paused this week" snooze is an unfunded envelope.
 
+**Caps and floors are different forces, and an envelope can carry
+either or both** (review round 4). A client cap points its nag *down*
+— over is the failure, and there's no virtue in hitting 20h exactly.
+A refill goal points its nag *up* — under is the failure, over is
+fine. The interesting middle is broad ongoing work ("give the ATN-ish
+client ~10h/week of general attention"): that's a *floor* wearing
+project clothes, which is exactly why it never fit
+`weekly_budget_minutes`. Modeled: a refill goal scoped to the
+project, living inside the project's cap. "At least 8h broad, at most
+20h billed" is one project with both forces; funding status derives
+from both — red past the cap, yellow under the floor.
+
 **The beautiful-day MTB afternoon — not a commitment, a pull.**
 One sentence blocks the afternoon; the displaced work commitments'
 envelopes get covered from personal supply by default, or something
@@ -437,6 +449,11 @@ separate generators — the same call the time-entry unification made),
 7. **Budget view v1 = copy YNAB's category screen** — Assigned /
    Activity / Available columns, funding-status lines, colored
    pills, and Recent Moves as the pull history.
+8. **Caps ≠ floors, and both can sit on one envelope** (round 4) —
+   client budgets stay ceilings (nag points down); refill goals are
+   floors (nag points up); broad ongoing client attention is a floor
+   inside a cap. M5 unifies storage mechanism only, never this
+   semantic.
 
 ## Open questions
 
@@ -514,9 +531,12 @@ The YNAB category screen, hours edition (per round 2):
 ### M5 — Cutover (after the parallel run decides)
 
 Per the compat posture: fold `projects.weekly_budget_minutes` into
-assignments as standing targets, migrate bucket-tasks to goals,
-settle names. The dashboard's budget cards retire in favor of the
-budget view.
+the assignments mechanism, migrate bucket-tasks to goals, settle
+names. The dashboard's budget cards retire in favor of the budget
+view. **Cutover unifies the mechanism, never the semantics** (round
+4): a cap row and a floor row keep pointing their nags in opposite
+directions — client caps do not become goals; floors do not become
+ceilings.
 
 Deliberately not on this list: auto-scheduling (still
 suggest-approve, per PLAN.md), and a min_chunk-aware free-slot
