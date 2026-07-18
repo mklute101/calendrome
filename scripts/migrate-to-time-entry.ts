@@ -15,8 +15,7 @@
  *   tsx scripts/migrate-to-time-entry.ts <path-to-calendrome.db>
  */
 import Database from 'better-sqlite3';
-
-type DB = Database.Database;
+import type { DB } from '../src/db/types.js';
 
 function tableExists(db: DB, name: string): boolean {
   const row = db
@@ -189,6 +188,9 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   }
   const db = new Database(path);
   db.pragma('foreign_keys = ON');
-  runMigration(db);
+  // Same widening `openDatabase()` performs: better-sqlite3 satisfies the
+  // DB interface structurally, but its `Transaction<F>` return type defeats
+  // the compiler's generic-variance check.
+  runMigration(db as unknown as DB);
   console.log('Migration complete.');
 }

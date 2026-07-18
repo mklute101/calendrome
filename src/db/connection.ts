@@ -10,14 +10,20 @@
  *
  * `openDatabase(':memory:')` is the convention for tests — every test
  * gets a fresh isolated DB, no cleanup required.
+ *
+ * `DB` is an interface (see `./types.ts`), not the better-sqlite3
+ * class: the in-browser playground runs the same core functions
+ * against a sql.js (WASM) database through `sqljs-adapter.ts`, so
+ * everything downstream of here is engine-agnostic.
  */
 import Database from 'better-sqlite3';
+import type { DB } from './types.js';
 
-export type DB = Database.Database;
+export type { DB, Statement, RunResult, BindValue } from './types.js';
 
 export function openDatabase(path: string = ':memory:'): DB {
   const db = new Database(path);
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
-  return db;
+  return db as unknown as DB;
 }
