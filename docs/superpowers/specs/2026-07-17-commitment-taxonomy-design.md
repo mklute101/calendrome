@@ -396,6 +396,25 @@ goal tables into a `commitments` supertable (the umbrella is a
 concept, not a table), or build supply computation (that's the
 envelope milestone, not the taxonomy one).
 
+**Compat posture (review round 3):** there is no backwards-compat
+requirement — sole user, beta, freedom to do it right. The
+incrementality above is an architecture choice (unified substrate,
+separate generators — the same call the time-entry unification made),
+*not* caution. Two consequences:
+
+- **Parallel run, then decide.** The additive schema means the real
+  DB keeps today's behavior while a sandbox DB runs the commitments
+  model — same install, two worlds, for a couple weeks of real use.
+  The radical part being tested is envelope budgeting (assigned
+  supply, zero-sum pulls) vs. independent soft caps — a behavior
+  change, not a storage one.
+- **End-state cleanup, once ratified:** fold
+  `projects.weekly_budget_minutes` into the assignments model as a
+  standing target (no dual sources of truth), migrate existing
+  bucket-tasks to goals outright rather than coexisting, and take
+  any renames freely. Small breaking migrations, deliberately
+  deferred — not silently abandoned.
+
 ## Resolved in review rounds 1–2 (2026-07-18)
 
 1. **Umbrella naming** — the parent concept is **Commitment**; the
