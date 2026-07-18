@@ -48,6 +48,7 @@ Types differ on three axes only:
 | **Ask** | How the commitment requests hours from a week (fixed estimate, frequency × duration, target ÷ time remaining) |
 | **Done-ness** | What completion means (definitive finish, per-instance did/skip, cumulative hours reached) |
 | **Mobility** | How its blocks may move (float freely, only within a frequency range, irrelevant — only the total matters, externally owned) |
+| **Chunking** | How the hours may be clumped (any size chunks, fixed instance-sized chunks that cannot combine, n/a) |
 
 **2. The week has a computable hour supply.** Category scheduling
 windows (work Mon–Fri 9–5, personal evenings/weekends) minus synced
@@ -78,12 +79,12 @@ broad term for anything that claims your time. The four below are its
 *types* — one `time_entry` shape on the timeline, distinguished only
 by the three axes:
 
-| Type | Ask | Done-ness | Mobility |
-| --- | --- | --- | --- |
-| **Task** | Estimate (`duration_minutes`); may run over or under | Definitive *finished* | Blocks float freely |
-| **Habit** | Frequency × duration (daily 15 min) | Per-instance: did it or skipped it; never "finishes" | Only **within its frequency range**; outside the range it's not a move, it's a skip |
-| **Goal** | Target ÷ time: *by-date* (10h before the event → remaining ÷ weeks left) or *recurring refill* (5h/week, no end) | **Cumulative** — hours poured into the bucket | Fully floating; only the total matters |
-| **Event** | None — it takes hours off the supply | Attended or not; calendrome doesn't track it | Externally owned (Google Calendar) |
+| Type | Ask | Done-ness | Mobility | Chunking |
+| --- | --- | --- | --- | --- |
+| **Task** | Estimate (`duration_minutes`); may run over or under | Definitive *finished* | Blocks float freely | Splittable; optional min chunk |
+| **Habit** | Frequency × duration (daily 15 min) | Per-instance: did it or skipped it; never "finishes" | Only **within its frequency range**; outside the range it's not a move, it's a skip | **Non-combinable** — instance-sized chunks, spread out by definition |
+| **Goal** | Target ÷ time: *by-date* (10h before the event → remaining ÷ weeks left) or *recurring refill* (5h/week, no end) | **Cumulative** — hours poured into the bucket | Fully floating; only the total matters | **Combinable** — big chunks fine; optional min chunk |
+| **Event** | None — it takes hours off the supply | Attended or not; calendrome doesn't track it | Externally owned (Google Calendar) | n/a |
 
 ### Task
 
@@ -121,7 +122,12 @@ punishes honesty. So a habit's frequency comes in two forms:
   N-per-week instance can slide anywhere in its week.
 
 A habit never finishes and never rolls over. Missing Tuesday does not
-make Wednesday 30 minutes long — that would make it a Goal.
+make Wednesday 30 minutes long — combining is exactly what a habit
+*can't* do, and that (review round 2) is the crispest line between
+Habit and Goal: **both can be buckets of hours; a habit's hours are
+non-combinable** (you can't do the week's stretching in one sitting —
+the spreading-out *is* the commitment), **a goal's hours combine
+freely** (a rainy Saturday can drain half the prospecting bucket).
 
 ### Goal
 
@@ -143,6 +149,13 @@ with YNAB target semantics:
 A goal doesn't care *when* its hours happen. The planner drains it
 into whatever slots fit; blocks placed against a goal are ordinary
 placements that count toward the bucket when confirmed.
+
+**Minimum chunk** (review round 2 — a Reclaim feature worth keeping):
+a goal (or task) can declare `min_chunk_minutes` — "don't schedule
+less than 2h of prospecting; anything shorter isn't worth the context
+switch." The planner skips free slots smaller than the minimum rather
+than confetti-ing the bucket across 20-minute gaps. Habits don't need
+it: their chunk size is exactly the instance duration.
 
 ### Event
 
@@ -210,14 +223,29 @@ nags; an unused assignment evaporates; by-date goals re-pace instead.
 
 The calendar is not the only honest way to look at this model
 (review round 1): the envelope side wants its own surface — a
-**YNAB-style budget view** as a peer of the weekly timeline. Rows are
-envelopes (projects / goals / habits); columns are assigned /
-scheduled / spent / available; over- and under-funded rows glow the
-way budget cards do today; the pull is a drag between rows or one
-sentence. Same data, opposite projection: the calendar answers
-"when," the budget view answers "where is my week going." This also
-raises the bar on docs/website/UI generally — the model has to be
-*legible*, not just implemented.
+**YNAB-style budget view** as a peer of the weekly timeline. Same
+data, opposite projection: the calendar answers "when," the budget
+view answers "where is my week going."
+
+V1 shape (review round 2): **just copy YNAB's category screen,
+lowkey.** The mapping is nearly column-for-column:
+
+| YNAB category screen | Calendrome budget view |
+| --- | --- |
+| Category rows in groups | Envelope rows (goals / habits / project caps) grouped by category or project |
+| **Assigned** | Hours assigned this week |
+| **Activity** | Hours scheduled + confirmed against the envelope |
+| **Available** (colored pill) | Assigned − activity: green funded, yellow underfunded, red overspent |
+| Funding-status line ("Overspent. $111.17 of $100.63" / "$400 more needed this month" / "On Track") | "Overspent: 11.5h of 10h" / "2h more needed this week" (target-derived) / "On track" |
+| Progress bar under the name | Same, driven by the ask |
+| **Recent Moves** + Undo/Redo | The pull history — every "take 2h from hobby" is a logged move, undoable |
+
+That last row matters: YNAB's "Recent Moves" is the audit trail of
+envelope transfers, which is exactly what pulls are. The budget view
+is where pulls become visible, reviewable, and reversible.
+
+This also raises the bar on docs/website/UI generally — the model has
+to be *legible*, not just implemented.
 
 ## What this means for existing pieces
 
@@ -256,7 +284,7 @@ Deferred until this doc is ratified: detach-to-one-off (may be
 unnecessary once Goals exist), template management in the GUI, any
 renaming, all envelope mechanics.
 
-## Resolved in review round 1 (2026-07-18)
+## Resolved in review rounds 1–2 (2026-07-18)
 
 1. **Umbrella naming** — the parent concept is **Commitment**; the
    four types are its flavors.
@@ -270,18 +298,20 @@ renaming, all envelope mechanics.
 5. **Open swaths matter** — supply exists without being scheduled,
    and must be adjustable per-week in one sentence (short week ≠
    config surgery).
+6. **Habit and Goal stay distinct types, split by chunking** — both
+   can be buckets of hours; a habit's hours are non-combinable
+   (spreading out is the commitment), a goal's combine freely. New
+   fourth axis: **Chunking**; plus `min_chunk_minutes` on
+   goals/tasks (the Reclaim "minimum hours" feature).
+7. **Budget view v1 = copy YNAB's category screen** — Assigned /
+   Activity / Available columns, funding-status lines, colored
+   pills, and Recent Moves as the pull history.
 
 ## Open questions
 
 1. **Type-level naming.** "Goal" vs "target"; whether the "habit"
    type keeps its Reclaim-heritage name.
-2. **Is Habit a distinct type or a Goal flavor?** A habit is nearly a
-   recurring-refill goal with a fixed slot and per-instance
-   done-ness — and the new N-per-week target form sits right between
-   them. The done-ness semantics (did-today vs. hours-this-week)
-   still argue they're genuinely different; the workout case will be
-   the test.
-3. **Where does an assignment live?** In plain terms: when you say
+2. **Where does an assignment live?** In plain terms: when you say
    "ACME gets 12h this week," some row has to remember that sentence
    for that week. Today the closest shape is #100's proposed
    `budget_overrides (project_id, week_start, budget_minutes)` — one
@@ -290,9 +320,9 @@ renaming, all envelope mechanics.
    week, minutes)` where an envelope can be a project *or* a goal
    *or* a habit — so caps, overrides, snoozes, and target funding are
    all the one mechanism instead of four parallel tables.
-4. **Budget-view shape.** What the YNAB-style view shows at v1 and
-   how the pull gesture works there (drag between rows vs.
-   conversational only).
+3. **Pull gesture in the budget view** — drag between rows vs.
+   conversational-only at v1 (YNAB does both; Recent Moves implies
+   move-logging either way).
 
 ## References
 
