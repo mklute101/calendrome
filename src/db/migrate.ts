@@ -39,6 +39,17 @@ export function migrate(db: DB): void {
     );
   }
 
+  // Commitments prototype (#106): goal-linked time entries and the
+  // N-per-week habit form.
+  if (!hasColumn(db, 'time_entry', 'goal_id')) {
+    db.exec(
+      'ALTER TABLE time_entry ADD COLUMN goal_id INTEGER REFERENCES goals(id)',
+    );
+  }
+  if (!hasColumn(db, 'habits', 'times_per_week')) {
+    db.exec('ALTER TABLE habits ADD COLUMN times_per_week INTEGER');
+  }
+
   const count = (
     db.prepare('SELECT COUNT(*) AS n FROM categories').get() as { n: number }
   ).n;

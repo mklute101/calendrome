@@ -3,11 +3,13 @@ import { freshDb } from './helpers/db.js';
 import { createProject } from '../src/projects.js';
 import {
   createHabit,
+  updateHabit,
   listHabits,
   deactivateHabit,
   generateHabitInstances,
   completeHabitInstance,
   skipHabitInstance,
+  habitWeekScore,
 } from '../src/habits.js';
 
 function setup() {
@@ -330,5 +332,130 @@ describe('habits', () => {
     expect(instances).toHaveLength(1);
     // Expect Friday local → Saturday 04:00 UTC during CDT
     expect(instances[0].scheduled_start).toBe('2026-05-09T04:00:00Z');
+  });
+});
+
+describe('habits: N-per-week target form (#106)', () => {
+  it('createHabit accepts times_per_week (days_of_week stored as empty)', () => {
+    const db = setup();
+    const h = createHabit(db, {
+      project_id: 'me',
+      title: 'Workout',
+      duration_minutes: 45,
+      times_per_week: 4,
+      start_time: '17:30',
+    });
+    expect(h.times_per_week).toBe(4);
+    expect(h.days_of_week).toBe('');
+  });
+
+  it('requires exactly one of days_of_week / times_per_week', () => {
+    const db = setup();
+    expect(() =>
+      createHabit(db, {
+        project_id: 'me',
+        title: 'X',
+        duration_minutes: 45,
+        days_of_week: '1,3',
+        times_per_week: 4,
+        start_time: '17:30',
+      }),
+    ).toThrow(/exactly one/);
+    expect(() =>
+      createHabit(db, {
+        project_id: 'me',
+        title: 'X',
+        duration_minutes: 45,
+        start_time: '17:30',
+      }),
+    ).toThrow(/exactly one/);
+    expect(() =>
+      createHabit(db, {
+        project_id: 'me',
+        title: 'X',
+        duration_minutes: 45,
+        times_per_week: 9,
+        start_time: '17:30',
+      }),
+    ).toThrow(/1\.\.7/);
+  });
+
+  it('updateHabit switches forms by setting one side', () => {
+    const db = setup();
+    const h = createHabit(db, {
+      project_id: 'me',
+      title: 'Workout',
+      duration_minutes: 45,
+      days_of_week: '1,2,4,6',
+      start_time: '17:30',
+    });
+    const asTarget = updateHabit(db, h.id, { times_per_week: 4 });
+    expect(asTarget.times_per_week).toBe(4);
+    expect(asTarget.days_of_week).toBe('');
+
+    const asFixed = updateHabit(db, h.id, { days_of_week: '1,3,5' });
+    expect(asFixed.days_of_week).toBe('1,3,5');
+    expect(asFixed.times_per_week).toBeNull();
+  });
+
+  it('generateHabitInstances materializes N candidates on the first N days', () => {
+    const db = setup();
+    const h = createHabit(db, {
+      project_id: 'me',
+      title: 'Workout',
+      duration_minutes: 45,
+      times_per_week: 3,
+      start_time: '17:30',
+      timezone: 'UTC',
+    });
+    // 2026-07-13 (Mon) .. 2026-07-19 (Sun)
+    const instances = generateHabitInstances(db, h.id, '2026-07-13', '2026-07-19');
+    expect(instances).toHaveLength(3);
+    expect(instances.map((i) => i.scheduled_start)).toEqual([
+      '2026-07-13T17:30:00Z',
+      '2026-07-14T17:30:00Z',
+      '2026-07-15T17:30:00Z',
+    ]);
+    // Idempotent: re-run creates no duplicates.
+    generateHabitInstances(db, h.id, '2026-07-13', '2026-07-19');
+    const count = db
+      .prepare('SELECT COUNT(*) AS n FROM habit_instances WHERE habit_id = ?')
+      .get(h.id) as { n: number };
+    expect(count.n).toBe(3);
+  });
+
+  it('habitWeekScore meters COMPLETE instances against the target', () => {
+    const db = setup();
+    const target = createHabit(db, {
+      project_id: 'me',
+      title: 'Workout',
+      duration_minutes: 45,
+      times_per_week: 4,
+      start_time: '17:30',
+      timezone: 'UTC',
+    });
+    const instances = generateHabitInstances(db, target.id, '2026-07-13', '2026-07-19');
+    completeHabitInstance(db, instances[0].id);
+    completeHabitInstance(db, instances[1].id);
+    skipHabitInstance(db, instances[2].id);
+    expect(habitWeekScore(db, target.id, '2026-07-13')).toEqual({
+      done: 2,
+      target: 4,
+    });
+
+    const fixed = createHabit(db, {
+      project_id: 'me',
+      title: 'Stretch',
+      duration_minutes: 15,
+      days_of_week: '1,3,5',
+      start_time: '07:00',
+      timezone: 'UTC',
+    });
+    const fixedInstances = generateHabitInstances(db, fixed.id, '2026-07-13', '2026-07-19');
+    completeHabitInstance(db, fixedInstances[0].id);
+    expect(habitWeekScore(db, fixed.id, '2026-07-13')).toEqual({
+      done: 1,
+      target: 3,
+    });
   });
 });

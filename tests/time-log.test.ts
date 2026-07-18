@@ -92,14 +92,14 @@ describe('time log', () => {
       expect(row.source).toBe('manual');
     });
 
-    it('rejects when neither task_id nor project_id supplied', () => {
+    it('rejects when none of task_id, project_id, goal_id supplied', () => {
       const db = setup();
       expect(() =>
         logTime(db, {
           started_at: '2026-05-04T09:00:00Z',
           stopped_at: '2026-05-04T10:00:00Z',
         }),
-      ).toThrow(/either task_id or project_id/);
+      ).toThrow(/one of task_id, project_id, or goal_id/);
     });
 
     it('rejects inverted timestamps (stopped_at <= started_at)', () => {
