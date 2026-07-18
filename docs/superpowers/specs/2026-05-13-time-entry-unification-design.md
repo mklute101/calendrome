@@ -173,7 +173,7 @@ List pending entries, then accept **one freeform sentence**. Not a sequential wa
 ```
 Yesterday has 4 entries waiting for review:
   · A2-151 WebKit hotfix       2.0h placed (09:00–11:00)
-  · ATN Internal Meeting       0.5h placed (14:00–14:30)
+  · ACME Internal Meeting       0.5h placed (14:00–14:30)
   · Beehiiv feed (A2-150)      2.0h placed (11:00–13:00)
   · SAN PR review              1.0h placed (15:00–16:00)
 
@@ -236,7 +236,7 @@ Skill content unchanged. The schema it writes on first run is the new unified on
 
 Use the current `log_time` tool to fill May 2026 5/4–5/7 gaps so `time_log` is the record we want to preserve. Specifically:
 
-- ~18h ATN beehiiv work (tasks #17/#19/#1; see task notes for per-day breakdowns)
+- ~18h ACME beehiiv work (tasks #17/#19/#1; see task notes for per-day breakdowns)
 - ~37h SAN WEB-1806 bulk-imported tasks (#52, #53, #54, #68, #69, #70, plus any siblings)
 - Any other task with `time_spent_minutes > 0` and no matching `time_log` row in 2026-05-01..2026-05-08
 

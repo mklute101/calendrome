@@ -65,7 +65,7 @@ Use the list-then-one-sentence pattern (same as `/today`):
 ```
 3 entries from this range still pending review:
   · Tue · A2-151 WebKit hotfix      2.0h placed
-  · Wed · ATN Internal Meeting       0.5h placed
+  · Wed · ACME Internal Meeting       0.5h placed
   · Fri · Beehiiv feed (A2-150)      2.0h placed
 
 How should we resolve these before push? (or say 'force' to push anyway)
