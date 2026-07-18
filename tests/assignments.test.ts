@@ -376,6 +376,98 @@ describe('getEnvelopes', () => {
     expect(acme.status_line).toBe('Snoozed this week');
   });
 
+  // The caps-vs-floors law (#119): a project cap nags down only —
+  // never 'underfunded', there's no virtue in hitting a cap exactly.
+  // A goal/habit floor nags up only — never 'overspent' for
+  // over-doing, even past an explicit assignment.
+  it('caps nag down only: a cap under its assignment is on_track, never underfunded', () => {
+    const db = setup();
+    // acme cap 1200, zero activity — YNAB would call that "underfunded";
+    // a bare cap must not.
+    const acme = getEnvelopes(db, WEEK).find((r) => r.envelope_id === 'acme')!;
+    expect(acme.funding).toBe('on_track');
+    expect(acme.needed_minutes).toBe(0);
+  });
+
+  it('floors nag up only: activity past the ask/assignment is never overspent', () => {
+    const db = setup();
+    const goal = createGoal(db, {
+      project_id: 'hobby',
+      title: 'Spanish',
+      target_minutes: 180,
+      refill_period: 'week',
+    });
+    // 4h confirmed against a 3h ask, with an explicit 2h assignment —
+    // both "overages" are over-doing a floor, which is fine.
+    insertTimeEntry(db, {
+      project_id: 'hobby',
+      goal_id: goal.id,
+      start_at: '2026-07-14T18:00:00Z',
+      end_at: '2026-07-14T22:00:00Z',
+      status: 'CONFIRMED',
+      source: 'manual',
+    });
+    assignHours(db, {
+      envelope_type: 'goal',
+      envelope_id: String(goal.id),
+      week_start: WEEK,
+      minutes: 120,
+    });
+
+    // Same shape for a habit floor: 45m scheduled, assignment cut to 30m.
+    const habit = createHabit(db, {
+      project_id: 'hobby',
+      title: 'Workout',
+      duration_minutes: 45,
+      times_per_week: 1,
+      start_time: '17:30',
+    });
+    generateHabitInstances(db, habit.id, '2026-07-13', '2026-07-19');
+    assignHours(db, {
+      envelope_type: 'habit',
+      envelope_id: String(habit.id),
+      week_start: WEEK,
+      minutes: 30,
+    });
+
+    const rows = getEnvelopes(db, WEEK);
+    const goalRow = rows.find(
+      (r) => r.envelope_type === 'goal' && r.envelope_id === String(goal.id),
+    )!;
+    expect(goalRow.needed_minutes).toBe(0);
+    expect(goalRow.funding).toBe('on_track');
+    expect(goalRow.status_line).toBe('On track');
+
+    const habitRow = rows.find(
+      (r) => r.envelope_type === 'habit' && r.envelope_id === String(habit.id),
+    )!;
+    expect(habitRow.needed_minutes).toBe(0);
+    expect(habitRow.funding).toBe('on_track');
+
+    // A floor with an uncovered ask is still underfunded, with the
+    // status line and needed_minutes on the same intrinsic basis.
+    const partial = createGoal(db, {
+      project_id: 'hobby',
+      title: 'Guitar',
+      target_minutes: 480,
+      refill_period: 'week',
+    });
+    insertTimeEntry(db, {
+      project_id: 'hobby',
+      goal_id: partial.id,
+      start_at: '2026-07-16T18:00:00Z',
+      end_at: '2026-07-16T21:00:00Z',
+      status: 'CONFIRMED',
+      source: 'manual',
+    });
+    const partialRow = getEnvelopes(db, WEEK).find(
+      (r) => r.envelope_type === 'goal' && r.envelope_id === String(partial.id),
+    )!;
+    expect(partialRow.funding).toBe('underfunded');
+    expect(partialRow.needed_minutes).toBe(300); // 8h ask − 3h done
+    expect(partialRow.status_line).toBe('5h more needed this week');
+  });
+
   it('explicit assignment overrides the standing default', () => {
     const db = setup();
     assignHours(db, {

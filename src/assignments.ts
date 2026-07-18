@@ -71,6 +71,13 @@ export interface EnvelopeRow {
   activity: { confirmed_minutes: number; scheduled_minutes: number };
   /** assigned − (confirmed + scheduled); 0-based when snoozed. */
   available: number;
+  /**
+   * Caps and floors are different forces (#119, spec round 4): a
+   * project cap nags *down* only — 'overspent' when activity exceeds
+   * the assignment, never 'underfunded' (no virtue in hitting a cap
+   * exactly). A goal/habit floor nags *up* only — 'underfunded' while
+   * the week's ask is uncovered, never 'overspent' for over-doing.
+   */
   funding: 'overspent' | 'underfunded' | 'on_track' | 'snoozed';
   status_line: string;
   /**
@@ -339,20 +346,24 @@ export function getEnvelopes(db: DB, weekStart: string): EnvelopeRow[] {
     const activityTotal = confirmed_minutes + scheduled_minutes;
     const available = (assigned ?? 0) - activityTotal;
 
-    // Funding, in precedence order:
+    // Funding, per the caps-vs-floors law (#119): caps nag down only,
+    // floors nag up only. `weeklyAskNeeded !== null` marks a floor
+    // (goal/habit); projects are bare caps. Precedence:
     //   snoozed     — explicit NULL assignment for the week
-    //   overspent   — activity exceeds the assigned minutes
-    //   underfunded — (goals/habits) the week's ask isn't covered yet
-    //   on_track    — otherwise
+    //   overspent   — caps only: activity exceeds the assigned minutes
+    //   underfunded — floors only: the week's ask isn't covered yet
+    //   on_track    — otherwise (a floor past its ask is fine, a cap
+    //                 under its assignment is fine)
+    const isFloor = weeklyAskNeeded !== null;
     let funding: EnvelopeRow['funding'];
     let status_line: string;
     if (explicitRow !== undefined && explicitRow.minutes === null) {
       funding = 'snoozed';
       status_line = 'Snoozed this week';
-    } else if (activityTotal > (assigned ?? 0)) {
+    } else if (!isFloor && activityTotal > (assigned ?? 0)) {
       funding = 'overspent';
       status_line = `Overspent: ${fmtHours(activityTotal)} of ${fmtHours(assigned ?? 0)}`;
-    } else if (weeklyAskNeeded !== null && weeklyAskNeeded > 0) {
+    } else if (isFloor && weeklyAskNeeded > 0) {
       funding = 'underfunded';
       status_line = `${fmtHours(weeklyAskNeeded)} more needed this week`;
     } else {

@@ -648,10 +648,12 @@ body.dragging * { cursor: grabbing !important; }
   cursor: default;
 }
 .pill-on_track { background: color-mix(in srgb, #3fb950 20%, transparent); color: #3fb950; }
-.pill-underfunded { background: color-mix(in srgb, #d29922 20%, transparent); color: #d29922; cursor: pointer; }
+/* Underfunded floors are informational, not clickable (#119): the
+   remedy is placing sessions, not pulling hours. */
+.pill-underfunded { background: color-mix(in srgb, #d29922 20%, transparent); color: #d29922; }
 .pill-overspent { background: color-mix(in srgb, #f85149 20%, transparent); color: #f85149; cursor: pointer; }
 .pill-snoozed { background: color-mix(in srgb, #8b949e 18%, transparent); color: #8b949e; }
-.pill-underfunded:hover, .pill-overspent:hover { border-color: currentColor; }
+.pill-overspent:hover { border-color: currentColor; }
 .pill:disabled { cursor: default; }
 
 /* "Cover from…" popover — the click-to-pull menu. */
