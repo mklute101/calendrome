@@ -184,6 +184,45 @@ describe('MCP tools layer', () => {
     expect(rows[0].start_at).toBe('2026-04-14T10:00:00Z');
     expect(rows[0].end_at).toBe('2026-04-14T11:00:00Z');
     expect(placed.time_entry_id).toBe(rows[0].id);
+    // In-window placement — nothing to mention.
+    expect(placed.note).toBeUndefined();
+  });
+
+  it('place_task and move_placement outside the window just work, with a note', async () => {
+    const db = freshDb();
+    createProject(db, { id: 'acme', name: 'Acme Corp', prefix: 'ACME' });
+    const tools = buildTools(db, { calendar: new FakeCalendarClient() });
+
+    const t = await getTool(tools, 'create_task').handler({
+      project_id: 'acme',
+      title: 'Evening push',
+      duration_minutes: 60,
+    });
+
+    // Tue 19:00 UTC — outside the seeded Mon–Fri 09:00–17:00 work
+    // window. Windows are guidelines: no open_time needed, the
+    // placement lands and the response carries a calm note.
+    const placed = await getTool(tools, 'place_task').handler({
+      task_id: t.task.id,
+      start: '2026-04-14T19:00:00Z',
+    });
+    expect(placed.time_entry_id).toBeGreaterThan(0);
+    expect(placed.note).toMatch(/outside the usual work hours/i);
+
+    // Move it into the window → the note disappears.
+    const movedIn = await getTool(tools, 'move_placement').handler({
+      time_entry_id: placed.time_entry_id,
+      new_start_at: '2026-04-14T10:00:00Z',
+    });
+    expect(movedIn.moved).toBe(true);
+    expect(movedIn.note).toBeUndefined();
+
+    // Move it back out → the note returns.
+    const movedOut = await getTool(tools, 'move_placement').handler({
+      time_entry_id: placed.time_entry_id,
+      new_start_at: '2026-04-18T09:00:00Z', // Saturday
+    });
+    expect(movedOut.note).toMatch(/outside the usual work hours/i);
   });
 
   it('unplace_task deletes the calendar event and resets task status', async () => {

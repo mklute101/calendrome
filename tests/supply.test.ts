@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { freshDb } from './helpers/db.js';
-import { computeWeekSupply } from '../src/supply.js';
+import { computeWeekSupply, placementNote } from '../src/supply.js';
 import { createAvailabilityOverride } from '../src/availability.js';
 import { createProject } from '../src/projects.js';
 import { assignHours } from '../src/assignments.js';
@@ -53,6 +53,7 @@ describe('computeWeekSupply', () => {
       event_minutes: 0,
       blocked_minutes: 0,
       opened_minutes: 0,
+      scheduled_outside_minutes: 0,
       supply_minutes: 2400,
     });
     const personal = byCat(supply, 'personal');
@@ -220,5 +221,199 @@ describe('computeWeekSupply', () => {
     const supply = computeWeekSupply(db, WEEK);
     expect(supply.assigned_minutes).toBe(5000);
     expect(supply.to_be_assigned_minutes).toBe(4080 - 5000); // −920
+  });
+});
+
+// Windows are guidelines, not rules: out-of-window scheduled time
+// claims its own hours (scheduled_outside_minutes) — placing there
+// IS the override, no open_time ceremony.
+describe('computeWeekSupply — out-of-window scheduled time self-supplies', () => {
+  function addPlacement(
+    db: any,
+    start: string,
+    end: string,
+    projectId: string | null = 'acme',
+  ) {
+    db.prepare(
+      `INSERT INTO time_entry (start_at, end_at, project_id, source)
+       VALUES (?, ?, ?, 'placement')`,
+    ).run(start, end, projectId);
+  }
+
+  function workDb() {
+    const db = freshDb();
+    createProject(db, { id: 'acme', name: 'Acme', prefix: 'ACME' });
+    return db;
+  }
+
+  it('an evening work placement adds its minutes to work supply', () => {
+    const db = workDb();
+    // Sat 09:00–11:00 — outside the Mon–Fri work window entirely,
+    // and outside the personal evening window too.
+    addPlacement(db, '2026-07-18T09:00:00Z', '2026-07-18T11:00:00Z');
+
+    const supply = computeWeekSupply(db, WEEK);
+    const work = byCat(supply, 'work');
+    expect(work.scheduled_outside_minutes).toBe(120);
+    expect(work.supply_minutes).toBe(2400 + 120);
+    expect(byCat(supply, 'personal').scheduled_outside_minutes).toBe(0);
+    expect(supply.total_supply_minutes).toBe(4080 + 120);
+  });
+
+  it('a placement straddling the window edge only mints the outside portion', () => {
+    const db = workDb();
+    // Tue 16:00–18:30 — work window ends 17:00, so 90 min are outside.
+    // (18:00–18:30 falls in the personal *window*, but that shapes the
+    // personal pool, not work's — work still claims its outside slice.)
+    addPlacement(db, '2026-07-14T16:00:00Z', '2026-07-14T18:30:00Z');
+
+    const work = byCat(computeWeekSupply(db, WEEK), 'work');
+    expect(work.scheduled_outside_minutes).toBe(90);
+    expect(work.supply_minutes).toBe(2400 + 90);
+  });
+
+  it('fully in-window placements mint nothing', () => {
+    const db = workDb();
+    addPlacement(db, '2026-07-14T10:00:00Z', '2026-07-14T12:00:00Z');
+
+    const work = byCat(computeWeekSupply(db, WEEK), 'work');
+    expect(work.scheduled_outside_minutes).toBe(0);
+    expect(work.supply_minutes).toBe(2400);
+  });
+
+  it('time inside an open_time is already counted — no double mint', () => {
+    const db = workDb();
+    createAvailabilityOverride(db, {
+      start: '2026-07-18T09:00:00Z',
+      end: '2026-07-18T12:00:00Z',
+      available: 1,
+      category_id: 'work',
+    });
+    addPlacement(db, '2026-07-18T09:00:00Z', '2026-07-18T11:00:00Z');
+
+    const work = byCat(computeWeekSupply(db, WEEK), 'work');
+    expect(work.opened_minutes).toBe(180);
+    expect(work.scheduled_outside_minutes).toBe(0);
+    expect(work.supply_minutes).toBe(2400 + 180);
+  });
+
+  it('an explicit block is explicit intent — placing over it mints nothing', () => {
+    const db = workDb();
+    createAvailabilityOverride(db, {
+      start: '2026-07-18T09:00:00Z',
+      end: '2026-07-18T12:00:00Z',
+      available: 0,
+      category_id: 'work',
+    });
+    // Sat 09:00–11:00 sits inside the block → 0; Sat 13:00–14:00 is
+    // plain out-of-window → mints 60.
+    addPlacement(db, '2026-07-18T09:00:00Z', '2026-07-18T11:00:00Z');
+    addPlacement(db, '2026-07-18T13:00:00Z', '2026-07-18T14:00:00Z');
+
+    const work = byCat(computeWeekSupply(db, WEEK), 'work');
+    expect(work.scheduled_outside_minutes).toBe(60);
+    expect(work.supply_minutes).toBe(2400 + 60);
+  });
+
+  it('time occupied by a synced event mints nothing', () => {
+    const db = workDb();
+    addGcalEvent(db, '2026-07-18T09:00:00Z', '2026-07-18T10:00:00Z');
+    addPlacement(db, '2026-07-18T09:00:00Z', '2026-07-18T10:00:00Z');
+
+    const work = byCat(computeWeekSupply(db, WEEK), 'work');
+    expect(work.scheduled_outside_minutes).toBe(0);
+  });
+
+  it('overlapping placements merge — shared minutes mint once', () => {
+    const db = workDb();
+    addPlacement(db, '2026-07-18T09:00:00Z', '2026-07-18T10:00:00Z');
+    addPlacement(db, '2026-07-18T09:30:00Z', '2026-07-18T10:30:00Z');
+
+    const work = byCat(computeWeekSupply(db, WEEK), 'work');
+    expect(work.scheduled_outside_minutes).toBe(90); // 09:00–10:30 once
+  });
+
+  it('a personal placement during work hours mints personal supply (the beautiful day)', () => {
+    const db = freshDb();
+    createProject(db, {
+      id: 'mtb',
+      name: 'Mountain Biking',
+      prefix: 'MTB',
+      category_id: 'personal',
+    });
+    // Tue 14:00–16:00 — inside the work window, outside personal's.
+    addPlacement(db, '2026-07-14T14:00:00Z', '2026-07-14T16:00:00Z', 'mtb');
+
+    const supply = computeWeekSupply(db, WEEK);
+    expect(byCat(supply, 'personal').scheduled_outside_minutes).toBe(120);
+    expect(byCat(supply, 'work').scheduled_outside_minutes).toBe(0);
+  });
+});
+
+describe('placementNote', () => {
+  function noteFor(db: any, start: string, end: string, projectId = 'acme') {
+    return placementNote(db, {
+      start_at: start,
+      end_at: end,
+      project_id: projectId,
+    });
+  }
+
+  function workDb() {
+    const db = freshDb();
+    createProject(db, { id: 'acme', name: 'Acme', prefix: 'ACME' });
+    return db;
+  }
+
+  it('in-window slot → no note', () => {
+    const db = workDb();
+    expect(noteFor(db, '2026-07-14T10:00:00Z', '2026-07-14T12:00:00Z')).toBeNull();
+  });
+
+  it('fully out-of-window slot → calm supply note', () => {
+    const db = workDb();
+    const note = noteFor(db, '2026-07-14T19:00:00Z', '2026-07-14T21:00:00Z');
+    expect(note).toMatch(/outside the usual work hours/i);
+    expect(note).toMatch(/counts as extra work supply/i);
+  });
+
+  it('straddling slot → mentions the outside minutes', () => {
+    const db = workDb();
+    const note = noteFor(db, '2026-07-14T16:00:00Z', '2026-07-14T18:00:00Z');
+    expect(note).toMatch(/60m of this slot/);
+  });
+
+  it('slot inside an open_time → no note (announced availability)', () => {
+    const db = workDb();
+    createAvailabilityOverride(db, {
+      start: '2026-07-18T09:00:00Z',
+      end: '2026-07-18T12:00:00Z',
+      available: 1,
+      category_id: 'work',
+    });
+    expect(noteFor(db, '2026-07-18T09:00:00Z', '2026-07-18T11:00:00Z')).toBeNull();
+  });
+
+  it('slot over an explicit block → firmer heads-up', () => {
+    const db = workDb();
+    createAvailabilityOverride(db, {
+      start: '2026-07-14T10:00:00Z',
+      end: '2026-07-14T12:00:00Z',
+      available: 0,
+      category_id: 'work',
+    });
+    const note = noteFor(db, '2026-07-14T10:00:00Z', '2026-07-14T11:00:00Z');
+    expect(note).toMatch(/overlaps time you blocked/);
+  });
+
+  it("another category's block is not this placement's problem", () => {
+    const db = workDb();
+    createAvailabilityOverride(db, {
+      start: '2026-07-14T10:00:00Z',
+      end: '2026-07-14T12:00:00Z',
+      available: 0,
+      category_id: 'personal',
+    });
+    expect(noteFor(db, '2026-07-14T10:00:00Z', '2026-07-14T11:00:00Z')).toBeNull();
   });
 });
