@@ -64,7 +64,7 @@ export function WeekView({
     await Promise.all([refetch(), panelTasks.refetch()]);
   }, [refetch, panelTasks.refetch]);
 
-  usePolling(refetchAll, 5000, dragActive || mutating);
+  usePolling(refetchAll, 2000, dragActive || mutating);
 
   const taskActions = useTaskActions(refetchAll);
 

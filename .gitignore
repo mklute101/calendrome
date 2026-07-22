@@ -18,3 +18,4 @@ dist/
 website/docs.json
 src-tauri/target/
 src-tauri/gen/
+.tauri-dev.log

@@ -20,8 +20,8 @@
  * preflight we never answer, and form posts carry a foreign Origin.
  */
 import express from 'express';
-import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { readFileSync, statSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { openDatabase } from '../db/connection.js';
 import { migrate } from '../db/migrate.js';
@@ -55,7 +55,14 @@ import {
 import type { EnvelopeRef, EnvelopeType } from '../assignments.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const DB_PATH = process.env.CALENDROME_DB ?? 'calendrome.db';
+// Absolute always: the server is spawned from three different cwds
+// (Tauri shell, gui_start launcher, manual npm run gui), and a
+// cwd-relative default silently opens/creates a different empty DB
+// (#132). The compiled file lives at dist/src/gui, so ../../.. is the
+// repo root.
+const DB_PATH = resolve(
+  process.env.CALENDROME_DB ?? join(__dirname, '..', '..', '..', 'calendrome.db'),
+);
 // CALENDROME_GUI_PORT is the specific override (for machines where
 // something else also reads PORT); bare PORT is what the sandbox
 // skill documents and what people reach for first (#75).
@@ -74,6 +81,9 @@ export function createApp(
   }
 
   const app = express();
+  // No ETag on API responses: a webview revalidating against a weak
+  // ETag is one more way to see stale data (#132).
+  app.set('etag', false);
   app.use(express.json());
   app.use(express.static(join(__dirname, 'public'), { extensions: ['html'] }));
 
@@ -84,6 +94,8 @@ export function createApp(
   // Origin guard for writes (see header). GET stays unguarded — the
   // payloads are already readable by any local process via the DB.
   app.use('/api', (req, res, next) => {
+    // Freshness data must never come from an HTTP cache (#132).
+    res.set('Cache-Control', 'no-store');
     if (req.method === 'GET') return next();
     const origin = req.headers.origin;
     if (origin && !isLocalGuiOrigin(origin)) {
@@ -111,6 +123,29 @@ export function createApp(
     if (!Number.isInteger(id)) throw new Error(`invalid id: ${req.params.id}`);
     return id;
   };
+
+  /**
+   * Change stamp for client freshness polling (#132). Derived from
+   * the mtimes of the DB file and its WAL sidecar — any committed
+   * write (WAL append or checkpoint) changes the stamp, pure reads
+   * don't, and no SQLite connection is opened (PRAGMA data_version is
+   * per-connection, meaningless under open-per-request; a long-lived
+   * watch connection would re-open #90). The response names the
+   * absolute DB path so "which DB is this server serving?" is one
+   * curl away.
+   */
+  app.get('/api/version', (_req, res) => {
+    const stamp = ['', '-wal']
+      .map((suffix) => {
+        try {
+          return statSync(dbPath + suffix).mtimeMs;
+        } catch {
+          return 0;
+        }
+      })
+      .join('-');
+    res.json({ db: resolve(dbPath), stamp });
+  });
 
   /**
    * List active projects with budgets and Harvest mappings.

@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { usePolling } from '../hooks/usePolling';
 import { useTasksData } from '../hooks/useTasksData';
 import { useTaskActions } from '../hooks/useTaskActions';
 import { compareTasks, TaskRow } from './TaskRow';
@@ -9,6 +10,8 @@ type SortKey = 'priority' | 'due' | 'duration';
 /** Full-page tasks view (#/tasks) — port of the legacy tasks.html. */
 export function TasksPage({ categoryView }: { categoryView: string }) {
   const { tasks, meta, error, refetch } = useTasksData();
+  // External writes (MCP, another view) surface here too (#132).
+  usePolling(refetch, 2000, false);
   const actions = useTaskActions(refetch);
   const [tab, setTab] = useState<'priorities' | 'tasks'>('priorities');
   const [search, setSearch] = useState('');

@@ -52,6 +52,8 @@ function post<T>(path: string, body?: unknown): Promise<T> {
 
 // ---- reads ----
 
+export const fetchVersion = () =>
+  request<{ db: string; stamp: string }>('/api/version');
 export const fetchProjects = () => request<Project[]>('/api/projects');
 export const fetchWeek = (start: string) =>
   request<WeekPayload>(`/api/week?start=${start}`);

@@ -78,7 +78,7 @@ export function BudgetView({
 
   // Same 5s cadence as the week view; paused while a cell is being
   // edited or the pull menu is open so a poll can't yank the UI away.
-  usePolling(refetch, 5000, editing !== null || pullFor !== null);
+  usePolling(refetch, 2000, editing !== null || pullFor !== null);
 
   const visible = useMemo(() => {
     if (!envelopes) return [];
