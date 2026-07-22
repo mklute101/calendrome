@@ -134,7 +134,9 @@ sentence — never a click path.
   Rust toolchain; run on the target machine)
 - GUI write posture: binds 127.0.0.1, no CORS, non-local Origin
   writes rejected — see the `src/gui/server.ts` header
-- Planner skill: `.claude/skills/week.md`
+- Planner skill: `plugin/skills/week/SKILL.md` (the legacy
+  `.claude/skills/week.md` template was retired — it fetched Mon–Fri
+  only and never synced, a live wrong-cadence path, #133)
 - When adding tools: update `src/mcp/tools/index.ts` + the surface
   check in `tests/mcp-tools.test.ts`
 - Schema: `src/db/schema.sql` (idempotent `IF NOT EXISTS`)

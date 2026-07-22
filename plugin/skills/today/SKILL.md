@@ -99,15 +99,15 @@ Call Google Calendar `list_events`:
 
 Calendrome does **not** auto-sync Google Calendar — events only land in it when imported. Right after fetching the calendar, push the fetched window into calendrome so its layout matches reality (otherwise blocks, the week view, and EOD review silently miss meetings).
 
-Call `mcp__calendrome__sync_calendar_events` with the events from Step 1:
+Call `mcp__calendrome__sync_calendar_events` with **every** event fetched in Step 1 — the full two-week payload, all pages, never today's slice:
 
-- `window: { from: "<this Monday ISO date>", to: "<next Sunday ISO date>" }` — the range fetched in Step 1. This prunes synced-but-since-cancelled meetings inside the window; it only ever removes UNCONFIRMED gcal-sync rows, so placements, confirmed time, and habits are safe. (Do **not** pass the legacy `clear_range` — `window` supersedes it.)
-- Skip `transparency: "transparent"` / `AVAILABILITY_FREE` reminder-type events (bill reminders, tentative holds) — those are nudges, not blockers. Skipping them is safe with `window`: they were never synced, so there's nothing to prune.
+- `window: { from: "<the exact timeMin string>", to: "<the exact timeMax string>" }` — the verbatim bounds of the Step 1 fetch. Timestamp bounds prune exactly the fetched range, so prune scope equals fetch scope; syncing a subset of the fetch (e.g. only today) against that window deletes everything else in it — the "my Wednesday vanished" failure (#133). It only ever removes UNCONFIRMED gcal-sync rows, so placements, confirmed time, and habits are safe.
+- Skip an event **only** when its `transparency` is `"transparent"` / `AVAILABILITY_FREE` (bill reminders, tentative holds), or you yourself declined it. Nothing else is ever skipped — no relevance judgment calls; a skipped event is invisible in calendrome. Skipping free events is safe with `window`: they were never synced, so there's nothing to prune.
 - `is_meeting: true` for anything multi-attendee or sync/standup/review-like; `false` otherwise.
 - `project_id`: match the event title against `project_prefixes` (case-insensitive substring vs `name`); use that prefix's `project_id`, else `personal` for clearly personal items, else omit. When omitted, calendrome's own `meeting_project_mappings` rules apply server-side — for recurring meetings, prefer creating a durable rule once (`add_meeting_project_mapping { pattern, project_id }`) over re-matching titles every brief.
 - Pass each event's Google `id` and `calendar_id` verbatim — the import **upserts by id**, so re-running the brief is idempotent and won't create duplicates.
 
-This runs every morning brief, silently — only surface it if the sync errors. For the rest of the brief (Step 2 onward), work from today's slice of the fetched events.
+This runs every morning brief, silently **unless** the sync errors or the result reports `deleted > 0`, `prune_refused`, or `inserted + updated < received` — then name the pruned/refused/collapsed events in one line (a deletion is never silent, #133). For the rest of the brief (Step 2 onward), work from today's slice of the fetched events — the slice is for presentation only, never for the sync payload.
 
 ### Step 2 — Extract Jira context from calendar events
 

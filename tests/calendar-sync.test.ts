@@ -1,10 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { freshDb } from './helpers/db.js';
-import {
-  syncCalendarEvents,
-  deleteCalendarEventsInRange,
-  listCalendarEvents,
-} from '../src/calendar-sync.js';
+import { syncCalendarEvents, listCalendarEvents } from '../src/calendar-sync.js';
 
 describe('calendar-sync', () => {
   it('syncCalendarEvents upserts events and computes duration', () => {
@@ -28,8 +24,11 @@ describe('calendar-sync', () => {
       },
     ]);
 
-    expect(result.upserted).toBe(2);
+    expect(result.received).toBe(2);
+    expect(result.inserted).toBe(2);
+    expect(result.updated).toBe(0);
     expect(result.deleted).toBe(0);
+    expect(result.warnings).toEqual([]);
 
     const events = listCalendarEvents(db, '2026-05-05T00:00:00', '2026-05-05T23:59:59');
     expect(events).toHaveLength(2);
@@ -41,44 +40,38 @@ describe('calendar-sync', () => {
     expect(events[1].is_meeting).toBe(0);
   });
 
-  it('syncCalendarEvents with clear_range deletes old events first', () => {
+  it('splits inserted vs updated across re-syncs', () => {
     const db = freshDb();
+    const event = {
+      id: 'evt-1',
+      calendar_id: 'cal-work',
+      summary: 'Standup',
+      start: '2026-05-05T10:00:00Z',
+      end: '2026-05-05T10:30:00Z',
+      is_meeting: true,
+    };
+    const first = syncCalendarEvents(db, [event]);
+    expect(first.inserted).toBe(1);
+    expect(first.updated).toBe(0);
 
-    // Seed an existing event
-    syncCalendarEvents(db, [
-      {
-        id: 'old-evt',
-        calendar_id: 'cal-work',
-        summary: 'Old Meeting',
-        start: '2026-05-05T09:00:00Z',
-        end: '2026-05-05T09:30:00Z',
-        is_meeting: true,
-      },
-    ]);
+    const second = syncCalendarEvents(db, [event]);
+    expect(second.inserted).toBe(0);
+    expect(second.updated).toBe(1);
+  });
 
-    // Clear and re-sync
-    const deleted = deleteCalendarEventsInRange(
-      db,
-      '2026-05-05T00:00:00Z',
-      '2026-05-05T23:59:59Z',
-    );
-    expect(deleted).toBe(1);
-
-    const result = syncCalendarEvents(db, [
-      {
-        id: 'new-evt',
-        calendar_id: 'cal-work',
-        summary: 'New Meeting',
-        start: '2026-05-05T10:00:00Z',
-        end: '2026-05-05T11:00:00Z',
-        is_meeting: true,
-      },
-    ]);
-    expect(result.upserted).toBe(1);
-
-    const events = listCalendarEvents(db, '2026-05-05T00:00:00', '2026-05-05T23:59:59');
-    expect(events).toHaveLength(1);
-    expect(events[0].id).toBe('new-evt');
+  it('warns when the payload carries duplicate ids (upsert collapses them)', () => {
+    const db = freshDb();
+    const e = (summary: string) => ({
+      id: 'evt-dup',
+      calendar_id: 'cal-work',
+      summary,
+      start: '2026-05-05T10:00:00Z',
+      end: '2026-05-05T11:00:00Z',
+    });
+    const result = syncCalendarEvents(db, [e('first'), e('second')]);
+    expect(result.received).toBe(2);
+    expect(result.inserted + result.updated).toBe(1);
+    expect(result.warnings.join(' ')).toMatch(/duplicate/);
   });
 
   it('listCalendarEvents returns events in date range', () => {
@@ -159,20 +152,6 @@ describe('calendar-sync', () => {
     expect(row.start_at).toBe('2026-05-13T10:00:00Z');  // updated
     expect(row.end_at).toBe('2026-05-13T10:30:00Z');    // updated
     expect(row.notes).toBe('Standup (moved)');     // updated
-  });
-
-  it('deleteCalendarEventsInRange removes UNCONFIRMED gcal-sync time_entry rows but preserves CONFIRMED ones', () => {
-    const db = freshDb();
-    syncCalendarEvents(db, [
-      { id: 'evt-unc', calendar_id: 'c', summary: 'A', start: '2026-05-13T09:00:00Z', end: '2026-05-13T10:00:00Z' },
-      { id: 'evt-conf', calendar_id: 'c', summary: 'B', start: '2026-05-13T11:00:00Z', end: '2026-05-13T12:00:00Z' },
-    ]);
-    db.prepare(`UPDATE time_entry SET status='CONFIRMED', confirmed_at=datetime('now') WHERE external_id='evt-conf'`).run();
-
-    deleteCalendarEventsInRange(db, '2026-05-13T00:00:00Z', '2026-05-13T23:59:59Z');
-
-    const survivors = db.prepare(`SELECT external_id, status FROM time_entry WHERE source='gcal-sync'`).all();
-    expect(survivors).toEqual([{ external_id: 'evt-conf', status: 'CONFIRMED' }]);
   });
 
   it('duplicate IDs are updated (not duplicated)', () => {
@@ -258,6 +237,9 @@ describe('window prune — mirror semantics (#93)', () => {
     );
 
     expect(result.deleted).toBe(1);
+    expect(result.pruned_events).toEqual([
+      { id: 'cancelled', summary: 'event cancelled', start: '2026-07-08T14:00:00Z' },
+    ]);
     const ids = db
       .prepare(`SELECT external_id FROM time_entry WHERE source = 'gcal-sync'`)
       .all()
@@ -270,7 +252,7 @@ describe('window prune — mirror semantics (#93)', () => {
     syncCalendarEvents(db, [evt('done', '2026-07-07T10:00:00Z', '2026-07-07T11:00:00Z')]);
     db.prepare(`UPDATE time_entry SET status = 'CONFIRMED' WHERE external_id = 'done'`).run();
 
-    const result = syncCalendarEvents(db, [], WINDOW);
+    const result = syncCalendarEvents(db, [], WINDOW, { allow_empty_prune: true });
 
     expect(result.deleted).toBe(0);
     expect(
@@ -288,7 +270,7 @@ describe('window prune — mirror semantics (#93)', () => {
       `).run(source, source === 'placement' ? 'gcal-evt-123' : null);
     }
 
-    const result = syncCalendarEvents(db, [], WINDOW);
+    const result = syncCalendarEvents(db, [], WINDOW, { allow_empty_prune: true });
 
     expect(result.deleted).toBe(0);
     expect(db.prepare(`SELECT COUNT(*) AS n FROM time_entry`).get()).toEqual({ n: 3 });
@@ -301,26 +283,58 @@ describe('window prune — mirror semantics (#93)', () => {
       evt('next-month', '2026-08-03T10:00:00Z', '2026-08-03T11:00:00Z'),
     ]);
 
-    const result = syncCalendarEvents(db, [], WINDOW);
+    const result = syncCalendarEvents(db, [], WINDOW, { allow_empty_prune: true });
 
     expect(result.deleted).toBe(0);
     expect(db.prepare(`SELECT COUNT(*) AS n FROM time_entry`).get()).toEqual({ n: 2 });
   });
 
-  it('window bounds are inclusive UTC day buckets, first and last day included', () => {
+  it('plain-date window bounds are inclusive UTC day buckets', () => {
     const db = freshDb();
     syncCalendarEvents(db, [
       evt('first-day', '2026-07-06T08:00:00Z', '2026-07-06T09:00:00Z'),
       evt('last-day', '2026-07-12T22:00:00Z', '2026-07-12T23:00:00Z'),
     ]);
 
-    // Timestamp-form bounds must behave identically to plain dates (#92).
+    const result = syncCalendarEvents(db, [], WINDOW, { allow_empty_prune: true });
+
+    expect(result.deleted).toBe(2);
+  });
+
+  it('timestamp window bounds prune exactly the fetch range (#133)', () => {
+    const db = freshDb();
+    syncCalendarEvents(db, [
+      evt('in-range', '2026-07-06T08:00:00Z', '2026-07-06T09:00:00Z'),
+      evt('after-bound', '2026-07-12T22:00:00Z', '2026-07-12T23:00:00Z'),
+    ]);
+
+    // A day-bucket window would also prune 'after-bound'; exact
+    // timestamps keep prune scope equal to fetch scope.
     const result = syncCalendarEvents(db, [], {
       from: '2026-07-06T00:00:00Z',
       to: '2026-07-12T00:00:00Z',
-    });
+    }, { allow_empty_prune: true });
 
-    expect(result.deleted).toBe(2);
+    expect(result.deleted).toBe(1);
+    expect(result.pruned_events.map((e) => e.id)).toEqual(['in-range']);
+  });
+
+  it('timestamp bounds accept local offsets — the verbatim fetch timeMin/timeMax', () => {
+    const db = freshDb();
+    syncCalendarEvents(db, [
+      // 7pm CDT Sunday = next-UTC-day Monday 00:00Z: the event that
+      // UTC-day bucketing used to prune from a neighboring window.
+      evt('sun-evening', '2026-07-13T00:00:00Z', '2026-07-13T01:00:00Z'),
+    ]);
+
+    const result = syncCalendarEvents(db, [], {
+      from: '2026-07-06T00:00:00-05:00',
+      to: '2026-07-12T23:59:59-05:00',
+    }, { allow_empty_prune: true });
+
+    // Sunday 7pm CDT is inside the local fetch range, so it prunes
+    // only when genuinely missing from the payload — here it is.
+    expect(result.deleted).toBe(1);
   });
 
   it('re-synced events keep their row identity and project assignment', () => {
@@ -350,5 +364,73 @@ describe('window prune — mirror semantics (#93)', () => {
     const result = syncCalendarEvents(db, []);
     expect(result.deleted).toBe(0);
     expect(db.prepare(`SELECT COUNT(*) AS n FROM time_entry`).get()).toEqual({ n: 1 });
+  });
+});
+
+describe('prune guards (#133)', () => {
+  const evt = (id: string, start: string, end: string) => ({
+    id,
+    calendar_id: 'cal-work',
+    summary: `event ${id}`,
+    start,
+    end,
+    is_meeting: true,
+  });
+  const WINDOW = { from: '2026-07-06', to: '2026-07-12' };
+
+  it('refuses a window with an empty payload unless allow_empty_prune', () => {
+    const db = freshDb();
+    syncCalendarEvents(db, [evt('a', '2026-07-07T10:00:00Z', '2026-07-07T11:00:00Z')]);
+
+    expect(() => syncCalendarEvents(db, [], WINDOW)).toThrow(/empty payload/);
+    expect(db.prepare(`SELECT COUNT(*) AS n FROM time_entry`).get()).toEqual({ n: 1 });
+
+    const allowed = syncCalendarEvents(db, [], WINDOW, { allow_empty_prune: true });
+    expect(allowed.deleted).toBe(1);
+  });
+
+  it('refuses a mass prune, names the candidates, and honors confirm_prune', () => {
+    const db = freshDb();
+    // Ten synced events across the week; then a "partial payload" sync
+    // of just two of them with the full-week window.
+    const seeded = Array.from({ length: 10 }, (_, i) => {
+      const day = String((i % 5) + 6).padStart(2, '0');
+      return evt(`e${i}`, `2026-07-${day}T1${i % 8}:00:00Z`, `2026-07-${day}T1${i % 8}:30:00Z`);
+    });
+    syncCalendarEvents(db, seeded);
+
+    const partial = seeded.slice(0, 2);
+    const refused = syncCalendarEvents(db, partial, WINDOW);
+    // 8 candidates > max(5, 2) → refused, nothing deleted.
+    expect(refused.deleted).toBe(0);
+    expect(refused.prune_refused).toHaveLength(8);
+    expect(refused.prune_refused![0]).toHaveProperty('summary');
+    expect(refused.warnings.join(' ')).toMatch(/prune refused/);
+    expect(db.prepare(`SELECT COUNT(*) AS n FROM time_entry`).get()).toEqual({ n: 10 });
+
+    const confirmed = syncCalendarEvents(db, partial, WINDOW, { confirm_prune: true });
+    expect(confirmed.deleted).toBe(8);
+    expect(confirmed.pruned_events).toHaveLength(8);
+    expect(db.prepare(`SELECT COUNT(*) AS n FROM time_entry`).get()).toEqual({ n: 2 });
+  });
+
+  it('small prunes stay unguarded — the routine cancelled-meeting case', () => {
+    const db = freshDb();
+    syncCalendarEvents(db, [
+      evt('keep1', '2026-07-07T10:00:00Z', '2026-07-07T11:00:00Z'),
+      evt('keep2', '2026-07-08T10:00:00Z', '2026-07-08T11:00:00Z'),
+      evt('cancelled', '2026-07-09T10:00:00Z', '2026-07-09T11:00:00Z'),
+    ]);
+
+    const result = syncCalendarEvents(
+      db,
+      [
+        evt('keep1', '2026-07-07T10:00:00Z', '2026-07-07T11:00:00Z'),
+        evt('keep2', '2026-07-08T10:00:00Z', '2026-07-08T11:00:00Z'),
+      ],
+      WINDOW,
+    );
+    expect(result.deleted).toBe(1);
+    expect(result.pruned_events.map((e) => e.id)).toEqual(['cancelled']);
   });
 });

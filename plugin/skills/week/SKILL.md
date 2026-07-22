@@ -101,15 +101,22 @@ budgets only see what's imported, so push the whole fetched week
 before presenting anything (otherwise meetings on days without a
 morning brief are silently missing, #93).
 
-Call `mcp__calendrome__sync_calendar_events` with all events from
-Step 1, plus a `window` matching the fetched range:
+Call `mcp__calendrome__sync_calendar_events` with **every** event
+from Step 1 (all pages, if the calendar MCP paginates — never a
+slice), plus a `window` that is the **verbatim `timeMin`/`timeMax`
+of the fetch**:
 
-- `window: { from: "<this Monday ISO date>", to: "<this Sunday ISO date>" }`
-  — prunes synced-but-since-cancelled meetings inside the window. It
-  only ever removes UNCONFIRMED gcal-sync rows, so placements,
-  confirmed time, and habits are safe.
-- Skip `transparency: "transparent"` / `AVAILABILITY_FREE`
-  reminder-type events — nudges, not blockers.
+- `window: { from: "<the exact timeMin string>", to: "<the exact
+  timeMax string>" }` — prunes synced-but-since-cancelled meetings.
+  Timestamp bounds prune exactly the fetched range, so prune scope
+  equals fetch scope; a payload that is a subset of the fetch deletes
+  everything else in the window, which is why the payload must be the
+  whole fetch. It only ever removes UNCONFIRMED gcal-sync rows, so
+  placements, confirmed time, and habits are safe.
+- Skip an event **only** when its `transparency` is `"transparent"` /
+  `AVAILABILITY_FREE`, or you yourself declined it. Nothing else is
+  ever skipped — no judgment calls about relevance; a skipped event
+  is invisible in calendrome.
 - `is_meeting: true` for anything multi-attendee or
   sync/standup/review-like; `false` otherwise.
 - `project_id`: match the event title against `project_prefixes`
@@ -120,7 +127,10 @@ Step 1, plus a `window` matching the fetched range:
 - Pass each event's Google `id` and `calendar_id` verbatim — the
   import upserts by id, so re-running is idempotent.
 
-Run it silently — only surface errors. Because synced meetings with a
+Run it silently **unless** the result reports `deleted > 0`,
+`prune_refused`, or `inserted + updated < received` — then name the
+pruned/refused/collapsed events in one line (a deletion is never
+silent, #133). Because synced meetings with a
 `project_id` count toward budgets, run Step 1's calendrome calls
 (`get_all_budgets`, `list_tasks`) **after** this sync, not in the
 parallel fan-out with the calendar fetch.
