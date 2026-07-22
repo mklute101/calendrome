@@ -99,7 +99,6 @@ import {
 import { stubCalendar, type CalendarClient } from '../../calendar/index.js';
 import {
   syncCalendarEvents,
-  deleteCalendarEventsInRange,
   type CalendarEventInput,
 } from '../../calendar-sync.js';
 
@@ -1290,18 +1289,24 @@ export function buildTools(
      * If `window` is provided (#93), the sync is a true mirror for
      * that range: after upserting, UNCONFIRMED gcal-sync rows inside
      * the window that are **not** in the payload are pruned — they
-     * were cancelled or rescheduled in Google Calendar. Bounds are
-     * inclusive UTC day buckets. CONFIRMED rows, placements, habits,
-     * and manual entries are never touched, so passing the window is
-     * always safe. Pass a window matching the fetched range on every
-     * sync; omit it only for partial pushes (a single new event).
+     * were cancelled or rescheduled in Google Calendar. CONFIRMED
+     * rows, placements, habits, and manual entries are never touched.
      *
-     * `clear_range` (delete-then-reinsert) is the legacy variant —
-     * prefer `window`, which preserves row identity and any state on
-     * re-synced rows instead of recreating them.
+     * Pass the **verbatim `timeMin`/`timeMax` of the calendar fetch**
+     * as the window and the whole fetched payload (every page): bounds
+     * with a time component prune exactly that range, so prune scope
+     * equals fetch scope by construction (#133). Plain-date bounds
+     * keep the legacy inclusive-UTC-day buckets. Never sync a slice
+     * of the fetch with a window — that deletes everything else in it.
+     *
+     * Guards (#133): a window with an empty payload is refused unless
+     * `allow_empty_prune: true`; a prune deleting more events than
+     * max(5, payload size) is refused with the named candidates in
+     * `prune_refused` unless `confirm_prune: true`. The result names
+     * every pruned event — surface deletions, never swallow them.
      *
      * @example
-     * sync_calendar_events({ events: [...], window: { from: '2026-05-04', to: '2026-05-17' } })
+     * sync_calendar_events({ events: [...], window: { from: '2026-05-04T00:00:00-05:00', to: '2026-05-17T23:59:59-05:00' } })
      *
      * @see list_pending_review, confirm_placement, get_week_layout
      */
@@ -1311,7 +1316,10 @@ export function buildTools(
         'Import external calendar events into Calendrome. ' +
         'If window is provided, unconfirmed synced events in that range ' +
         'missing from the payload are pruned (mirror semantics; safe for ' +
-        'placements). clear_range (legacy) deletes the range first instead.',
+        'placements). Pass the verbatim fetch timeMin/timeMax as the ' +
+        'window and the full fetched payload. Empty-payload and ' +
+        'mass-prune cases are refused without allow_empty_prune / ' +
+        'confirm_prune. Result names every pruned event.',
       inputSchema: {
         type: 'object',
         required: ['events'],
@@ -1340,28 +1348,16 @@ export function buildTools(
             },
             required: ['from', 'to'],
           },
-          clear_range: {
-            type: 'object',
-            properties: {
-              from: { type: 'string' },
-              to: { type: 'string' },
-            },
-            required: ['from', 'to'],
-          },
+          allow_empty_prune: { type: 'boolean' },
+          confirm_prune: { type: 'boolean' },
         },
       },
       async handler(args) {
-        let cleared = 0;
-        if (args.clear_range) {
-          cleared = deleteCalendarEventsInRange(
-            db,
-            args.clear_range.from,
-            args.clear_range.to,
-          );
-        }
         const events: CalendarEventInput[] = args.events ?? [];
-        const result = syncCalendarEvents(db, events, args.window);
-        return { upserted: result.upserted, deleted: result.deleted + cleared };
+        return syncCalendarEvents(db, events, args.window, {
+          allow_empty_prune: args.allow_empty_prune,
+          confirm_prune: args.confirm_prune,
+        });
       },
     },
 

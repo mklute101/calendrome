@@ -6,6 +6,11 @@
  * `sync_calendar_events`. Stored events power the timeline view's
  * meeting/habit overlays and the "available focus time" calculation.
  * Idempotent: re-syncing the same event id updates in place.
+ *
+ * Silent event loss is the failure mode this module defends against
+ * (#133): the prune is guarded (empty-payload and mass-prune refusals)
+ * and the result names every pruned event, so a sync can never delete
+ * more than the caller pushed without saying so.
  */
 import type { DB } from './db/connection.js';
 import { toCanonicalUtc, toDayRange } from './day-range.js';
@@ -38,9 +43,16 @@ export interface CalendarEvent {
  * Prune window for mirror-sync (#93). When provided, gcal-sync
  * UNCONFIRMED rows inside the window whose `external_id` is not in
  * the synced payload are deleted — the event was cancelled or moved
- * out of the window in Google Calendar. Bounds are inclusive UTC day
- * buckets (`day-range.ts`, #92). CONFIRMED rows are historical and
- * always survive; placements/habits/manual rows are never touched.
+ * out of the window in Google Calendar. CONFIRMED rows are historical
+ * and always survive; placements/habits/manual rows are never touched.
+ *
+ * Bound semantics (#133): bounds carrying a time component (`T`) are
+ * exact timestamps — pass the verbatim `timeMin`/`timeMax` of the
+ * calendar fetch and the prune scope equals the fetch scope by
+ * construction. Plain dates keep the legacy inclusive-UTC-day buckets
+ * (`day-range.ts`, #92). Day buckets are wider than a local-timezone
+ * fetch range, which is exactly how evening events stored on the next
+ * UTC day used to get pruned by a neighboring window.
  *
  * The prune is window-global, not per-calendar: it assumes the sync
  * payload is the complete truth for the window. If multiple calendar
@@ -51,11 +63,53 @@ export interface SyncWindow {
   to: string;
 }
 
+export interface SyncOptions {
+  /** Permit pruning with an empty payload (a genuinely empty week). */
+  allow_empty_prune?: boolean;
+  /** Override the mass-prune refusal (see prune-cap guard). */
+  confirm_prune?: boolean;
+}
+
+export interface PrunedEvent {
+  id: string;
+  summary: string;
+  start: string;
+}
+
+export interface SyncResult {
+  /** Events in the payload, duplicates included. */
+  received: number;
+  inserted: number;
+  updated: number;
+  /** Rows pruned by the window (0 when refused or no window). */
+  deleted: number;
+  /** Every pruned event, named — deletions are never silent. */
+  pruned_events: PrunedEvent[];
+  /**
+   * Set when the prune-cap guard refused: the candidates that would
+   * have been deleted. Re-run with `confirm_prune: true` if the mass
+   * deletion is intended.
+   */
+  prune_refused?: PrunedEvent[];
+  warnings: string[];
+}
+
 export function syncCalendarEvents(
   db: DB,
   events: CalendarEventInput[],
   window?: SyncWindow,
-): { upserted: number; deleted: number } {
+  options: SyncOptions = {},
+): SyncResult {
+  // Empty-payload guard (#133): a window plus zero events prunes
+  // everything in the window — almost always a partial-push mistake,
+  // never silently honored.
+  if (window && events.length === 0 && !options.allow_empty_prune) {
+    throw new Error(
+      'refusing to prune with an empty payload — omit window, or pass ' +
+        'allow_empty_prune: true for a genuinely empty range',
+    );
+  }
+
   // Write into the unified time_entry table. On conflict (existing
   // external_id), update only the sync-driven fields and leave confirmation
   // state (status, confirmed_at, actual_minutes, task_id) untouched.
@@ -78,9 +132,42 @@ export function syncCalendarEvents(
   // Explicit assignment (the skill matched a prefix) always wins.
   const resolveProject = buildMeetingProjectResolver(db);
 
-  let upserted = 0;
-  let deleted = 0;
+  const warnings: string[] = [];
+  const uniqueIds = new Set(events.map((e) => e.id));
+  if (uniqueIds.size < events.length) {
+    warnings.push(
+      `payload contains ${events.length - uniqueIds.size} duplicate event ` +
+        'id(s) — later entries overwrote earlier ones',
+    );
+  }
+
+  const result: SyncResult = {
+    received: events.length,
+    inserted: 0,
+    updated: 0,
+    deleted: 0,
+    pruned_events: [],
+    warnings,
+  };
+
   const txn = db.transaction(() => {
+    // Which payload ids already exist? Splits inserted/updated so the
+    // caller can see duplicate-id collapse (received > inserted+updated).
+    const ids = [...uniqueIds];
+    const existing = new Set(
+      ids.length
+        ? (db
+            .prepare(`
+              SELECT external_id FROM time_entry
+               WHERE source = 'gcal-sync'
+                 AND external_id IN (${ids.map(() => '?').join(',')})
+            `)
+            .all(...ids) as { external_id: string }[]
+          ).map((r) => r.external_id)
+        : [],
+    );
+
+    const seen = new Set<string>();
     for (const e of events) {
       upsertTimeEntry.run(
         e.project_id ?? resolveProject(e.summary),
@@ -90,51 +177,74 @@ export function syncCalendarEvents(
         e.is_meeting ? 1 : 0,
         e.summary,
       );
-      upserted++;
+      if (seen.has(e.id)) continue; // duplicate — counted once
+      seen.add(e.id);
+      if (existing.has(e.id)) result.updated++;
+      else result.inserted++;
     }
 
     if (window) {
-      const { fromDay, toDay } = toDayRange(window.from, window.to);
-      const ids = events.map((e) => e.id);
-      const notInPayload = ids.length
-        ? `AND external_id NOT IN (${ids.map(() => '?').join(',')})`
+      // Timestamp bounds prune exactly; plain dates keep day buckets
+      // (see SyncWindow doc).
+      const exact = window.from.includes('T') || window.to.includes('T');
+      let boundsSql: string;
+      let bounds: [string, string];
+      if (exact) {
+        boundsSql = `AND start_at >= ? AND start_at <= ?`;
+        bounds = [
+          toCanonicalUtc(window.from, 'window.from'),
+          toCanonicalUtc(window.to, 'window.to'),
+        ];
+      } else {
+        const { fromDay, toDay } = toDayRange(window.from, window.to);
+        boundsSql = `AND DATE(start_at) >= ? AND DATE(start_at) <= ?`;
+        bounds = [fromDay, toDay];
+      }
+      const payloadIds = [...uniqueIds];
+      const notInPayload = payloadIds.length
+        ? `AND external_id NOT IN (${payloadIds.map(() => '?').join(',')})`
         : '';
-      deleted = db
+      const candidates = db
         .prepare(`
-          DELETE FROM time_entry
+          SELECT external_id AS id, COALESCE(notes, '') AS summary, start_at AS start
+            FROM time_entry
            WHERE source = 'gcal-sync'
              AND status = 'UNCONFIRMED'
              AND external_id IS NOT NULL
-             AND DATE(start_at) >= ?
-             AND DATE(start_at) <= ?
+             ${boundsSql}
              ${notInPayload}
+           ORDER BY start_at
         `)
-        .run(fromDay, toDay, ...ids).changes as number;
+        .all(...bounds, ...payloadIds) as PrunedEvent[];
+
+      // Prune-cap guard (#133): deleting far more events than the
+      // payload holds is the signature of a partial payload synced
+      // against a wide window — refuse and name the candidates
+      // instead of silently wiping days.
+      const cap = Math.max(5, events.length);
+      if (candidates.length > cap && !options.confirm_prune) {
+        result.prune_refused = candidates;
+        warnings.push(
+          `prune refused: ${candidates.length} events would be deleted ` +
+            `(payload has ${events.length}) — likely a partial payload ` +
+            'synced against a wider window. Pass the full fetched payload, ' +
+            'or confirm_prune: true if the deletion is intended',
+        );
+      } else if (candidates.length) {
+        db.prepare(`
+          DELETE FROM time_entry
+           WHERE source = 'gcal-sync'
+             AND status = 'UNCONFIRMED'
+             AND external_id IN (${candidates.map(() => '?').join(',')})
+        `).run(...candidates.map((c) => c.id));
+        result.deleted = candidates.length;
+        result.pruned_events = candidates;
+      }
     }
   });
   txn();
 
-  return { upserted, deleted };
-}
-
-export function deleteCalendarEventsInRange(
-  db: DB,
-  from: string,
-  to: string,
-): number {
-  // Remove UNCONFIRMED gcal-sync time_entry rows in range. CONFIRMED rows
-  // are historical — once a user has confirmed the time, the row outlives
-  // the calendar event it originated from.
-  return db
-    .prepare(`
-      DELETE FROM time_entry
-       WHERE source = 'gcal-sync'
-         AND status = 'UNCONFIRMED'
-         AND external_id IS NOT NULL
-         AND start_at >= ?
-         AND start_at <= ?
-    `)
-    .run(from, to).changes as number;
+  return result;
 }
 
 export function listCalendarEvents(
