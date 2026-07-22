@@ -17,6 +17,8 @@
  * drift apart until restart (#90). Opening per call costs well under a
  * millisecond against human-frequency tool calls.
  */
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import {
@@ -33,7 +35,14 @@ import {
 import { buildTools } from './tools/index.js';
 import { callTool } from './call-tool.js';
 
-const DB_PATH = process.env.CALENDROME_DB ?? 'calendrome.db';
+const __dirname = dirname(fileURLToPath(import.meta.url));
+// Absolute always, mirroring src/gui/server.ts: a cwd-relative
+// default silently opens a different empty DB depending on who
+// spawned the process (#132). Compiled file lives at dist/src/mcp,
+// so ../../.. is the repo root.
+const DB_PATH = resolve(
+  process.env.CALENDROME_DB ?? join(__dirname, '..', '..', '..', 'calendrome.db'),
+);
 
 const server = new Server(
   { name: 'calendrome', version: '0.1.0' },

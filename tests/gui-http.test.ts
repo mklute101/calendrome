@@ -424,3 +424,76 @@ describe('GUI budget API over HTTP', () => {
     expect(bad.status).toBe(400);
   });
 });
+
+/**
+ * Freshness plumbing (#132): the /api/version change stamp, cache
+ * headers, and the cross-process write-visibility case the stamp
+ * exists for. File-backed DB because the stamp is file-mtime-derived.
+ */
+describe('GUI freshness API over HTTP', () => {
+  let dir: string;
+  let dbPath: string;
+  let server: Server;
+  let base: string;
+
+  beforeAll(async () => {
+    dir = mkdtempSync(join(tmpdir(), 'calendrome-http-fresh-'));
+    dbPath = join(dir, 'calendrome.db');
+    const db = openDatabase(dbPath);
+    migrate(db);
+    db.prepare(`INSERT INTO projects (id, name, prefix) VALUES ('acme', 'Acme', 'ACME')`).run();
+    db.close();
+
+    const app = createApp(dbPath, new FakeCalendarClient());
+    await new Promise<void>((resolve) => {
+      server = app.listen(0, '127.0.0.1', () => resolve());
+    });
+    const addr = server.address();
+    if (addr === null || typeof addr === 'string') throw new Error('no port');
+    base = `http://127.0.0.1:${addr.port}`;
+  });
+
+  afterAll(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const json = (r: Response): Promise<any> => r.json() as Promise<any>;
+
+  it('GET /api/version names the absolute DB path and a stamp', async () => {
+    const res = await fetch(`${base}/api/version`);
+    expect(res.status).toBe(200);
+    const body = await json(res);
+    expect(body.db).toBe(dbPath); // mkdtemp paths are already absolute
+    expect(typeof body.stamp).toBe('string');
+    expect(body.stamp.length).toBeGreaterThan(0);
+  });
+
+  it('stamp changes after an out-of-band write from another connection', async () => {
+    const before = (await json(await fetch(`${base}/api/version`))).stamp;
+    // Ensure the commit lands in a later mtime millisecond.
+    await new Promise((r) => setTimeout(r, 10));
+    // Second connection = the cross-process case (MCP server writes,
+    // GUI server only observes the file).
+    const db = openDatabase(dbPath);
+    createTask(db, { project_id: 'acme', title: 'external write', duration_minutes: 30 });
+    db.close();
+    const after = (await json(await fetch(`${base}/api/version`))).stamp;
+    expect(after).not.toBe(before);
+  });
+
+  it('stamp is stable across pure reads', async () => {
+    const a = (await json(await fetch(`${base}/api/version`))).stamp;
+    await fetch(`${base}/api/tasks`).then((r) => r.json());
+    const b = (await json(await fetch(`${base}/api/version`))).stamp;
+    expect(b).toBe(a);
+  });
+
+  it('every /api response is uncacheable: no-store, no ETag', async () => {
+    for (const path of ['/api/version', '/api/tasks', '/api/projects']) {
+      const res = await fetch(`${base}${path}`);
+      expect(res.headers.get('cache-control')).toBe('no-store');
+      expect(res.headers.get('etag')).toBeNull();
+    }
+  });
+});
