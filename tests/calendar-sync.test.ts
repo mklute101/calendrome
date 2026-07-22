@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { freshDb } from './helpers/db.js';
-import { syncCalendarEvents, listCalendarEvents } from '../src/calendar-sync.js';
+import { syncCalendarEvents, listCalendarEvents, getLastSync } from '../src/calendar-sync.js';
 
 describe('calendar-sync', () => {
   it('syncCalendarEvents upserts events and computes duration', () => {
@@ -432,5 +432,84 @@ describe('prune guards (#133)', () => {
     );
     expect(result.deleted).toBe(1);
     expect(result.pruned_events.map((e) => e.id)).toEqual(['cancelled']);
+  });
+});
+
+describe('sync_log audit (#133)', () => {
+  const evt = (id: string, start: string, end: string) => ({
+    id,
+    calendar_id: 'cal-work',
+    summary: `event ${id}`,
+    start,
+    end,
+    is_meeting: true,
+  });
+
+  it('every committed sync writes one row with its window and counts', () => {
+    const db = freshDb();
+    syncCalendarEvents(
+      db,
+      [evt('a', '2026-07-07T10:00:00Z', '2026-07-07T11:00:00Z')],
+      { from: '2026-07-06T00:00:00-05:00', to: '2026-07-12T23:59:59-05:00' },
+    );
+    syncCalendarEvents(db, [evt('a', '2026-07-07T10:00:00Z', '2026-07-07T11:00:00Z')]);
+
+    const rows = db
+      .prepare(`SELECT window_from, window_to, received, inserted, updated, deleted, warnings FROM sync_log ORDER BY id`)
+      .all() as any[];
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({
+      window_from: '2026-07-06T00:00:00-05:00',
+      window_to: '2026-07-12T23:59:59-05:00',
+      received: 1,
+      inserted: 1,
+      updated: 0,
+      deleted: 0,
+      warnings: '[]',
+    });
+    expect(rows[1]).toMatchObject({ window_from: null, inserted: 0, updated: 1 });
+  });
+
+  it('a sync that throws mid-transaction leaves no log row and no partial upserts', () => {
+    const db = freshDb();
+    expect(() =>
+      syncCalendarEvents(db, [
+        evt('good', '2026-07-07T10:00:00Z', '2026-07-07T11:00:00Z'),
+        evt('bad', 'not-a-timestamp', '2026-07-07T12:00:00Z'),
+      ]),
+    ).toThrow(/not a valid ISO 8601/);
+    expect(db.prepare(`SELECT COUNT(*) AS n FROM sync_log`).get()).toEqual({ n: 0 });
+    expect(db.prepare(`SELECT COUNT(*) AS n FROM time_entry`).get()).toEqual({ n: 0 });
+  });
+
+  it('a refused prune is logged with its warning, deleted = 0', () => {
+    const db = freshDb();
+    const seeded = Array.from({ length: 8 }, (_, i) => {
+      const day = String((i % 5) + 6).padStart(2, '0');
+      return evt(`e${i}`, `2026-07-${day}T1${i % 8}:00:00Z`, `2026-07-${day}T1${i % 8}:30:00Z`);
+    });
+    syncCalendarEvents(db, seeded);
+    syncCalendarEvents(db, seeded.slice(0, 1), { from: '2026-07-06', to: '2026-07-12' });
+
+    const last = db.prepare(`SELECT deleted, warnings FROM sync_log ORDER BY id DESC LIMIT 1`).get() as any;
+    expect(last.deleted).toBe(0);
+    expect(last.warnings).toMatch(/prune refused/);
+  });
+
+  it('getLastSync judges covers_range against the requested dates', () => {
+    const db = freshDb();
+    expect(getLastSync(db, '2026-07-06', '2026-07-12')).toBeNull();
+
+    syncCalendarEvents(
+      db,
+      [evt('a', '2026-07-07T10:00:00Z', '2026-07-07T11:00:00Z')],
+      { from: '2026-07-06T00:00:00-05:00', to: '2026-07-12T23:59:59-05:00' },
+    );
+    expect(getLastSync(db, '2026-07-06', '2026-07-12')!.covers_range).toBe(true);
+    expect(getLastSync(db, '2026-07-13', '2026-07-19')!.covers_range).toBe(false);
+
+    // A window-less sync covers nothing.
+    syncCalendarEvents(db, [evt('a', '2026-07-07T10:00:00Z', '2026-07-07T11:00:00Z')]);
+    expect(getLastSync(db, '2026-07-06', '2026-07-12')!.covers_range).toBe(false);
   });
 });

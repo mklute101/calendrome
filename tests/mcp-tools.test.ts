@@ -682,6 +682,49 @@ describe('MCP tools layer', () => {
     });
   });
 
+  it('get_week_layout returns synced calendar events in range (#133)', async () => {
+    const db = freshDb();
+    createProject(db, { id: 'acme', name: 'Acme Corp', prefix: 'ACME' });
+    const tools = buildTools(db, { calendar: new FakeCalendarClient() });
+
+    await getTool(tools, 'sync_calendar_events').handler({
+      events: [
+        {
+          id: 'in-week',
+          calendar_id: 'cal-work',
+          summary: 'Sprint planning',
+          start: '2026-06-16T14:00:00Z',
+          end: '2026-06-16T15:00:00Z',
+          is_meeting: true,
+        },
+        {
+          id: 'next-week',
+          calendar_id: 'cal-work',
+          summary: 'Later',
+          start: '2026-06-23T14:00:00Z',
+          end: '2026-06-23T15:00:00Z',
+          is_meeting: true,
+        },
+      ],
+    });
+
+    const layout = await getTool(tools, 'get_week_layout').handler({
+      from: '2026-06-15',
+      to: '2026-06-21',
+    });
+    expect(layout.calendar_events.map((e: any) => e.id)).toEqual(['in-week']);
+
+    // A project filter keeps unassigned (null-project) events — the
+    // normal case for meetings; a skill planning for one project must
+    // still see what it could collide with.
+    const filtered = await getTool(tools, 'get_week_layout').handler({
+      from: '2026-06-15',
+      to: '2026-06-21',
+      project_id: 'acme',
+    });
+    expect(filtered.calendar_events.map((e: any) => e.id)).toEqual(['in-week']);
+  });
+
   // Story 1: screen-share filter — when sharing your screen at work, the
   // GUI should never leak personal projects/budgets/tasks. This test pins
   // the API contract that list_projects + get_all_budgets + get_week_layout

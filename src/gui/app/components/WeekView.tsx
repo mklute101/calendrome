@@ -17,6 +17,7 @@ import { routeWeek, setRouteWeek, weekHref } from '../lib/route';
 import { localDateTimeIso } from '../lib/geometry';
 import { BudgetCards } from './BudgetCards';
 import { CompactGrid } from './CompactGrid';
+import { SyncBadge } from './SyncBadge';
 import { WeekTimeline } from './WeekTimeline';
 import { TaskPanel } from './TaskPanel';
 
@@ -338,6 +339,7 @@ export function WeekView({
               confirmed {fmtHours(data.envelope_summary.confirmed_minutes)}
             </span>
           )}
+          {data && <SyncBadge lastSync={data.last_sync} />}
           <span className="nav-sep" />
           <button
             className={`nav-btn${viewMode === 'compact' ? ' active' : ''}`}
