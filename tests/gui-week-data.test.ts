@@ -12,6 +12,7 @@ import {
 } from '../src/habits.js';
 import { buildDays } from '../src/gui/app/lib/weekdays.js';
 import { assignHours } from '../src/assignments.js';
+import { syncCalendarEvents } from '../src/calendar-sync.js';
 
 /**
  * GUI week payload tests (#79).
@@ -339,5 +340,121 @@ describe('buildWeekPayload commitments (M1 — watchable)', () => {
 
     const payload = buildWeekPayload(db, '2026-06-17'); // Wednesday
     expect(payload.goals[0].progress.week_start).toBe(WEEK);
+  });
+});
+
+describe('buildWeekPayload week-edge widening + last_sync (#133)', () => {
+  it('a Sunday-evening US event stored on Monday UTC reaches the payload of the week it belongs to locally', () => {
+    const { db } = setup();
+    // 7pm CDT Sunday 2026-06-21 = Monday 2026-06-22 00:00Z — one day
+    // past the requested week's UTC end.
+    syncCalendarEvents(db, [
+      {
+        id: 'sun-evening',
+        calendar_id: 'cal-work',
+        summary: 'Sunday evening call',
+        start: '2026-06-22T00:00:00Z',
+        end: '2026-06-22T01:00:00Z',
+        is_meeting: true,
+      },
+    ]);
+
+    const payload = buildWeekPayload(db, WEEK); // 2026-06-15..21
+    expect(payload.calendar_events.map((e: any) => e.id)).toContain('sun-evening');
+  });
+
+  it('buildDays discards widened rows that do not bucket into the week', () => {
+    const { db } = setup();
+    // Plainly outside the week even in US timezones: noon UTC the day
+    // after the week ends.
+    syncCalendarEvents(db, [
+      {
+        id: 'next-week-noon',
+        calendar_id: 'cal-work',
+        summary: 'Next Monday noon',
+        start: '2026-06-22T12:00:00Z',
+        end: '2026-06-22T13:00:00Z',
+        is_meeting: true,
+      },
+    ]);
+
+    const payload = buildWeekPayload(db, WEEK);
+    expect(payload.calendar_events.map((e: any) => e.id)).toContain('next-week-noon');
+    const days = buildDays(payload as never, WEEK);
+    const bucketed = days.flatMap((d) => d.meetings.map((m: any) => m.id));
+    expect(bucketed).not.toContain('next-week-noon');
+  });
+
+  it('an out-of-week placement inside the widened fetch does not suppress an in-week deadline marker', async () => {
+    const { db, tools } = setup();
+    const t = await getTool(tools, 'create_task').handler({
+      project_id: 'acme',
+      title: 'Due Friday, placed next Monday',
+      duration_minutes: 60,
+      due: '2026-06-19T17:00:00Z', // Friday inside WEEK
+    });
+    // Placed the Monday AFTER the week — inside the ±1d fetch slack.
+    await getTool(tools, 'place_task').handler({
+      task_id: t.task.id,
+      start: '2026-06-22T10:00:00Z',
+    });
+
+    const payload = buildWeekPayload(db, WEEK);
+    // The widened payload carries the placement...
+    expect(payload.placements.map((p: any) => p.task_id)).toContain(t.task.id);
+    const days = buildDays(payload as never, WEEK);
+    // ...which renders on no day of this week...
+    expect(days.flatMap((d) => d.placed)).toHaveLength(0);
+    // ...and the Friday deadline marker still shows.
+    const friday = days.find((d) => d.date === '2026-06-19')!;
+    expect(friday.deadlines.map((x: any) => x.id)).toContain(t.task.id);
+  });
+
+  it('an in-week placement still suppresses its deadline marker', async () => {
+    const { db, tools } = setup();
+    const t = await getTool(tools, 'create_task').handler({
+      project_id: 'acme',
+      title: 'Due and placed this week',
+      duration_minutes: 60,
+      due: '2026-06-19T17:00:00Z',
+    });
+    await getTool(tools, 'place_task').handler({
+      task_id: t.task.id,
+      start: SLOT,
+    });
+
+    const days = buildDays(buildWeekPayload(db, WEEK) as never, WEEK);
+    expect(days.flatMap((d) => d.placed)).toHaveLength(1);
+    expect(days.flatMap((d) => d.deadlines)).toHaveLength(0);
+  });
+
+  it('last_sync is null before any sync and reports covers_range after', () => {
+    const { db } = setup();
+    expect(buildWeekPayload(db, WEEK).last_sync).toBeNull();
+
+    syncCalendarEvents(
+      db,
+      [
+        {
+          id: 'evt',
+          calendar_id: 'cal-work',
+          summary: 'Standup',
+          start: '2026-06-16T10:00:00Z',
+          end: '2026-06-16T10:30:00Z',
+        },
+      ],
+      { from: '2026-06-15T00:00:00-05:00', to: '2026-06-21T23:59:59-05:00' },
+    );
+
+    const covered = buildWeekPayload(db, WEEK).last_sync!;
+    expect(covered.covers_range).toBe(true);
+    expect(covered.received).toBe(1);
+    expect(covered.inserted).toBe(1);
+    expect(covered.warnings).toEqual([]);
+    expect(covered.synced_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+
+    // A different week is not covered by that window.
+    const other = buildWeekPayload(db, '2026-06-22').last_sync!;
+    expect(other.covers_range).toBe(false);
   });
 });

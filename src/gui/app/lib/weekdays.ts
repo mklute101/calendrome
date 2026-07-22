@@ -52,14 +52,19 @@ export function buildDays(data: WeekPayload, weekStart: string): DayBucket[] {
       totalMin: 0,
     });
   }
+  // Only placements that bucket into THIS week suppress a deadline
+  // marker: the payload is fetched with ±1 day of slack (#133), so an
+  // out-of-week placement (e.g. next Monday) may be present without
+  // rendering — its task's in-week deadline must still show.
+  const placedTaskIds = new Set<number>();
   for (const p of data.placements ?? []) {
     const day = days.find((d) => d.date === localDay(p.start_at));
     if (day) {
       day.placed.push(p);
       day.totalMin += p.duration_minutes || 0;
+      if (p.task_id != null) placedTaskIds.add(p.task_id);
     }
   }
-  const placedTaskIds = new Set((data.placements ?? []).map((p) => p.task_id));
   for (const t of data.tasks) {
     if (!t.due || t.status === 'ARCHIVED' || placedTaskIds.has(t.id)) continue;
     const day = days.find((d) => d.date === localDay(t.due!));

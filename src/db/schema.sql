@@ -202,3 +202,19 @@ CREATE TABLE IF NOT EXISTS meeting_project_mappings (
   project_id TEXT NOT NULL REFERENCES projects(id),
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- Import audit for sync_calendar_events (#133): one row per sync,
+-- written inside the sync transaction. "What deleted my Wednesday"
+-- must be answerable after the conversation that ran the sync is
+-- gone; the week view's staleness badge reads the latest row.
+CREATE TABLE IF NOT EXISTS sync_log (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  synced_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+  window_from TEXT,
+  window_to   TEXT,
+  received    INTEGER NOT NULL,
+  inserted    INTEGER NOT NULL,
+  updated     INTEGER NOT NULL,
+  deleted     INTEGER NOT NULL,
+  warnings    TEXT NOT NULL DEFAULT '[]'   -- JSON array of strings
+);

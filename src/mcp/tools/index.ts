@@ -99,6 +99,7 @@ import {
 import { stubCalendar, type CalendarClient } from '../../calendar/index.js';
 import {
   syncCalendarEvents,
+  listCalendarEvents,
   type CalendarEventInput,
 } from '../../calendar-sync.js';
 
@@ -704,12 +705,32 @@ export function buildTools(
               ? [`${from}T00:00:00Z`, `${to}T23:59:59Z`, args.project_id]
               : [`${from}T00:00:00Z`, `${to}T23:59:59Z`]),
           );
+        // Synced calendar events were always in this tool's contract
+        // ("tasks + habit instances + calendar events") but never in
+        // its response — which made import gaps invisible from the
+        // MCP side (#133). A skill can now reconcile per-day source
+        // counts against what actually imported.
+        // project_id filter: unassigned events (null project — the
+        // normal case for meetings) always pass, mirroring the GUI's
+        // filterWeekData convention. A skill filtering to one project
+        // must still see the meetings it could collide with.
+        const calendarEvents = listCalendarEvents(
+          db,
+          `${from}T00:00:00Z`,
+          `${to}T23:59:59Z`,
+        ).filter(
+          (e) =>
+            !args.project_id ||
+            e.project_id === null ||
+            e.project_id === args.project_id,
+        );
         return {
           tasks,
           habit_instances: habits,
           // Honor the project_id filter: only placements whose task
           // survived the filter above.
           placements: placements.filter((p) => taskIds.has(p.task_id)),
+          calendar_events: calendarEvents,
         };
       },
     },

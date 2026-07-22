@@ -150,6 +150,19 @@ export interface EnvelopeSummary {
   scheduled_minutes: number;
 }
 
+/** Latest sync_log row, judged against the requested week (#133). */
+export interface LastSync {
+  synced_at: string;
+  window_from: string | null;
+  window_to: string | null;
+  received: number;
+  inserted: number;
+  updated: number;
+  deleted: number;
+  warnings: string[];
+  covers_range: boolean;
+}
+
 export interface WeekPayload {
   start: string;
   end: string;
@@ -163,6 +176,7 @@ export interface WeekPayload {
   goals: Goal[];
   habit_scores: HabitScore[];
   envelope_summary: EnvelopeSummary;
+  last_sync: LastSync | null;
 }
 
 export interface TasksPayload {

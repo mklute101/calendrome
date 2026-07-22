@@ -483,6 +483,26 @@ body.dragging * { cursor: grabbing !important; }
   white-space: nowrap;
 }
 
+/* Calendar import staleness badge (#133) — same chip form as the
+   envelope strip; amber = stale/uncovered, red = sync warnings. */
+.sync-badge {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 2px 10px;
+  margin-left: 4px;
+  white-space: nowrap;
+}
+.sync-badge.stale {
+  color: #ff8c00;
+  border-color: color-mix(in srgb, #ff8c00 45%, var(--border));
+}
+.sync-badge.warned {
+  color: #f85149;
+  border-color: color-mix(in srgb, #f85149 45%, var(--border));
+}
+
 /* Goal blocks: bucket accent — dashed left border sets them apart
    from task placements without a new color channel. */
 .block.goal,

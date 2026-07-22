@@ -241,10 +241,76 @@ export function syncCalendarEvents(
         result.pruned_events = candidates;
       }
     }
+
+    // Audit row (#133), inside the txn: a sync that throws mid-way
+    // leaves no log row, so every row describes a sync that actually
+    // committed. The week view's staleness badge reads the latest.
+    db.prepare(`
+      INSERT INTO sync_log (window_from, window_to, received, inserted, updated, deleted, warnings)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      window?.from ?? null,
+      window?.to ?? null,
+      result.received,
+      result.inserted,
+      result.updated,
+      result.deleted,
+      JSON.stringify(warnings),
+    );
   });
   txn();
 
   return result;
+}
+
+export interface LastSync {
+  synced_at: string;
+  window_from: string | null;
+  window_to: string | null;
+  received: number;
+  inserted: number;
+  updated: number;
+  deleted: number;
+  warnings: string[];
+  /** True when [from, to] (plain dates) lies inside the last window. */
+  covers_range: boolean;
+}
+
+/**
+ * The most recent sync_log row, judged against a date range — the
+ * data behind the week view's staleness badge (#133). `covers_range`
+ * is false when the viewed range wasn't inside the last sync's
+ * window (or the sync had no window), so a week can't be silently
+ * trusted just because *some* sync ran recently.
+ */
+export function getLastSync(db: DB, from: string, to: string): LastSync | null {
+  const row = db
+    .prepare(`
+      SELECT synced_at, window_from, window_to, received, inserted, updated, deleted, warnings
+        FROM sync_log
+       ORDER BY id DESC
+       LIMIT 1
+    `)
+    .get() as
+    | (Omit<LastSync, 'warnings' | 'covers_range'> & { warnings: string })
+    | undefined;
+  if (!row) return null;
+  // Date-precision heuristic: exact for the documented caller shape
+  // (verbatim local-offset timeMin/timeMax); a UTC-aligned window for
+  // an offset user can over-claim the last few local hours of the
+  // range. Good enough for a staleness badge.
+  const covers_range =
+    row.window_from !== null &&
+    row.window_to !== null &&
+    row.window_from.slice(0, 10) <= from &&
+    row.window_to.slice(0, 10) >= to;
+  let warnings: string[] = [];
+  try {
+    warnings = JSON.parse(row.warnings);
+  } catch {
+    // pre-JSON or corrupted row — badge still works without them
+  }
+  return { ...row, warnings, covers_range };
 }
 
 export function listCalendarEvents(

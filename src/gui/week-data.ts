@@ -15,7 +15,7 @@ import type { DB } from '../db/connection.js';
 import { listTasks } from '../tasks.js';
 import { listHabits, generateHabitInstances, habitWeekScore } from '../habits.js';
 import { getAllBudgets } from '../budgets.js';
-import { listCalendarEvents } from '../calendar-sync.js';
+import { listCalendarEvents, getLastSync } from '../calendar-sync.js';
 import { listAvailabilityOverrides } from '../availability.js';
 import { listGoals, goalProgress } from '../goals.js';
 import { getEnvelopes } from '../assignments.js';
@@ -36,6 +36,17 @@ export function buildWeekPayload(db: DB, start: string) {
   const endDate = new Date(startDate);
   endDate.setUTCDate(endDate.getUTCDate() + 6);
   const end = endDate.toISOString().slice(0, 10);
+
+  // Timeline entities are fetched with one day of slack on each edge
+  // (#133): rows are stored canonical UTC but the client buckets by
+  // LOCAL day (#104), so a Sunday-evening US event stored on Monday
+  // UTC would otherwise fall outside the fetch range of both weeks
+  // and render in neither. buildDays discards out-of-week rows.
+  const day = 86_400_000;
+  const fetchStart = new Date(startDate.getTime() - day)
+    .toISOString()
+    .slice(0, 10);
+  const fetchEnd = new Date(endDate.getTime() + day).toISOString().slice(0, 10);
 
   const tasks = listTasks(db);
   const weekTasks = tasks.filter((t) => {
@@ -72,7 +83,7 @@ export function buildWeekPayload(db: DB, start: string) {
          AND COALESCE(te.start_at, hi.scheduled_start) <= ?
        ORDER BY COALESCE(te.start_at, hi.scheduled_start)`,
     )
-    .all(start + 'T00:00:00', end + 'T23:59:59') as any[];
+    .all(fetchStart + 'T00:00:00', fetchEnd + 'T23:59:59') as any[];
 
   // UNCONFIRMED placement entries — the planned blocks on the
   // timeline. The time_entry row, not task.due, says where a task
@@ -101,7 +112,7 @@ export function buildWeekPayload(db: DB, start: string) {
          AND DATE(te.start_at) >= ? AND DATE(te.start_at) <= ?
        ORDER BY te.start_at`,
     )
-    .all(start, end) as any[];
+    .all(fetchStart, fetchEnd) as any[];
 
   // Project CONFIRMED time_entry rows into the legacy time_logs
   // shape the dashboard expects (`started_at`, `duration_minutes`,
@@ -130,7 +141,7 @@ export function buildWeekPayload(db: DB, start: string) {
          AND DATE(te.start_at) >= ? AND DATE(te.start_at) <= ?
        ORDER BY te.start_at`,
     )
-    .all(start, end) as any[];
+    .all(fetchStart, fetchEnd) as any[];
 
   const budgets = getAllBudgets(db, start);
 
@@ -170,8 +181,8 @@ export function buildWeekPayload(db: DB, start: string) {
 
   const calendarEvents = listCalendarEvents(
     db,
-    start + 'T00:00:00',
-    end + 'T23:59:59',
+    fetchStart + 'T00:00:00',
+    fetchEnd + 'T23:59:59',
   );
 
   const availability = listAvailabilityOverrides(db, {
@@ -192,5 +203,6 @@ export function buildWeekPayload(db: DB, start: string) {
     goals,
     habit_scores: habitScores,
     envelope_summary: envelopeSummary,
+    last_sync: getLastSync(db, start, end),
   };
 }
