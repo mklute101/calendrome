@@ -55,13 +55,20 @@ sentence — never a click path.
   brain; the GUI covers fast rearranging (#24, #86).
 - Every project belongs to a **category** (`work`, `personal`, …).
   Categories own a default scheduling window — work is Mon-Fri 9-5,
-  personal is evenings/weekends — so the planner knows which slots
-  are eligible for which projects. The GUI defaults to the work view
-  so casual screen-shares never leak personal stuff.
+  personal is evenings/weekends — shaping where the planner
+  *suggests* hours land. **Windows are guidelines, not rules**: no
+  placement is ever invalid for being outside one, and no `open_time`
+  ceremony is needed first — scheduling outside the window *is* the
+  override, and the hours self-supply (`scheduled_outside_minutes`
+  in `get_supply`). Place it, mention the note in passing, move on.
+  The GUI defaults to the work view so casual screen-shares never
+  leak personal stuff.
 - **Availability overrides** carve exceptions into those windows.
   `block_time` reserves a slot ("Tuesday night, nothing"); `open_time`
-  carves out an extra one ("Saturday morning is fair game"). Both
-  exist because Reclaim makes this a chore and we don't want to.
+  announces an extra one ahead of time ("Saturday morning is fair
+  game") so suggestions and supply see it — an announcement, never
+  permission. Both exist because Reclaim makes this a chore and we
+  don't want to.
 - Integrations (Harvest, Google Calendar sync) are separate from core.
 
 ## What we're still figuring out

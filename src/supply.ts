@@ -7,10 +7,19 @@
  * weekends, seeded in `src/db/migrate.ts`) minus synced calendar
  * events (`time_entry` rows with `source='gcal-sync'`) minus
  * `block_time` reservations (`availability_overrides.available = 0`)
- * plus `open_time` carve-outs (`available = 1`). Supply is *swaths,
+ * plus `open_time` carve-outs (`available = 1`) plus scheduled time
+ * sitting outside all of the above (see below). Supply is *swaths,
  * not blocks* — open time exists without being scheduled — and it is
  * per-category but fungible: category splits shape where the planner
  * *suggests* hours land, never walls between pools.
+ *
+ * Windows are guidelines, not rules: nothing gates placing an entry
+ * outside its category's window, and the act of scheduling there IS
+ * the override — no `open_time` ceremony required. Out-of-window
+ * scheduled time (non-gcal entries beyond window + opens) self-
+ * supplies as `scheduled_outside_minutes`, so an evening work
+ * placement adds the hours it actually claims instead of making the
+ * week read falsely overcommitted.
  *
  * To-Be-Assigned = total supply − assigned (the sum of effective
  * envelope assignments from `getEnvelopes`). Negative means the week
@@ -38,6 +47,15 @@
  *  - Categories with overlapping windows would each count the shared
  *    wall-clock time (windows are eligibility, not exclusive
  *    ownership); the seeded work/personal windows don't overlap.
+ *  - Out-of-window scheduled time self-supplies only where the time
+ *    is genuinely unclaimed: overlapping entries merge first, and
+ *    minutes already covered by the window, an open, a synced event,
+ *    or an explicit block mint nothing. A block is explicit user
+ *    intent ("not then"), so placing over one is allowed but does
+ *    not add supply. Entries without a project fall back to the
+ *    'work' category (the GUI's convention); like overlapping
+ *    windows, cross-category placements only shape the per-category
+ *    split — supply stays fungible.
  */
 import type { DB } from './db/connection.js';
 import { getEnvelopes } from './assignments.js';
@@ -55,7 +73,12 @@ export interface CategorySupply {
   blocked_minutes: number;
   /** Extra minutes carved out via open_time outside the window. */
   opened_minutes: number;
-  /** window − events − blocked + opened. */
+  /**
+   * Scheduled (non-gcal) entry minutes outside window + opens — the
+   * implicit override: placing there is what claims the hours.
+   */
+  scheduled_outside_minutes: number;
+  /** window − events − blocked + opened + scheduled_outside. */
   supply_minutes: number;
 }
 
@@ -248,6 +271,22 @@ export function computeWeekSupply(db: DB, weekStart: string): WeekSupply {
     })),
   );
 
+  // Scheduled (non-gcal) entries overlapping the week, bucketed by
+  // their project's category ('work' fallback, GUI convention). The
+  // out-of-window remainder self-supplies — windows are guidelines.
+  const scheduledRows = db
+    .prepare(
+      `SELECT te.start_at, te.end_at, COALESCE(p.category_id, 'work') AS category_id
+         FROM time_entry te
+         LEFT JOIN projects p ON p.id = te.project_id
+        WHERE te.source != 'gcal-sync' AND te.start_at < ? AND te.end_at > ?`,
+    )
+    .all(weekEndIso, weekStartIso) as {
+    start_at: string;
+    end_at: string;
+    category_id: string;
+  }[];
+
   // Availability overrides overlapping the week. category_id NULL =
   // global (applies everywhere).
   const overrides = listAvailabilityOverrides(db, {
@@ -304,18 +343,46 @@ export function computeWeekSupply(db: DB, weekStart: string): WeekSupply {
       blocks,
     );
 
+    // Out-of-window scheduled time claims its own hours: the merged
+    // entry swaths, clipped to the week, minus everything already
+    // counted (window, opens) or explicitly excluded (events, blocks).
+    const scheduled = mergeIntervals(
+      scheduledRows
+        .filter((r) => r.category_id === category.id)
+        .map((r) => ({
+          start: Date.parse(r.start_at),
+          end: Date.parse(r.end_at),
+        })),
+    );
+    const scheduledOutside = subtractIntervals(
+      subtractIntervals(
+        subtractIntervals(
+          subtractIntervals(intersectIntervals(scheduled, week), windows),
+          opens,
+        ),
+        events,
+      ),
+      blocks,
+    );
+
     const window_minutes = totalMinutes(windows);
     const event_minutes = totalMinutes(eventOverlap);
     const blocked_minutes = totalMinutes(blockedOverlap);
     const opened_minutes = totalMinutes(opened);
+    const scheduled_outside_minutes = totalMinutes(scheduledOutside);
     return {
       category_id: category.id,
       window_minutes,
       event_minutes,
       blocked_minutes,
       opened_minutes,
+      scheduled_outside_minutes,
       supply_minutes:
-        window_minutes - event_minutes - blocked_minutes + opened_minutes,
+        window_minutes -
+        event_minutes -
+        blocked_minutes +
+        opened_minutes +
+        scheduled_outside_minutes,
     };
   });
 
@@ -337,4 +404,91 @@ export function computeWeekSupply(db: DB, weekStart: string): WeekSupply {
     assigned_minutes,
     to_be_assigned_minutes: total_supply_minutes - assigned_minutes,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Placement note — the calm out-of-window mention.
+// ---------------------------------------------------------------------------
+
+/**
+ * One informational sentence about a placement's slot, or null when
+ * there is nothing worth mentioning. Never a gate: the placement has
+ * already happened by the time this runs. Windows are guidelines —
+ * an out-of-window slot simply self-supplies (see module header) and
+ * gets a passing mention; a slot overlapping an explicit `block_time`
+ * gets a slightly firmer one because blocked time mints no supply.
+ */
+export function placementNote(
+  db: DB,
+  args: { start_at: string; end_at: string; project_id: string | null },
+): string | null {
+  const startMs = Date.parse(args.start_at);
+  const endMs = Date.parse(args.end_at);
+  if (!(endMs > startMs)) return null;
+  const entry: Interval[] = [{ start: startMs, end: endMs }];
+
+  const categories = listCategories(db);
+  const categoryId = args.project_id
+    ? ((db
+        .prepare(`SELECT category_id FROM projects WHERE id = ?`)
+        .get(args.project_id) as { category_id: string | null } | undefined)
+        ?.category_id ?? 'work')
+    : 'work';
+  const category = categories.find((c) => c.id === categoryId);
+  if (!category) return null;
+
+  const overrides = listAvailabilityOverrides(db, {
+    from: args.start_at,
+    to: args.end_at,
+  });
+  const blocks = mergeIntervals(
+    overrides
+      .filter(
+        (o) =>
+          o.available === 0 &&
+          (o.category_id === null || o.category_id === category.id),
+      )
+      .map((o) => ({ start: Date.parse(o.start), end: Date.parse(o.end) })),
+  );
+  if (intersectIntervals(entry, blocks).length > 0) {
+    return (
+      `heads up: this overlaps time you blocked off — placed anyway, ` +
+      `but blocked time doesn't count as extra supply`
+    );
+  }
+
+  // No window at all = the category has no hours guideline to be
+  // outside of.
+  if (!category.default_window) return null;
+
+  // Expand the window over the Monday-anchored week containing the
+  // slot's start; a slot straddling weeks is judged by its start week.
+  const startDay = new Date(startMs).toISOString().slice(0, 10);
+  const dow = new Date(`${startDay}T00:00:00Z`).getUTCDay();
+  const monday = addDays(startDay, dow === 0 ? -6 : 1 - dow);
+  const windows = windowIntervals(
+    monday,
+    category.default_window,
+    category.timezone,
+  );
+  const opens = mergeIntervals(
+    overrides
+      .filter(
+        (o) =>
+          o.available === 1 &&
+          (o.category_id === null || o.category_id === category.id),
+      )
+      .map((o) => ({ start: Date.parse(o.start), end: Date.parse(o.end) })),
+  );
+  const outside = subtractIntervals(subtractIntervals(entry, windows), opens);
+  const outsideMinutes = totalMinutes(outside);
+  if (outsideMinutes === 0) return null;
+
+  const total = totalMinutes(entry);
+  const portion =
+    outsideMinutes === total ? 'this slot is' : `${outsideMinutes}m of this slot are`;
+  return (
+    `note: ${portion} outside the usual ${category.name} hours — ` +
+    `that's fine, the time counts as extra ${category.name} supply this week`
+  );
 }

@@ -98,16 +98,18 @@ plus a **Jira** MCP:
 
 ### Categories & availability
 Every project belongs to a category (`work`, `personal`, …) that owns a default
-scheduling window. The GUI defaults to the work view so casual screen-shares
-never leak personal stuff. Availability overrides are the frictionless answer
-to "Tuesday night I'm not doing anything" — one MCP call from a single
-sentence to Claude.
+scheduling window. Windows are guidelines, not rules — they shape where the
+planner suggests hours, but scheduling outside one just works and counts as
+extra supply (no `open_time` needed first). The GUI defaults to the work view
+so casual screen-shares never leak personal stuff. Availability overrides are
+the frictionless answer to "Tuesday night I'm not doing anything" — one MCP
+call from a single sentence to Claude.
 
 - `list_categories` — all categories with their default windows
 - `create_category` — define a new category with a window
 - `update_category` — change the window or rename
 - `block_time` — reserve a slot so the planner won't schedule into it
-- `open_time` — carve out an extra slot inside a normally-blocked window
+- `open_time` — announce extra availability ahead of time (never required)
 - `list_availability` — overrides intersecting a date range
 - `delete_availability` / `clear_availability` — remove individually or by range
 

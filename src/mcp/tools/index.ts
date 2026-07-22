@@ -77,7 +77,7 @@ import {
   updateCategory,
   type CategoryWindow,
 } from '../../categories.js';
-import { computeWeekSupply } from '../../supply.js';
+import { computeWeekSupply, placementNote } from '../../supply.js';
 import {
   createAvailabilityOverride,
   listAvailabilityOverrides,
@@ -128,6 +128,25 @@ function requireNumber(args: any, key: string): number {
     throw new Error(`missing required number field: ${key}`);
   }
   return v;
+}
+
+/**
+ * Informational out-of-window/over-block note for an entry that was
+ * just placed or moved — never throws (a broken note must not fail
+ * the write that already happened).
+ */
+function notePlacedEntry(db: DB, timeEntryId: number): string | null {
+  try {
+    const row = db
+      .prepare(`SELECT start_at, end_at, project_id FROM time_entry WHERE id = ?`)
+      .get(timeEntryId) as
+      | { start_at: string; end_at: string; project_id: string | null }
+      | undefined;
+    if (!row) return null;
+    return placementNote(db, row);
+  } catch {
+    return null;
+  }
 }
 
 export function buildTools(
@@ -712,6 +731,13 @@ export function buildTools(
      * (optionally adjusting `actual_minutes`), or `skip_placement`
      * if it didn't.
      *
+     * Any time is a valid time: category windows are guidelines, not
+     * rules, so placing work on a Tuesday evening needs no
+     * `open_time` first — the out-of-window hours count as extra
+     * supply automatically. When that happens the response carries a
+     * one-line informational `note`; mention it in passing, never
+     * ask permission first.
+     *
      * @example
      * place_task({ task_id: 17, start: '2026-05-04T07:00:00-05:00' })
      *
@@ -719,7 +745,11 @@ export function buildTools(
      */
     {
       name: 'place_task',
-      description: 'Create a calendar event for a task at a specific time',
+      description:
+        'Create a calendar event for a task at a specific time. Any ' +
+        'time is valid — category windows are guidelines, not rules; ' +
+        'out-of-window placements just work (no open_time needed) and ' +
+        'return an informational note.',
       inputSchema: {
         type: 'object',
         required: ['task_id', 'start'],
@@ -729,10 +759,12 @@ export function buildTools(
         },
       },
       async handler(args) {
-        return placeTask(db, calendar, {
+        const result = await placeTask(db, calendar, {
           task_id: requireNumber(args, 'task_id'),
           start: requireString(args, 'start'),
         });
+        const note = notePlacedEntry(db, result.time_entry_id);
+        return note ? { ...result, note } : result;
       },
     },
     /**
@@ -954,6 +986,10 @@ export function buildTools(
      *   Calendar — move the event there)
      * - manual `log_time` entries (no calendar event to update)
      *
+     * It never refuses a *time*: windows are guidelines, so moving a
+     * work block into the evening just works — the response carries
+     * an informational `note` when the new slot is out-of-window.
+     *
      * @example
      * move_placement({ time_entry_id: 91, new_start_at: '2026-05-05T14:00:00-05:00' })
      *
@@ -963,7 +999,8 @@ export function buildTools(
       name: 'move_placement',
       description:
         'Reschedule an UNCONFIRMED placement or habit entry. Preserves ' +
-        'duration by default.',
+        'duration by default. Any time is valid — out-of-window moves ' +
+        'just work and return an informational note.',
       inputSchema: {
         type: 'object',
         required: ['time_entry_id', 'new_start_at'],
@@ -978,7 +1015,10 @@ export function buildTools(
         moveTimeEntry(db, id, requireString(args, 'new_start_at'), {
           new_end_at: args?.new_end_at,
         });
-        return { moved: true, time_entry_id: id };
+        const note = notePlacedEntry(db, id);
+        return note
+          ? { moved: true, time_entry_id: id, note }
+          : { moved: true, time_entry_id: id };
       },
     },
 
@@ -1440,8 +1480,10 @@ export function buildTools(
      *
      * Useful for splitting "deep work" (mornings only) out of `work`,
      * or adding a third bucket like `learning`. Projects can then be
-     * tagged with the new category and the planner will respect its
-     * window when placing tasks.
+     * tagged with the new category, and its window shapes where the
+     * planner *suggests* those tasks land. Windows are guidelines,
+     * not rules — they never make a time invalid; scheduling outside
+     * one just works and self-supplies (see `get_supply`).
      *
      * @example
      * create_category({
@@ -1457,8 +1499,9 @@ export function buildTools(
     {
       name: 'create_category',
       description:
-        'Create a new category with an optional default scheduling window. ' +
-        'default_window shape: ' +
+        'Create a new category with an optional default scheduling window ' +
+        '(a guideline shaping where the planner suggests hours — never a ' +
+        'rule gating placement). default_window shape: ' +
         '{ days: int[] (0=Sun..6=Sat), start: "HH:MM", end: "HH:MM" }.',
       inputSchema: {
         type: 'object',
@@ -1602,12 +1645,15 @@ export function buildTools(
       },
     },
     /**
-     * Carve out a window inside a normally-blocked time, e.g.
-     * "Saturday morning is fair game for personal work this week".
+     * Announce extra availability ahead of time, e.g. "Saturday
+     * morning is fair game for personal work this week".
      *
-     * The inverse of `block_time`. Useful when the default category
-     * window is conservative (personal = evenings only) but a
-     * specific date is freer than usual.
+     * The inverse of `block_time`. This is an announcement, not a
+     * permission step: it tells the planner about hours *before*
+     * anything is scheduled, so suggestions and the supply number
+     * can use them. It is never required — placing something outside
+     * a category window works directly and claims its own hours
+     * (see `place_task` / `get_supply`).
      *
      * @example
      * open_time({
@@ -1622,9 +1668,10 @@ export function buildTools(
     {
       name: 'open_time',
       description:
-        'Mark a window as available even if it falls outside the normal ' +
-        'category window. e.g. "Saturday morning is fair game for personal ' +
-        'work".',
+        'Announce extra availability outside the normal category window, ' +
+        'so suggestions and supply can use it ahead of time. e.g. ' +
+        '"Saturday morning is fair game for personal work". Never a ' +
+        'prerequisite — out-of-window placements work without it.',
       inputSchema: {
         type: 'object',
         required: ['start', 'end'],
@@ -2147,14 +2194,19 @@ export function buildTools(
      * Supply = category scheduling windows (work Mon–Fri 9–5, personal
      * evenings/weekends — `categories.default_window`) − synced
      * calendar events − `block_time` reservations + `open_time`
-     * carve-outs. Returned per category (fungible pools, not walls)
-     * plus the header numbers: total supply, assigned (sum of
-     * effective envelope assignments from `get_envelopes`), and
-     * To-Be-Assigned = supply − assigned — negative means the week is
-     * overcommitted, YNAB's "you assigned more than you have".
-     * Overlapping events are merged before subtracting, and a block
-     * over an event never double-subtracts (see src/supply.ts for
-     * every edge decision). All values are minutes.
+     * carve-outs + out-of-window scheduled time. That last term is
+     * the guidelines-not-rules rule: windows never gate placement,
+     * so an evening work block simply claims its own hours
+     * (`scheduled_outside_minutes`) — no `open_time` ceremony, and
+     * the week doesn't read falsely overcommitted. Returned per
+     * category (fungible pools, not walls) plus the header numbers:
+     * total supply, assigned (sum of effective envelope assignments
+     * from `get_envelopes`), and To-Be-Assigned = supply − assigned —
+     * negative means the week is overcommitted, YNAB's "you assigned
+     * more than you have". Overlapping events are merged before
+     * subtracting, and a block over an event never double-subtracts
+     * (see src/supply.ts for every edge decision). All values are
+     * minutes.
      *
      * @example
      * get_supply({ week_start: '2026-07-13' })
@@ -2165,9 +2217,10 @@ export function buildTools(
       name: 'get_supply',
       description:
         "Compute the week's hour supply: category windows − synced events " +
-        '− block_time + open_time, per category, with total supply, ' +
-        'assigned, and To-Be-Assigned (supply − assigned; negative = ' +
-        'overcommitted).',
+        '− block_time + open_time + out-of-window scheduled time (windows ' +
+        'are guidelines — placing outside one claims its own hours, no ' +
+        'open_time needed), per category, with total supply, assigned, ' +
+        'and To-Be-Assigned (supply − assigned; negative = overcommitted).',
       inputSchema: {
         type: 'object',
         properties: {
