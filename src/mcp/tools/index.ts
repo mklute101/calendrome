@@ -77,7 +77,7 @@ import {
   updateCategory,
   type CategoryWindow,
 } from '../../categories.js';
-import { computeWeekSupply, placementNote } from '../../supply.js';
+import { computeWeekSupply, notePlacedEntry } from '../../supply.js';
 import {
   createAvailabilityOverride,
   listAvailabilityOverrides,
@@ -90,7 +90,7 @@ import {
   listMeetingProjectMappings,
   deleteMeetingProjectMapping,
 } from '../../meeting-mappings.js';
-import { placeTask, unplaceTask } from '../../placement.js';
+import { placeTask, unplaceTask, placeGoalBlock } from '../../placement.js';
 import { harvestPushTimesheet } from '../../harvest/push.js';
 import {
   exportTimesheet,
@@ -128,25 +128,6 @@ function requireNumber(args: any, key: string): number {
     throw new Error(`missing required number field: ${key}`);
   }
   return v;
-}
-
-/**
- * Informational out-of-window/over-block note for an entry that was
- * just placed or moved — never throws (a broken note must not fail
- * the write that already happened).
- */
-function notePlacedEntry(db: DB, timeEntryId: number): string | null {
-  try {
-    const row = db
-      .prepare(`SELECT start_at, end_at, project_id FROM time_entry WHERE id = ?`)
-      .get(timeEntryId) as
-      | { start_at: string; end_at: string; project_id: string | null }
-      | undefined;
-    if (!row) return null;
-    return placementNote(db, row);
-  } catch {
-    return null;
-  }
 }
 
 export function buildTools(
@@ -2004,32 +1985,19 @@ export function buildTools(
       },
       async handler(args) {
         const goalId = requireNumber(args, 'goal_id');
-        const goal = getGoal(db, goalId);
-        if (!goal) throw new Error(`goal ${goalId} not found`);
         const start = requireString(args, 'start');
-        let end: string;
-        if (typeof args.end === 'string') {
-          end = args.end;
-        } else {
-          const dur = requireNumber(args, 'duration_minutes');
-          const startMs = Date.parse(start);
-          if (Number.isNaN(startMs)) {
-            throw new Error(`start is not a valid ISO 8601 timestamp: ${start}`);
-          }
-          end = new Date(startMs + dur * 60_000).toISOString();
-        }
-        const id = insertTimeEntry(db, {
-          project_id: goal.project_id,
+        const result = placeGoalBlock(db, {
           goal_id: goalId,
-          start_at: start,
-          end_at: end,
-          status: 'UNCONFIRMED',
-          source: 'placement',
-          notes: (args.notes as string | null | undefined) ?? goal.title,
+          start,
+          end: typeof args.end === 'string' ? args.end : undefined,
+          duration_minutes:
+            typeof args.end === 'string'
+              ? undefined
+              : requireNumber(args, 'duration_minutes'),
+          notes: (args.notes as string | null | undefined) ?? undefined,
         });
-        return {
-          entry: db.prepare('SELECT * FROM time_entry WHERE id = ?').get(id),
-        };
+        const note = notePlacedEntry(db, result.entry.id);
+        return note ? { ...result, note } : result;
       },
     },
     /**

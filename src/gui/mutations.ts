@@ -19,9 +19,11 @@ import type { CalendarClient } from '../calendar/index.js';
 import {
   placeTask,
   unplaceTask,
+  placeGoalBlock,
   type PlaceTaskResult,
   type UnplaceTaskResult,
 } from '../placement.js';
+import { notePlacedEntry } from '../supply.js';
 import {
   moveTimeEntry,
   confirmTimeEntry,
@@ -59,8 +61,26 @@ export async function guiPlace(
   db: DB,
   calendar: CalendarClient,
   args: { task_id: number; start: string; end?: string },
-): Promise<PlaceTaskResult> {
-  return placeTask(db, calendar, args);
+): Promise<PlaceTaskResult & { note?: string }> {
+  const result = await placeTask(db, calendar, args);
+  // Same informational out-of-window/over-block note the MCP tool
+  // returns — never a gate, the placement already happened.
+  const note = notePlacedEntry(db, result.time_entry_id);
+  return note ? { ...result, note } : result;
+}
+
+/**
+ * Place a block against a goal's bucket (same core as the
+ * `place_goal_block` MCP tool). No calendar event — goal blocks live
+ * only on the grid until confirmed.
+ */
+export function guiPlaceGoal(
+  db: DB,
+  args: { goal_id: number; start: string; duration_minutes?: number; end?: string },
+): { entry: TimeEntryRow; note?: string } {
+  const result = placeGoalBlock(db, args);
+  const note = notePlacedEntry(db, result.entry.id);
+  return note ? { ...result, note } : result;
 }
 
 export function guiMove(

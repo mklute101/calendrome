@@ -6,6 +6,7 @@ import type { Server } from 'node:http';
 import { openDatabase } from '../src/db/connection.js';
 import { migrate } from '../src/db/migrate.js';
 import { createTask } from '../src/tasks.js';
+import { createGoal } from '../src/goals.js';
 import { createHabit, generateHabitInstances } from '../src/habits.js';
 import { FakeCalendarClient } from '../src/calendar/index.js';
 import { createApp } from '../src/gui/server.js';
@@ -121,6 +122,52 @@ describe('GUI write API over HTTP', () => {
     });
     expect(confirmed.status).toBe(200);
     expect((await json(confirmed)).time_entry.status).toBe('CONFIRMED');
+  });
+
+  it('goal blocks: place → skip (the GUI undo chain), plus error shapes (#138)', async () => {
+    // Seed a goal through a direct connection — createApp opens per-request.
+    const db = openDatabase(join(dir, 'calendrome.db'));
+    const goalId = createGoal(db, {
+      project_id: 'acme',
+      title: 'HTTP goal',
+      target_minutes: 600,
+      due: '2026-12-31',
+      min_chunk_minutes: 30,
+    }).id;
+    db.close();
+
+    const missing = await post('/api/goal-blocks', { start: '2026-07-13T09:00:00Z' });
+    expect(missing.status).toBe(400);
+    expect((await json(missing)).error).toMatch(/goal_id/);
+
+    const noDuration = await post('/api/goal-blocks', {
+      goal_id: goalId,
+      start: '2026-07-13T09:00:00Z',
+    });
+    expect(noDuration.status).toBe(400);
+
+    const unknown = await post('/api/goal-blocks', {
+      goal_id: 9999,
+      start: '2026-07-13T09:00:00Z',
+      duration_minutes: 30,
+    });
+    expect(unknown.status).toBe(404);
+
+    const placed = await post('/api/goal-blocks', {
+      goal_id: goalId,
+      start: '2026-07-13T09:00:00Z',
+      duration_minutes: 30,
+    });
+    expect(placed.status).toBe(200);
+    const { entry } = await json(placed);
+    expect(entry.goal_id).toBe(goalId);
+    expect(entry.status).toBe('UNCONFIRMED');
+    expect(entry.end_at).toBe('2026-07-13T09:30:00Z');
+
+    // Undo in the GUI is skip — deletes the UNCONFIRMED row.
+    const skipped = await post(`/api/placements/${entry.id}/skip`);
+    expect(skipped.status).toBe(200);
+    expect((await json(skipped)).deleted.start_at).toBe('2026-07-13T09:00:00Z');
   });
 
   it('GET endpoints still serve (regression)', async () => {

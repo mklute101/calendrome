@@ -47,12 +47,15 @@ sentence — never a click path.
 - The `/week` planner skill is the primary UX — collaborative weekly
   planning that pulls from Jira, Google Calendar, and calendrome.
 - The GUI is an interactive weekly planner (React SPA + optional
-  Tauri desktop shell): drag placements to move/resize, drag tasks
-  from the panel to place them, complete/snooze/confirm/skip inline.
-  Every GUI write goes through the same core functions as the MCP
-  tools (`src/placement.ts`, `src/gui/mutations.ts`) — the two
-  surfaces cannot drift. Claude conversations remain the planning
-  brain; the GUI covers fast rearranging (#24, #86).
+  Tauri desktop shell): drag placements to move/resize, drag task or
+  goal rows from the panel to place them, click an empty slot to
+  place from a picker, complete/snooze/confirm/skip inline. The
+  timeline view is the default — compact is a read-only overview
+  with no placement affordances (#138). Every GUI write goes through
+  the same core functions as the MCP tools (`src/placement.ts`,
+  `src/gui/mutations.ts`) — the two surfaces cannot drift. Claude
+  conversations remain the planning brain; the GUI covers fast
+  rearranging (#24, #86).
 - Every project belongs to a **category** (`work`, `personal`, …).
   Categories own a default scheduling window — work is Mon-Fri 9-5,
   personal is evenings/weekends — shaping where the planner

@@ -20,6 +20,7 @@ import { CompactGrid } from './CompactGrid';
 import { SyncBadge } from './SyncBadge';
 import { WeekTimeline } from './WeekTimeline';
 import { TaskPanel } from './TaskPanel';
+import { PlacePicker } from './PlacePicker';
 
 type ViewMode = 'compact' | 'timeline';
 
@@ -118,6 +119,57 @@ export function WeekView({
     [days, show],
   );
 
+  // Shared by drag-drop and the empty-slot picker (#138). The note
+  // toast is the same informational out-of-window/over-block mention
+  // the MCP tools return — placement already happened, never a gate.
+  const placeTaskAt = useCallback(
+    (task: Task, target: DropTarget) => {
+      if (!days) return;
+      const dayDate = days[target.dayIndex].date;
+      const startIso = localDateTimeIso(dayDate, target.startMinutes);
+      warnOverlap(target);
+      void runMutation(async () => {
+        const res = await api.placeTask({ task_id: task.id, start: startIso });
+        show({
+          kind: 'info',
+          message: `Placed “${task.title}” on ${fmtDate(dayDate)} ${fmtTime(startIso)}`,
+          undo: async () => {
+            await api.unplaceTask(task.id);
+            await refetchAll();
+          },
+        });
+        if (res.note) show({ kind: 'info', message: res.note });
+      });
+    },
+    [days, warnOverlap, runMutation, show, refetchAll],
+  );
+
+  const placeGoalAt = useCallback(
+    (goal: Goal, target: DropTarget) => {
+      if (!days) return;
+      const dayDate = days[target.dayIndex].date;
+      const startIso = localDateTimeIso(dayDate, target.startMinutes);
+      warnOverlap(target);
+      void runMutation(async () => {
+        const res = await api.placeGoalBlock({
+          goal_id: goal.id,
+          start: startIso,
+          duration_minutes: target.durationMinutes,
+        });
+        show({
+          kind: 'info',
+          message: `Placed “${goal.title}” on ${fmtDate(dayDate)} ${fmtTime(startIso)}`,
+          undo: async () => {
+            await api.skipPlacement(res.entry.id);
+            await refetchAll();
+          },
+        });
+        if (res.note) show({ kind: 'info', message: res.note });
+      });
+    },
+    [days, warnOverlap, runMutation, show, refetchAll],
+  );
+
   const onDrop = useCallback(
     (source: DragSource, target: DropTarget) => {
       if (!days) return;
@@ -211,23 +263,13 @@ export function WeekView({
             },
           });
         });
+      } else if (source.kind === 'place-goal') {
+        placeGoalAt(source.goal, target);
       } else {
-        const task = source.task;
-        warnOverlap(target);
-        void runMutation(async () => {
-          await api.placeTask({ task_id: task.id, start: startIso });
-          show({
-            kind: 'info',
-            message: `Placed “${task.title}” on ${fmtDate(dayDate)} ${fmtTime(startIso)}`,
-            undo: async () => {
-              await api.unplaceTask(task.id);
-              await refetchAll();
-            },
-          });
-        });
+        placeTaskAt(source.task, target);
       }
     },
-    [days, applyLocal, runMutation, warnOverlap, show, refetchAll],
+    [days, applyLocal, runMutation, warnOverlap, show, refetchAll, placeTaskAt, placeGoalAt],
   );
 
   const { ghost, gridRef, startDrag, dragging } = useTimelineDrag({
@@ -311,6 +353,36 @@ export function WeekView({
       });
     },
     [viewMode, startDrag, meta],
+  );
+
+  const startPlaceGoalDrag = useCallback(
+    (e: React.PointerEvent, goal: Goal) => {
+      if (viewMode !== 'timeline') return;
+      startDrag(e, {
+        kind: 'place-goal',
+        goal,
+        color: meta[goal.project_id]?.color ?? '#58a6ff',
+      });
+    },
+    [viewMode, startDrag, meta],
+  );
+
+  // Click-an-empty-slot placement (#138) — the no-drag path. The
+  // picker offers the same placeable set the panel does and places
+  // at the clicked, snapped slot.
+  const [picker, setPicker] = useState<{
+    dayIndex: number;
+    startMinutes: number;
+    x: number;
+    y: number;
+  } | null>(null);
+
+  const onEmptyClick = useCallback(
+    (dayIndex: number, startMinutes: number, at: { x: number; y: number }) => {
+      if (dragging) return;
+      setPicker({ dayIndex, startMinutes, x: at.x, y: at.y });
+    },
+    [dragging],
   );
 
   return (
@@ -406,9 +478,43 @@ export function WeekView({
               onSkip={skipPlacement}
               onCompleteHabit={completeHabit}
               onSkipHabit={skipHabit}
+              onEmptyClick={onEmptyClick}
             />
           )}
         </>
+      )}
+      {picker && days && (
+        <PlacePicker
+          tasks={panelTasks.tasks}
+          goals={filtered?.goals ?? []}
+          meta={panelTasks.meta}
+          categoryView={categoryView}
+          anchor={{
+            x: picker.x,
+            y: picker.y,
+            dayLabel: fmtDate(days[picker.dayIndex].date),
+            timeLabel: fmtTime(
+              localDateTimeIso(days[picker.dayIndex].date, picker.startMinutes),
+            ),
+          }}
+          onPickTask={(t) => {
+            placeTaskAt(t, {
+              dayIndex: picker.dayIndex,
+              startMinutes: picker.startMinutes,
+              durationMinutes: t.duration_minutes,
+            });
+            setPicker(null);
+          }}
+          onPickGoal={(g) => {
+            placeGoalAt(g, {
+              dayIndex: picker.dayIndex,
+              startMinutes: picker.startMinutes,
+              durationMinutes: g.min_chunk_minutes ?? 60,
+            });
+            setPicker(null);
+          }}
+          onClose={() => setPicker(null)}
+        />
       )}
       {panelOpen && (
         <TaskPanel
@@ -418,6 +524,7 @@ export function WeekView({
           onClose={() => setPanelOpen(false)}
           actions={taskActions}
           onDragStart={viewMode === 'timeline' ? startPlaceDrag : undefined}
+          onGoalDragStart={viewMode === 'timeline' ? startPlaceGoalDrag : undefined}
           goals={filtered?.goals ?? []}
           habitScores={filtered?.habit_scores ?? []}
         />
