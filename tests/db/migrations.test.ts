@@ -229,3 +229,39 @@ describe('time_entry timestamp normalization (#95)', () => {
     expect(getRow(db, good).start_at).toBe('2026-07-06T16:15:00Z');
   });
 });
+
+describe('availability_overrides timestamp normalization (#145)', () => {
+  const insertRaw = (db: any, start: string, end: string) => {
+    const r = db.prepare(`
+      INSERT INTO availability_overrides (start, end, available)
+      VALUES (?, ?, 0)
+    `).run(start, end);
+    return Number(r.lastInsertRowid);
+  };
+  const getRow = (db: any, id: number) =>
+    db.prepare(`SELECT * FROM availability_overrides WHERE id = ?`).get(id) as any;
+
+  it('rewrites legacy offset-stamped rows to canonical UTC', () => {
+    const db = openDatabase(':memory:');
+    migrate(db);
+
+    // Pre-#145 rows stored caller-supplied strings verbatim: 8pm
+    // Chicago on Jul 21 = 1am UTC Jul 22.
+    const id = insertRaw(db, '2026-07-21T08:00:00-05:00', '2026-07-21T20:00:00-05:00');
+    migrate(db);
+
+    const row = getRow(db, id);
+    expect(row.start).toBe('2026-07-21T13:00:00Z');
+    expect(row.end).toBe('2026-07-22T01:00:00Z');
+  });
+
+  it('is idempotent: canonical rows are untouched on re-run', () => {
+    const db = openDatabase(':memory:');
+    migrate(db);
+
+    const id = insertRaw(db, '2026-07-21T18:00:00Z', '2026-07-21T22:00:00Z');
+    const before = getRow(db, id);
+    migrate(db);
+    expect(getRow(db, id)).toEqual(before);
+  });
+});
