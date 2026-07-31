@@ -22,3 +22,4 @@ src-tauri/gen/
 
 # committed demo dataset (see demo/README.md)
 !demo/calendrome-demo.db
+.claude/worktrees/
