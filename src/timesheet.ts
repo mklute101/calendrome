@@ -109,7 +109,13 @@ function query(
             CAST(ROUND((julianday(te.end_at) - julianday(te.start_at)) * 24 * 60) AS INTEGER)
           )
         ) AS minutes,
-        te.status         AS status
+        te.status         AS status,
+        -- Task ids and time_entry ids are different id spaces; a bare
+        -- COALESCE(t.id, te.id) lets a task-less entry collide with a
+        -- same-numbered task and merge into one row (#143). Prefix the
+        -- key so the two spaces can never meet.
+        CASE WHEN t.id IS NULL THEN 'te-' || te.id ELSE 't-' || t.id END
+                          AS row_key
        FROM time_entry te
        LEFT JOIN tasks    t ON t.id = te.task_id
        INNER JOIN projects p ON p.id = te.project_id
@@ -117,8 +123,8 @@ function query(
         AND DATE(te.start_at) >= ?
         AND DATE(te.start_at) <= ?
         AND p.category_id IN (${placeholders})
-      GROUP BY date, COALESCE(t.id, te.id)
-      ORDER BY date, COALESCE(t.id, te.id)`;
+      GROUP BY date, p.prefix, row_key
+      ORDER BY date, p.prefix, row_key`;
   return db
     .prepare(sql)
     .all(status, fromDay, toDay, ...categories) as QueryRow[];
