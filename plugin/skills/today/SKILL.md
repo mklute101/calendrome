@@ -44,7 +44,7 @@ timestamps; a timestamp is bucketed to its UTC day.)
 
 If the list is empty, skip to Step 1.
 
-Otherwise render a compact bullet list (title, planned hours, time range) and ask **one** freeform question. Example:
+Otherwise render a compact bullet list (title, planned hours, time range) and ask **one** freeform question. Each row carries `task_title` / `goal_title` (null when unlinked, e.g. gcal-sync meetings) — use those as the title, falling back to `notes`. Example:
 
 ```
 Yesterday has 4 entries waiting for review:
