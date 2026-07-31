@@ -163,6 +163,17 @@ export interface ListPendingReviewOptions {
 }
 
 /**
+ * A `time_entry` row decorated with the linked task/goal title, so
+ * review lists can show what a placement *is* instead of its `notes`
+ * (often a Jira URL, sometimes NULL) (#151). Both are NULL when the
+ * entry has no link (e.g. gcal-sync events, unlinked manual logs).
+ */
+export interface PendingReviewRow extends TimeEntryRow {
+  task_title: string | null;
+  goal_title: string | null;
+}
+
+/**
  * `from`/`to` accept a plain date or an ISO timestamp; both are
  * bucketed to inclusive UTC days (`day-range.ts`) and compared against
  * `DATE(te.start_at)` — the same semantics as `getTimesheetSummary`,
@@ -170,7 +181,7 @@ export interface ListPendingReviewOptions {
  * (#92). The default range ends today, so still-upcoming placements
  * dated today are included.
  */
-export function listPendingReview(db: DB, opts: ListPendingReviewOptions): TimeEntryRow[] {
+export function listPendingReview(db: DB, opts: ListPendingReviewOptions): PendingReviewRow[] {
   const category = opts.category ?? 'work';
   const { fromDay, toDay } = toDayRange(
     opts.from ?? '1970-01-01',
@@ -178,14 +189,17 @@ export function listPendingReview(db: DB, opts: ListPendingReviewOptions): TimeE
   );
 
   return db.prepare(`
-    SELECT te.* FROM time_entry te
+    SELECT te.*, t.title AS task_title, g.title AS goal_title
+    FROM time_entry te
     LEFT JOIN projects p ON p.id = te.project_id
+    LEFT JOIN tasks t ON t.id = te.task_id
+    LEFT JOIN goals g ON g.id = te.goal_id
     WHERE te.status = 'UNCONFIRMED'
       AND DATE(te.start_at) >= ?
       AND DATE(te.start_at) <= ?
       AND (p.category_id = ? OR (p.category_id IS NULL AND ? = 'work'))
     ORDER BY te.start_at ASC
-  `).all(fromDay, toDay, category, category) as TimeEntryRow[];
+  `).all(fromDay, toDay, category, category) as PendingReviewRow[];
 }
 
 export interface MoveOptions {

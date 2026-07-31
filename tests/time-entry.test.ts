@@ -329,6 +329,41 @@ describe('listPendingReview', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0].start_at).toBe('2020-01-05T09:00:00Z');
   });
+
+  it('includes the linked task title for placements (#151)', () => {
+    const db = freshDb();
+    seed(db);
+    db.prepare(`INSERT INTO tasks (id, project_id, title) VALUES (1, 'WORK', 'Fix login bug')`).run();
+    insertTimeEntry(db, { task_id: 1, project_id: 'WORK', start_at: '2020-01-01T09:00:00Z', end_at: '2020-01-01T10:00:00Z', status: 'UNCONFIRMED', source: 'placement' });
+
+    const rows = listPendingReview(db, {});
+    expect(rows).toHaveLength(1);
+    expect(rows[0].task_title).toBe('Fix login bug');
+    expect(rows[0].goal_title).toBeNull();
+  });
+
+  it('returns task_title null for task-less entries (gcal-sync)', () => {
+    const db = freshDb();
+    seed(db);
+    insertTimeEntry(db, { project_id: 'WORK', start_at: '2020-01-01T09:00:00Z', end_at: '2020-01-01T09:30:00Z', status: 'UNCONFIRMED', source: 'gcal-sync', external_id: 'gcal-evt-1', is_meeting: true });
+
+    const rows = listPendingReview(db, {});
+    expect(rows).toHaveLength(1);
+    expect(rows[0].task_title).toBeNull();
+    expect(rows[0].goal_title).toBeNull();
+  });
+
+  it('includes the linked goal title for goal blocks (#151)', () => {
+    const db = freshDb();
+    seed(db);
+    db.prepare(`INSERT INTO goals (id, project_id, title, target_minutes) VALUES (1, 'WORK', 'AWS certification', 1800)`).run();
+    insertTimeEntry(db, { goal_id: 1, project_id: 'WORK', start_at: '2020-01-01T09:00:00Z', end_at: '2020-01-01T10:00:00Z', status: 'UNCONFIRMED', source: 'placement' });
+
+    const rows = listPendingReview(db, {});
+    expect(rows).toHaveLength(1);
+    expect(rows[0].goal_title).toBe('AWS certification');
+    expect(rows[0].task_title).toBeNull();
+  });
 });
 
 describe('moveTimeEntry', () => {
