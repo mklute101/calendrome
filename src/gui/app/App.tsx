@@ -39,7 +39,11 @@ function usePref<T extends string>(key: string, fallback: T): [T, (v: T) => void
 
 export default function App() {
   const route = useHashRoute();
-  const [viewMode, setViewMode] = usePref<ViewMode>('calendrome-view', 'compact');
+  // Timeline is the interactive default (#138) — compact is a
+  // read-only overview with no way to place or drag anything, so
+  // landing there hid the entire placement feature. A stored
+  // 'compact' pref (the user's explicit choice) is respected.
+  const [viewMode, setViewMode] = usePref<ViewMode>('calendrome-view', 'timeline');
   // Default to "work" so casual screen-shares never leak personal stuff.
   const [categoryView, setCategoryView] = usePref<string>(
     'calendrome-category-view',

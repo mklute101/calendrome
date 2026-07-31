@@ -9,6 +9,22 @@ import type { TaskActions } from '../hooks/useTaskActions';
  * filter as the week view. Phase 3 adds drag-to-place and action
  * buttons to the rows.
  */
+/** Category filter + panel sort — shared with the empty-slot
+ *  placement picker (#138) so both offer the same task set. */
+export function visibleTasks(
+  tasks: Task[],
+  meta: ProjectMeta,
+  categoryView: string,
+): Task[] {
+  const base =
+    categoryView === 'all'
+      ? tasks
+      : tasks.filter(
+          (t) => (meta[t.project_id]?.category_id ?? 'work') === categoryView,
+        );
+  return base.slice().sort(compareTasks);
+}
+
 export function TaskPanel({
   tasks,
   meta,
@@ -16,6 +32,7 @@ export function TaskPanel({
   onClose,
   actions,
   onDragStart,
+  onGoalDragStart,
   goals = [],
   habitScores = [],
 }: {
@@ -25,6 +42,7 @@ export function TaskPanel({
   onClose: () => void;
   actions?: TaskActions;
   onDragStart?: (e: React.PointerEvent, task: Task) => void;
+  onGoalDragStart?: (e: React.PointerEvent, goal: Goal) => void;
   /** Already filtered to the active category view (filterWeekData). */
   goals?: Goal[];
   habitScores?: HabitScore[];
@@ -32,15 +50,10 @@ export function TaskPanel({
   const [tab, setTab] = useState<'priorities' | 'tasks'>('priorities');
   const [search, setSearch] = useState('');
 
-  const visible = useMemo(() => {
-    const base =
-      categoryView === 'all'
-        ? tasks
-        : tasks.filter(
-            (t) => (meta[t.project_id]?.category_id ?? 'work') === categoryView,
-          );
-    return base.slice().sort(compareTasks);
-  }, [tasks, meta, categoryView]);
+  const visible = useMemo(
+    () => visibleTasks(tasks, meta, categoryView),
+    [tasks, meta, categoryView],
+  );
 
   const searched = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -86,7 +99,12 @@ export function TaskPanel({
         />
       )}
       <div className="tasks-panel-body">
-        <CommitmentSections goals={goals} habitScores={habitScores} meta={meta} />
+        <CommitmentSections
+          goals={goals}
+          habitScores={habitScores}
+          meta={meta}
+          onGoalDragStart={onGoalDragStart}
+        />
         {tab === 'priorities' ? (
           <PriorityGroups tasks={visible} meta={meta} actions={actions} onDragStart={onDragStart} />
         ) : searched.length ? (

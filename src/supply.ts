@@ -492,3 +492,23 @@ export function placementNote(
     `that's fine, the time counts as extra ${category.name} supply this week`
   );
 }
+
+/**
+ * `placementNote` looked up by time_entry id — for an entry that was
+ * just placed or moved. Never throws (a broken note must not fail
+ * the write that already happened). Shared by the MCP tools and the
+ * GUI write API.
+ */
+export function notePlacedEntry(db: DB, timeEntryId: number): string | null {
+  try {
+    const row = db
+      .prepare(`SELECT start_at, end_at, project_id FROM time_entry WHERE id = ?`)
+      .get(timeEntryId) as
+      | { start_at: string; end_at: string; project_id: string | null }
+      | undefined;
+    if (!row) return null;
+    return placementNote(db, row);
+  } catch {
+    return null;
+  }
+}

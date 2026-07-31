@@ -3,21 +3,24 @@ import { colorOf } from '../lib/colors';
 import { fmtHours } from '../lib/dates';
 
 /**
- * Read-only Goals + Habits sections for the side panel (M1 —
- * watchable). Goals show a progress bar (confirmed / target) and the
- * "Nh more needed this week" nag from `goalProgress`; a goal that
- * blew its date glows warn. Habits show the weekly frequency meter
- * (●●●○ done/target). Writes stay conversational for now — the
- * budget view (#/budget) is where the envelope becomes tactile.
+ * Goals + Habits sections for the side panel. Goals show a progress
+ * bar (confirmed / target) and the "Nh more needed this week" nag
+ * from `goalProgress`; a goal that blew its date glows warn — and
+ * with `onGoalDragStart` (timeline view) a goal row drags onto the
+ * grid to place a block (#138). Habits show the weekly frequency
+ * meter (●●●○ done/target) and stay read-only: instances are
+ * auto-generated; rescheduling is #129's territory.
  */
 export function CommitmentSections({
   goals,
   habitScores,
   meta,
+  onGoalDragStart,
 }: {
   goals: Goal[];
   habitScores: HabitScore[];
   meta: ProjectMeta;
+  onGoalDragStart?: (e: React.PointerEvent, goal: Goal) => void;
 }) {
   if (!goals.length && !habitScores.length) return null;
   return (
@@ -28,7 +31,7 @@ export function CommitmentSections({
             Goals <span className="count-badge">{goals.length}</span>
           </h3>
           {goals.map((g) => (
-            <GoalItem key={g.id} goal={g} meta={meta} />
+            <GoalItem key={g.id} goal={g} meta={meta} onDragStart={onGoalDragStart} />
           ))}
         </section>
       )}
@@ -46,7 +49,15 @@ export function CommitmentSections({
   );
 }
 
-function GoalItem({ goal, meta }: { goal: Goal; meta: ProjectMeta }) {
+function GoalItem({
+  goal,
+  meta,
+  onDragStart,
+}: {
+  goal: Goal;
+  meta: ProjectMeta;
+  onDragStart?: (e: React.PointerEvent, goal: Goal) => void;
+}) {
   const p = goal.progress;
   // Refill goals reset weekly — the bar tracks this week's pour;
   // by-date goals track the whole bucket.
@@ -56,12 +67,24 @@ function GoalItem({ goal, meta }: { goal: Goal; meta: ProjectMeta }) {
       : [p.week_confirmed, p.weekly_ask];
   const pct = target > 0 ? Math.min(100, (done / target) * 100) : 0;
   const color = colorOf(meta, goal.project_id);
+  // Whole-row drag, same contract as TaskRow (#138).
+  const startRowDrag = (e: React.PointerEvent) => {
+    if (!onDragStart) return;
+    if ((e.target as HTMLElement).closest('button, a, input')) return;
+    onDragStart(e, goal);
+  };
   return (
     <div
-      className={`goal-item${p.status === 'behind' ? ' behind' : ''}`}
+      className={`goal-item${p.status === 'behind' ? ' behind' : ''}${onDragStart ? ' draggable' : ''}`}
       style={{ '--c': color } as React.CSSProperties}
+      onPointerDown={startRowDrag}
     >
       <div className="goal-item-main">
+        {onDragStart && (
+          <span className="task-grip" title="Drag onto the timeline to place a block">
+            ⠿
+          </span>
+        )}
         <span className="task-title">{goal.title}</span>
         <span className="task-dur">
           {fmtHours(done)} / {fmtHours(target)}

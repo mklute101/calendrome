@@ -62,8 +62,19 @@ export const fetchTasks = () => request<TasksPayload>('/api/tasks');
 // ---- writes (phase 3 wires these to the UI) ----
 
 export const placeTask = (args: { task_id: number; start: string; end?: string }) =>
-  post<{ task: Task; event: { id: string }; time_entry_id: number }>(
+  post<{ task: Task; event: { id: string }; time_entry_id: number; note?: string }>(
     '/api/placements',
+    args,
+  );
+
+export const placeGoalBlock = (args: {
+  goal_id: number;
+  start: string;
+  duration_minutes?: number;
+  end?: string;
+}) =>
+  post<{ entry: { id: number; start_at: string; end_at: string }; note?: string }>(
+    '/api/goal-blocks',
     args,
   );
 
