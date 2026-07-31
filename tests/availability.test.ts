@@ -128,6 +128,62 @@ describe('availability overrides', () => {
     expect(getAvailabilityOverride(db, straddle.id)).not.toBeNull();
   });
 
+  it('stores offset-stamped inputs as canonical UTC (#145)', () => {
+    const db = freshDb();
+    const block = createAvailabilityOverride(db, {
+      start: '2026-07-21T08:00:00-05:00',
+      end: '2026-07-21T20:00:00-05:00',
+      available: 0,
+    });
+    expect(block.start).toBe('2026-07-21T13:00:00Z');
+    expect(block.end).toBe('2026-07-22T01:00:00Z');
+  });
+
+  it('rejects an end <= start even when offsets make the strings look ordered', () => {
+    const db = freshDb();
+    // Lexicographically start < end, but as instants start (16:30Z)
+    // is after end (15:00Z).
+    expect(() =>
+      createAvailabilityOverride(db, {
+        start: '2026-07-21T11:30:00-05:00',
+        end: '2026-07-21T15:00:00Z',
+        available: 0,
+      }),
+    ).toThrow(/end must be after start/);
+  });
+
+  it('UTC bounds find an offset-created override spanning the boundary (#145)', () => {
+    const db = freshDb();
+    // Ends 8pm Chicago on Jul 21 = 1am UTC Jul 22. A raw string
+    // compare against a Jul 21 23:00Z bound would drop this row.
+    const block = createAvailabilityOverride(db, {
+      start: '2026-07-21T08:00:00-05:00',
+      end: '2026-07-21T20:00:00-05:00',
+      available: 0,
+    });
+    const found = listAvailabilityOverrides(db, {
+      from: '2026-07-21T23:00:00Z',
+      to: '2026-07-22T12:00:00Z',
+    });
+    expect(found.map((r) => r.id)).toEqual([block.id]);
+  });
+
+  it('clearAvailabilityOverrides accepts offset-stamped bounds (#145)', () => {
+    const db = freshDb();
+    const block = createAvailabilityOverride(db, {
+      start: '2026-07-21T18:00:00Z',
+      end: '2026-07-21T22:00:00Z',
+      available: 0,
+    });
+    // Midnight-to-midnight Chicago = 05:00Z–05:00Z; contains the block.
+    const removed = clearAvailabilityOverrides(db, {
+      start: '2026-07-21T00:00:00-05:00',
+      end: '2026-07-22T00:00:00-05:00',
+    });
+    expect(removed).toBe(1);
+    expect(getAvailabilityOverride(db, block.id)).toBeNull();
+  });
+
   it('available=1 (open) carves time inside a normally-blocked window', () => {
     const db = freshDb();
     // "Saturday morning is fair game for personal work"

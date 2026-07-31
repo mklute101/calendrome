@@ -15,6 +15,7 @@
  * lives in the planner skill, not here — this module is just storage.
  */
 import type { DB } from './db/connection.js';
+import { toCanonicalUtc } from './day-range.js';
 
 export interface AvailabilityOverride {
   id: number;
@@ -38,7 +39,12 @@ export function createAvailabilityOverride(
   db: DB,
   input: CreateOverrideInput,
 ): AvailabilityOverride {
-  if (Date.parse(input.end) <= Date.parse(input.start)) {
+  // Canonical UTC storage form, same as time_entry (#95, #145):
+  // offset-stamped inputs are converted, never persisted verbatim, so
+  // range reads can compare strings without mixed-form hazards.
+  const start = toCanonicalUtc(input.start, 'start');
+  const end = toCanonicalUtc(input.end, 'end');
+  if (end <= start) {
     throw new Error('availability override: end must be after start');
   }
   const result = db
@@ -47,8 +53,8 @@ export function createAvailabilityOverride(
        VALUES (?, ?, ?, ?, ?)`,
     )
     .run(
-      input.start,
-      input.end,
+      start,
+      end,
       input.available,
       input.category_id ?? null,
       input.reason ?? null,
@@ -79,13 +85,15 @@ export function listAvailabilityOverrides(
 ): AvailabilityOverride[] {
   const where: string[] = [];
   const values: unknown[] = [];
+  // Bounds go through toCanonicalUtc too: stored rows are canonical
+  // UTC, so an offset-stamped bound would corrupt the string compare.
   if (opts.from) {
     where.push('end > ?');
-    values.push(opts.from);
+    values.push(toCanonicalUtc(opts.from, 'from'));
   }
   if (opts.to) {
     where.push('start < ?');
-    values.push(opts.to);
+    values.push(toCanonicalUtc(opts.to, 'to'));
   }
   if (opts.category_id !== undefined) {
     if (opts.category_id === null) {
@@ -122,7 +130,10 @@ export function clearAvailabilityOverrides(
   opts: ClearOverridesOpts,
 ): number {
   const where: string[] = ['start >= ?', 'end <= ?'];
-  const values: unknown[] = [opts.start, opts.end];
+  const values: unknown[] = [
+    toCanonicalUtc(opts.start, 'start'),
+    toCanonicalUtc(opts.end, 'end'),
+  ];
   if (opts.category_id !== undefined) {
     if (opts.category_id === null) {
       where.push('category_id IS NULL');

@@ -185,9 +185,12 @@ export function buildWeekPayload(db: DB, start: string) {
     fetchEnd + 'T23:59:59',
   );
 
+  // Explicit Z: listAvailabilityOverrides canonicalizes its bounds via
+  // Date.parse, which would read a zoneless timestamp as *local* time
+  // and shift the window by the process offset.
   const availability = listAvailabilityOverrides(db, {
-    from: start + 'T00:00:00',
-    to: end + 'T23:59:59',
+    from: start + 'T00:00:00Z',
+    to: end + 'T23:59:59Z',
   });
 
   return {
