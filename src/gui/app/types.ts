@@ -192,7 +192,10 @@ export interface BudgetEnvelope {
   envelope_type: EnvelopeType;
   envelope_id: string;
   title: string;
-  /** NULL = snoozed (unfunded) for the week. */
+  /**
+   * NULL = snoozed (unfunded) for the week, or an uncapped project
+   * (no standing budget, #150) — funding tells them apart.
+   */
   assigned: number | null;
   activity: { confirmed_minutes: number; scheduled_minutes: number };
   /** assigned − (confirmed + scheduled). */

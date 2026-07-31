@@ -126,11 +126,11 @@ describe('assignHours', () => {
 });
 
 describe('standingDefault', () => {
-  it('project → budget cap (0 when unset); goal → weekly ask; habit → frequency ask', () => {
+  it('project → budget cap (null when uncapped, #150); goal → weekly ask; habit → frequency ask', () => {
     const db = setup();
     createProject(db, { id: 'nocap', name: 'No Cap', prefix: 'NOCAP' });
     expect(standingDefault(db, 'project', 'acme', WEEK)).toBe(1200);
-    expect(standingDefault(db, 'project', 'nocap', WEEK)).toBe(0);
+    expect(standingDefault(db, 'project', 'nocap', WEEK)).toBeNull();
 
     const goal = createGoal(db, {
       project_id: 'hobby',
@@ -466,6 +466,69 @@ describe('getEnvelopes', () => {
     expect(partialRow.funding).toBe('underfunded');
     expect(partialRow.needed_minutes).toBe(300); // 8h ask − 3h done
     expect(partialRow.status_line).toBe('5h more needed this week');
+  });
+
+  // #150: NULL weekly_budget_minutes is "no cap", not a 0h cap — an
+  // uncapped project must never read as overspent for merely having
+  // activity. An explicit assign_hours row is still a normal cap that
+  // week, and an explicit NULL is still snoozed.
+  it('an uncapped project with activity is not overspent (#150)', () => {
+    const db = setup();
+    createProject(db, {
+      id: 'fitness',
+      name: 'Fitness',
+      prefix: 'FIT',
+      category_id: 'personal',
+    });
+    insertTimeEntry(db, {
+      project_id: 'fitness',
+      start_at: '2026-07-14T18:00:00Z',
+      end_at: '2026-07-14T20:00:00Z',
+      status: 'CONFIRMED',
+      source: 'manual',
+    });
+    const row = getEnvelopes(db, WEEK).find((r) => r.envelope_id === 'fitness')!;
+    expect(row.assigned).toBeNull();
+    expect(row.funding).toBe('on_track');
+    expect(row.status_line).toBe('No cap');
+  });
+
+  it('an explicit assignment on an uncapped project is a normal cap that week', () => {
+    const db = setup();
+    createProject(db, {
+      id: 'fitness',
+      name: 'Fitness',
+      prefix: 'FIT',
+      category_id: 'personal',
+    });
+    insertTimeEntry(db, {
+      project_id: 'fitness',
+      start_at: '2026-07-14T18:00:00Z',
+      end_at: '2026-07-14T20:00:00Z',
+      status: 'CONFIRMED',
+      source: 'manual',
+    });
+    assignHours(db, {
+      envelope_type: 'project',
+      envelope_id: 'fitness',
+      week_start: WEEK,
+      minutes: 60,
+    });
+    const capped = getEnvelopes(db, WEEK).find((r) => r.envelope_id === 'fitness')!;
+    expect(capped.assigned).toBe(60);
+    expect(capped.funding).toBe('overspent');
+    expect(capped.status_line).toBe('Overspent: 2h of 1h');
+
+    // An explicit NULL is still snoozed — not mistaken for "no cap".
+    assignHours(db, {
+      envelope_type: 'project',
+      envelope_id: 'fitness',
+      week_start: WEEK,
+      minutes: null,
+    });
+    const snoozed = getEnvelopes(db, WEEK).find((r) => r.envelope_id === 'fitness')!;
+    expect(snoozed.funding).toBe('snoozed');
+    expect(snoozed.status_line).toBe('Snoozed this week');
   });
 
   it('explicit assignment overrides the standing default', () => {
