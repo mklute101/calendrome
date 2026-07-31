@@ -65,6 +65,53 @@ describe('GUI mutations (#24, #86)', () => {
     expect(row.end_at).toBe('2026-07-13T09:45:00Z');
   });
 
+  it('guiPlace on an already-SCHEDULED task splits it: two UNCONFIRMED placements, task stays SCHEDULED (#144)', async () => {
+    const { db, calendar, task } = setup();
+    await guiPlace(db, calendar, { task_id: task.id, start: '2026-07-13T09:00:00Z' });
+    const second = await guiPlace(db, calendar, {
+      task_id: task.id,
+      start: '2026-07-14T09:00:00Z',
+    });
+
+    expect(second.task.status).toBe('SCHEDULED');
+    expect(calendar.events).toHaveLength(2);
+    const rows = db
+      .prepare(
+        `SELECT status FROM time_entry WHERE task_id = ? AND source = 'placement' ORDER BY id`,
+      )
+      .all(task.id) as any[];
+    expect(rows).toHaveLength(2);
+    expect(rows.every((r) => r.status === 'UNCONFIRMED')).toBe(true);
+  });
+
+  it('guiPlace failure after event creation leaves no orphan time_entry or event (#144)', async () => {
+    const { db, calendar, task } = setup();
+    guiComplete(db, task.id); // COMPLETE -> SCHEDULED is illegal, so the DB half throws
+    await expect(
+      guiPlace(db, calendar, { task_id: task.id, start: '2026-07-13T09:00:00Z' }),
+    ).rejects.toThrow(/illegal status transition/);
+    expect(db.prepare(`SELECT COUNT(*) AS n FROM time_entry`).get()).toEqual({ n: 0 });
+    expect(calendar.events).toHaveLength(0); // best-effort event cleanup ran
+  });
+
+  it('guiUnplace on a split task removes only the latest placement and keeps SCHEDULED (#144)', async () => {
+    const { db, calendar, task } = setup();
+    await guiPlace(db, calendar, { task_id: task.id, start: '2026-07-13T09:00:00Z' });
+    await guiPlace(db, calendar, { task_id: task.id, start: '2026-07-14T09:00:00Z' });
+
+    const first = await guiUnplace(db, calendar, task.id);
+    expect(first.was).toEqual({
+      start_at: '2026-07-14T09:00:00Z',
+      end_at: '2026-07-14T10:30:00Z',
+    });
+    expect(first.task.status).toBe('SCHEDULED'); // one placement still on the calendar
+    expect(calendar.events).toHaveLength(1);
+
+    const last = await guiUnplace(db, calendar, task.id);
+    expect(last.task.status).toBe('NEW'); // nothing left placed
+    expect(calendar.events).toHaveLength(0);
+  });
+
   it('guiPlace throws 404-shaped error on unknown task and rejects bad start', async () => {
     const { db, calendar } = setup();
     await expect(
