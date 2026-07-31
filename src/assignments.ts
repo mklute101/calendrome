@@ -67,10 +67,15 @@ export interface EnvelopeRow {
   envelope_type: EnvelopeType;
   envelope_id: string;
   title: string;
-  /** Explicit assignment row if present, else the standing default. NULL = snoozed. */
+  /**
+   * Explicit assignment row if present, else the standing default.
+   * NULL is either snoozed (explicit NULL row) or an uncapped project
+   * (NULL standing budget, #150) — funding tells them apart
+   * ('snoozed' vs 'on_track').
+   */
   assigned: number | null;
   activity: { confirmed_minutes: number; scheduled_minutes: number };
-  /** assigned − (confirmed + scheduled); 0-based when snoozed. */
+  /** assigned − (confirmed + scheduled); 0-based when snoozed or uncapped. */
   available: number;
   /**
    * Caps and floors are different forces (#119, spec round 4): a
@@ -111,20 +116,21 @@ function assertEnvelopeExists(db: DB, type: EnvelopeType, id: string): void {
 /**
  * The standing weekly default for an envelope, used when no
  * assignments row exists: project → its standing default assignment
- * (`weekly_budget_minutes`, the cap side of the envelope; 0 when
- * unset), goal → its weekly ask, habit → instances-per-week × duration.
+ * (`weekly_budget_minutes`, the cap side of the envelope; NULL when
+ * unset — a deliberately uncapped project has *no* cap, not a 0h one,
+ * #150), goal → its weekly ask, habit → instances-per-week × duration.
  */
 export function standingDefault(
   db: DB,
   type: EnvelopeType,
   id: string,
   weekStart: string,
-): number {
+): number | null {
   if (type === 'project') {
     const row = db
       .prepare('SELECT weekly_budget_minutes FROM projects WHERE id = ?')
       .get(id) as { weekly_budget_minutes: number | null } | undefined;
-    return row?.weekly_budget_minutes ?? 0;
+    return row?.weekly_budget_minutes ?? null;
   }
   if (type === 'goal') {
     return goalProgress(db, Number(id), weekStart).weekly_ask;
@@ -223,13 +229,14 @@ export function pullHours(db: DB, input: PullHoursInput): EnvelopeMove {
   );
 
   // Current assigned minutes, seeding from the standing default when no
-  // explicit row exists. Snoozed (explicit NULL) counts as 0.
+  // explicit row exists. Snoozed (explicit NULL) and uncapped (NULL
+  // standing budget) both count as 0 — neither has hours to give.
   const currentAssigned = (ref: EnvelopeRef): number => {
     const row = getRow.get(ref.type, ref.id, input.week_start) as
       | { minutes: number | null }
       | undefined;
     if (row === undefined) {
-      return standingDefault(db, ref.type, ref.id, input.week_start);
+      return standingDefault(db, ref.type, ref.id, input.week_start) ?? 0;
     }
     return row.minutes ?? 0;
   };
@@ -352,6 +359,9 @@ export function getEnvelopes(db: DB, weekStart: string): EnvelopeRow[] {
     // floors nag up only. `weeklyAskNeeded !== null` marks a floor
     // (goal/habit); projects are bare caps. Precedence:
     //   snoozed     — explicit NULL assignment for the week
+    //   on_track    — uncapped project (#150): NULL standing budget
+    //                 with no explicit row is "no cap", not a 0h cap —
+    //                 activity can never overspend it
     //   overspent   — caps only: activity exceeds the assigned minutes
     //   underfunded — floors only: the week's ask isn't covered yet
     //   on_track    — otherwise (a floor past its ask is fine, a cap
@@ -362,6 +372,12 @@ export function getEnvelopes(db: DB, weekStart: string): EnvelopeRow[] {
     if (explicitRow !== undefined && explicitRow.minutes === null) {
       funding = 'snoozed';
       status_line = 'Snoozed this week';
+    } else if (assigned === null) {
+      // Only an uncapped project's standing default reaches here —
+      // goal/habit standing asks are always numbers, and an explicit
+      // NULL row was caught above as snoozed.
+      funding = 'on_track';
+      status_line = 'No cap';
     } else if (!isFloor && activityTotal > (assigned ?? 0)) {
       funding = 'overspent';
       status_line = `Overspent: ${fmtHours(activityTotal)} of ${fmtHours(assigned ?? 0)}`;
@@ -411,7 +427,7 @@ export function getEnvelopes(db: DB, weekStart: string): EnvelopeRow[] {
       confirmed: number;
       scheduled: number;
     };
-    const ask = standingDefault(db, 'habit', String(habit.id), weekStart);
+    const ask = standingDefault(db, 'habit', String(habit.id), weekStart) ?? 0;
     const activityTotal =
       Math.round(activity.confirmed) + Math.round(activity.scheduled);
     const needed = Math.max(0, ask - activityTotal);

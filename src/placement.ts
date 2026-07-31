@@ -59,18 +59,46 @@ export async function placeTask(
   // confirmation flow operates on. The time_entry's `external_id`
   // (= event.id) is now the canonical link between task and
   // calendar event; we no longer stamp `task.calendar_event_id`.
-  const timeEntryId = insertTimeEntry(db, {
-    task_id: args.task_id,
-    project_id: task.project_id,
-    start_at: args.start,
-    end_at: end,
-    status: 'UNCONFIRMED',
-    source: 'placement',
-    external_id: event.id,
-    notes: task.notes ?? null,
+  //
+  // The two DB writes land together or not at all (#144). better-sqlite3
+  // transactions are synchronous, so the async calendar call above had to
+  // happen first; if the DB half fails we best-effort delete the event we
+  // just created so neither side keeps an orphan.
+  const placeTx = db.transaction(() => {
+    const id = insertTimeEntry(db, {
+      task_id: args.task_id,
+      project_id: task.project_id,
+      start_at: args.start,
+      end_at: end,
+      status: 'UNCONFIRMED',
+      source: 'placement',
+      external_id: event.id,
+      notes: task.notes ?? null,
+    });
+    // Re-placing an already-SCHEDULED task (splitting it across blocks)
+    // is a normal planner move — SCHEDULED -> SCHEDULED isn't a
+    // transition, so only flip the status when it actually changes.
+    if (task.status !== 'SCHEDULED') {
+      setTaskStatus(db, args.task_id, 'SCHEDULED');
+    }
+    return id;
   });
 
-  setTaskStatus(db, args.task_id, 'SCHEDULED');
+  let timeEntryId: number;
+  try {
+    timeEntryId = placeTx();
+  } catch (err) {
+    try {
+      await calendar.deleteEvent({
+        calendar_id: project?.calendar_id ?? null,
+        event_id: event.id,
+      });
+    } catch {
+      // Best-effort cleanup — the original failure is the one to surface.
+    }
+    throw err;
+  }
+
   return {
     task: getTask(db, args.task_id)!,
     event,
@@ -131,8 +159,15 @@ export async function unplaceTask(
   // Only flip status when the task was actually SCHEDULED. For NEW
   // (never placed), IN_PROGRESS, or COMPLETE we leave the status
   // alone — unplacing the calendar event shouldn't yank a task out
-  // of in-progress or completed state.
-  if (task.status === 'SCHEDULED') {
+  // of in-progress or completed state. A split task (#144) keeps
+  // SCHEDULED while any other placement row remains.
+  const remaining = db
+    .prepare(
+      `SELECT COUNT(*) AS n FROM time_entry
+       WHERE task_id = ? AND source = 'placement'`,
+    )
+    .get(taskId) as { n: number };
+  if (task.status === 'SCHEDULED' && remaining.n === 0) {
     setTaskStatus(db, taskId, 'NEW');
   }
   return {

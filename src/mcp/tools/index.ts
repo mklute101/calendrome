@@ -964,7 +964,8 @@ export function buildTools(
       description:
         'List UNCONFIRMED time_entries that need confirmation or ' +
         'skip. Defaults to work-category entries only. `from`/`to` are ' +
-        'inclusive UTC days (plain date or ISO timestamp).',
+        'inclusive UTC days (plain date or ISO timestamp). Rows include ' +
+        '`task_title`/`goal_title` (null when unlinked) for rendering.',
       inputSchema: {
         type: 'object',
         properties: {

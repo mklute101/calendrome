@@ -69,6 +69,7 @@ export function migrate(db: DB): void {
   ).run();
 
   normalizeTimeEntryTimestamps(db);
+  normalizeAvailabilityTimestamps(db);
 }
 
 /**
@@ -122,4 +123,25 @@ function normalizeTimeEntryTimestamps(db: DB): void {
       );
     }
   }
+}
+
+/**
+ * Same one-shot normalization for availability_overrides (#145).
+ * `createAvailabilityOverride` used to insert caller-supplied strings
+ * verbatim, so historical rows can carry local offsets
+ * (`…T20:00:00-05:00`) that break the lexicographic range compares in
+ * `listAvailabilityOverrides` / `clearAvailabilityOverrides`. Same
+ * strftime idiom as time_entry above; the table has no CHECK between
+ * start and end, so a single bulk UPDATE suffices. Idempotent:
+ * canonical values map to themselves.
+ */
+function normalizeAvailabilityTimestamps(db: DB): void {
+  const canon = (col: string) => `strftime('%Y-%m-%dT%H:%M:%SZ', ${col})`;
+  db.prepare(`
+    UPDATE availability_overrides SET
+      start = COALESCE(${canon('start')}, start),
+      end   = COALESCE(${canon('end')}, end)
+    WHERE start != ${canon('start')}
+       OR end   != ${canon('end')}
+  `).run();
 }

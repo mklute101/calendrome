@@ -45,8 +45,9 @@ into last week's review.)
 
 > "Last week is fully reconciled — moving on."
 
-**If non-empty:** render the entries grouped by day, then ask for one
-sentence:
+**If non-empty:** render the entries grouped by day — each row carries
+`task_title` / `goal_title` (null when unlinked); use those as the
+label, falling back to `notes` — then ask for one sentence:
 
 ```
 ### Unconfirmed from last week

@@ -105,6 +105,43 @@ describe('timesheet export', () => {
     expect(lines).toContain('2026-04-14,ACME,1,Report,');
   });
 
+  it('keeps a task-less entry separate from a same-numbered task (#143)', () => {
+    const db = freshDb();
+    createProject(db, { id: 'nw', name: 'Northwind', prefix: 'NW' });
+    // First time_entry gets id 1 (a task-less confirmed meeting)…
+    const entryId = seedConfirmed(
+      db,
+      null,
+      'nw',
+      '2026-04-14T10:00:00Z',
+      45,
+      'Standup',
+    );
+    // …and the first task gets id 1 too: same number, different id space.
+    const t = createTask(db, { project_id: 'nw', title: 'Report' });
+    expect(entryId).toBe(1);
+    expect(t.id).toBe(1);
+    seedConfirmed(db, t.id, 'nw', '2026-04-14T13:00:00Z', 120);
+
+    const summary = getTimesheetSummary(db, '2026-04-13', '2026-04-19');
+    expect(summary.rows).toHaveLength(2);
+    expect(summary.rows).toContainEqual({
+      date: '2026-04-14',
+      project: 'NW',
+      hours: 0.75,
+      task: 'Standup',
+      notes: 'Standup',
+    });
+    expect(summary.rows).toContainEqual({
+      date: '2026-04-14',
+      project: 'NW',
+      hours: 2,
+      task: 'Report',
+      notes: null,
+    });
+    expect(summary.grand_total_hours).toBe(2.75);
+  });
+
   it('quotes notes containing commas', () => {
     const db = freshDb();
     createProject(db, { id: 'acme', name: 'Acme Corp', prefix: 'ACME' });
