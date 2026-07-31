@@ -391,7 +391,7 @@ export function computeWeekSupply(db: DB, weekStart: string): WeekSupply {
     0,
   );
   // Effective assignments: explicit row or standing default per
-  // envelope; snoozed (NULL) counts as 0.
+  // envelope; snoozed and uncapped (NULL) count as 0.
   const assigned_minutes = getEnvelopes(db, weekStart).reduce(
     (sum, row) => sum + (row.assigned ?? 0),
     0,

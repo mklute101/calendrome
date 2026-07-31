@@ -438,9 +438,10 @@ function EnvelopeRowView({
   const pullable = row.funding === 'overspent' && shortfall > 0;
   // The pill's number shares a basis with the status line beneath it:
   // overspent → the overage, underfunded → the uncovered ask,
-  // snoozed → nothing assigned, else → available (assigned − activity).
+  // NULL assigned (snoozed or uncapped, #150) → no number to show,
+  // else → available (assigned − activity).
   const pillText =
-    row.funding === 'snoozed'
+    row.assigned === null
       ? '—'
       : row.funding === 'overspent'
         ? fmtHours(activityTotal - assigned)
