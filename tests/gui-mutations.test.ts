@@ -86,7 +86,7 @@ describe('GUI mutations (#24, #86)', () => {
 
   it('guiPlace failure after event creation leaves no orphan time_entry or event (#144)', async () => {
     const { db, calendar, task } = setup();
-    guiComplete(db, task.id); // COMPLETE -> SCHEDULED is illegal, so the DB half throws
+    await guiComplete(db, calendar, task.id); // COMPLETE -> SCHEDULED is illegal, so the DB half throws
     await expect(
       guiPlace(db, calendar, { task_id: task.id, start: '2026-07-13T09:00:00Z' }),
     ).rejects.toThrow(/illegal status transition/);
@@ -219,9 +219,9 @@ describe('GUI mutations (#24, #86)', () => {
     await expect(guiUnplace(db, calendar, task.id)).rejects.toThrow(/CONFIRMED/);
   });
 
-  it('guiComplete completes; reopenTask reverses it; reopen refuses non-COMPLETE', () => {
-    const { db, task } = setup();
-    const { task: done } = guiComplete(db, task.id);
+  it('guiComplete completes; reopenTask reverses it; reopen refuses non-COMPLETE', async () => {
+    const { db, calendar, task } = setup();
+    const { task: done } = await guiComplete(db, calendar, task.id);
     expect(done.status).toBe('COMPLETE');
 
     const { task: reopened } = reopenTask(db, task.id, 'NEW');

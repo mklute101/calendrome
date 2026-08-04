@@ -102,8 +102,12 @@ export async function guiUnplace(
   return unplaceTask(db, calendar, taskId);
 }
 
-export function guiComplete(db: DB, taskId: number): { task: Task } {
-  return { task: completeTask(db, taskId) };
+export async function guiComplete(
+  db: DB,
+  calendar: CalendarClient,
+  taskId: number,
+): Promise<{ task: Task }> {
+  return { task: await completeTask(db, calendar, taskId) };
 }
 
 /**

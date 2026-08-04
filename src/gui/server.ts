@@ -286,7 +286,9 @@ export function createApp(
   /** Mark a task COMPLETE (same as the `complete_task` MCP tool). */
   app.post('/api/tasks/:id/complete', (req, res) => {
     const db = getDb();
-    mutate(res, () => guiComplete(db, idParam(req))).finally(() => db.close());
+    mutate(res, () => guiComplete(db, calendar, idParam(req))).finally(() =>
+      db.close(),
+    );
   });
 
   /**

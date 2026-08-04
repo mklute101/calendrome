@@ -356,14 +356,18 @@ export function buildTools(
     },
     {
       name: 'complete_task',
-      description: 'Complete a task',
+      description:
+        'Complete a task. Clears any still-upcoming UNCONFIRMED ' +
+        'placements (and their calendar events) so finished work never ' +
+        'lingers as a pending future block; already-started placements ' +
+        'stay for the EOD review.',
       inputSchema: {
         type: 'object',
         required: ['id'],
         properties: { id: { type: 'integer' } },
       },
       async handler(args) {
-        return { task: completeTask(db, requireNumber(args, 'id')) };
+        return { task: await completeTask(db, calendar, requireNumber(args, 'id')) };
       },
     },
     /**

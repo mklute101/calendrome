@@ -3,6 +3,7 @@ import { freshDb } from '../helpers/db.js';
 import { createProject } from '../../src/projects.js';
 import { createTask } from '../../src/tasks.js';
 import { completeTask } from '../../src/time-log.js';
+import { FakeCalendarClient } from '../../src/calendar/fake.js';
 import {
   createHabit,
   generateHabitInstances,
@@ -110,12 +111,12 @@ describe('integration: full lifecycle', () => {
     expect(budget.overspent).toBe(true);
   });
 
-  it('using the real task lifecycle helpers end-to-end', () => {
+  it('using the real task lifecycle helpers end-to-end', async () => {
     const db = freshDb();
     createProject(db, { id: 'acme', name: 'Acme Corp', prefix: 'ACME' });
     const t = createTask(db, { project_id: 'acme', title: 'X' });
 
-    const done = completeTask(db, t.id);
+    const done = await completeTask(db, new FakeCalendarClient(), t.id);
     expect(done.status).toBe('COMPLETE');
   });
 });

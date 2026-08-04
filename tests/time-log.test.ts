@@ -1,8 +1,10 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { freshDb } from './helpers/db.js';
 import { createProject } from '../src/projects.js';
 import { createTask, getTask } from '../src/tasks.js';
 import { completeTask, logTime } from '../src/time-log.js';
+import { FakeCalendarClient } from '../src/calendar/fake.js';
+import { placeTask } from '../src/placement.js';
 
 function setup() {
   const db = freshDb();
@@ -11,16 +13,67 @@ function setup() {
 }
 
 describe('time log', () => {
-  it('completeTask marks the task COMPLETE', () => {
+  it('completeTask marks the task COMPLETE', async () => {
     const db = setup();
     const t = createTask(db, { project_id: 'acme', title: 'X' });
-    const done = completeTask(db, t.id);
+    const done = await completeTask(db, new FakeCalendarClient(), t.id);
     expect(done.status).toBe('COMPLETE');
   });
 
-  it('completeTask throws on unknown task_id', () => {
+  it('completeTask throws on unknown task_id', async () => {
     const db = setup();
-    expect(() => completeTask(db, 9999)).toThrow(/not found/);
+    await expect(completeTask(db, new FakeCalendarClient(), 9999)).rejects.toThrow(/not found/);
+  });
+
+  describe('completeTask clears upcoming placements (#105)', () => {
+    afterEach(() => {
+      delete process.env.CALENDROME_NOW;
+    });
+
+    it('deletes still-upcoming UNCONFIRMED placements and their calendar events', async () => {
+      // The #105 repro: task completed at ~8am, placement at 9am same day.
+      process.env.CALENDROME_NOW = '2026-07-16T13:00:00Z';
+      const db = setup();
+      const calendar = new FakeCalendarClient();
+      const t = createTask(db, { project_id: 'acme', title: 'finish/verify', duration_minutes: 30 });
+      const placed = await placeTask(db, calendar, { task_id: t.id, start: '2026-07-16T14:00:00Z' });
+      expect(calendar.events).toHaveLength(1);
+
+      const done = await completeTask(db, calendar, t.id);
+      expect(done.status).toBe('COMPLETE');
+      const row = db.prepare(`SELECT id FROM time_entry WHERE id = ?`).get(placed.time_entry_id);
+      expect(row).toBeUndefined();
+      expect(calendar.events).toHaveLength(0);
+    });
+
+    it('leaves already-started placements for the EOD review', async () => {
+      process.env.CALENDROME_NOW = '2026-07-16T15:00:00Z';
+      const db = setup();
+      const calendar = new FakeCalendarClient();
+      const t = createTask(db, { project_id: 'acme', title: 'in flight', duration_minutes: 60 });
+      const placed = await placeTask(db, calendar, { task_id: t.id, start: '2026-07-16T14:30:00Z' });
+
+      await completeTask(db, calendar, t.id);
+      const row = db
+        .prepare(`SELECT status FROM time_entry WHERE id = ?`)
+        .get(placed.time_entry_id) as { status: string };
+      expect(row.status).toBe('UNCONFIRMED');
+      expect(calendar.events).toHaveLength(1);
+    });
+
+    it('clears only the future placements of a split task', async () => {
+      process.env.CALENDROME_NOW = '2026-07-16T15:00:00Z';
+      const db = setup();
+      const calendar = new FakeCalendarClient();
+      const t = createTask(db, { project_id: 'acme', title: 'split', duration_minutes: 60 });
+      const past = await placeTask(db, calendar, { task_id: t.id, start: '2026-07-16T13:00:00Z' });
+      const future = await placeTask(db, calendar, { task_id: t.id, start: '2026-07-17T13:00:00Z' });
+
+      await completeTask(db, calendar, t.id);
+      expect(db.prepare(`SELECT id FROM time_entry WHERE id = ?`).get(past.time_entry_id)).toBeDefined();
+      expect(db.prepare(`SELECT id FROM time_entry WHERE id = ?`).get(future.time_entry_id)).toBeUndefined();
+      expect(calendar.events).toHaveLength(1);
+    });
   });
 
   describe('logTime (retroactive)', () => {
