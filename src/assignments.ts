@@ -25,6 +25,7 @@
  * project's row; the project row is the "everything else" bucket.
  */
 import type { DB } from './db/connection.js';
+import { now } from './clock.js';
 import {
   assertMonday,
   goalProgress,
@@ -163,18 +164,19 @@ export function assignHours(db: DB, input: AssignHoursInput): Assignment {
     throw new Error(`minutes must be a non-negative integer or null, got: ${input.minutes}`);
   }
   db.prepare(
-    `INSERT INTO assignments (envelope_type, envelope_id, week_start, minutes, note)
-     VALUES (?, ?, ?, ?, ?)
+    `INSERT INTO assignments (envelope_type, envelope_id, week_start, minutes, note, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?)
      ON CONFLICT(envelope_type, envelope_id, week_start)
      DO UPDATE SET minutes = excluded.minutes,
                    note = excluded.note,
-                   updated_at = datetime('now')`,
+                   updated_at = excluded.updated_at`,
   ).run(
     input.envelope_type,
     input.envelope_id,
     input.week_start,
     input.minutes,
     input.note ?? null,
+    now(),
   );
   return db
     .prepare(
@@ -222,10 +224,10 @@ export function pullHours(db: DB, input: PullHoursInput): EnvelopeMove {
       WHERE envelope_type = ? AND envelope_id = ? AND week_start = ?`,
   );
   const setMinutes = db.prepare(
-    `INSERT INTO assignments (envelope_type, envelope_id, week_start, minutes)
-     VALUES (?, ?, ?, ?)
+    `INSERT INTO assignments (envelope_type, envelope_id, week_start, minutes, updated_at)
+     VALUES (?, ?, ?, ?, ?)
      ON CONFLICT(envelope_type, envelope_id, week_start)
-     DO UPDATE SET minutes = excluded.minutes, updated_at = datetime('now')`,
+     DO UPDATE SET minutes = excluded.minutes, updated_at = excluded.updated_at`,
   );
 
   // Current assigned minutes, seeding from the standing default when no
@@ -242,6 +244,7 @@ export function pullHours(db: DB, input: PullHoursInput): EnvelopeMove {
   };
 
   const pullTx = db.transaction((): EnvelopeMove => {
+    const stamp = now();
     if (from) {
       const have = currentAssigned(from);
       if (have < input.minutes) {
@@ -250,17 +253,17 @@ export function pullHours(db: DB, input: PullHoursInput): EnvelopeMove {
             `only ${have}m assigned this week (short ${input.minutes - have}m)`,
         );
       }
-      setMinutes.run(from.type, from.id, input.week_start, have - input.minutes);
+      setMinutes.run(from.type, from.id, input.week_start, have - input.minutes, stamp);
     }
     if (to) {
       const have = currentAssigned(to);
-      setMinutes.run(to.type, to.id, input.week_start, have + input.minutes);
+      setMinutes.run(to.type, to.id, input.week_start, have + input.minutes, stamp);
     }
     const result = db
       .prepare(
         `INSERT INTO envelope_moves
-           (week_start, from_type, from_id, to_type, to_id, minutes, note)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+           (week_start, from_type, from_id, to_type, to_id, minutes, note, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         input.week_start,
@@ -270,6 +273,7 @@ export function pullHours(db: DB, input: PullHoursInput): EnvelopeMove {
         to?.id ?? null,
         input.minutes,
         input.note ?? null,
+        stamp,
       );
     return db
       .prepare('SELECT * FROM envelope_moves WHERE id = ?')

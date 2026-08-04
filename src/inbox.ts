@@ -1,4 +1,5 @@
 import type { DB } from './db/connection.js';
+import { now } from './clock.js';
 import { createTask, type Task } from './tasks.js';
 
 export interface InboxItem {
@@ -16,8 +17,8 @@ export interface InboxAddInput {
 
 export function inboxAdd(db: DB, input: InboxAddInput): InboxItem {
   const result = db
-    .prepare('INSERT INTO inbox (title, notes) VALUES (?, ?)')
-    .run(input.title, input.notes ?? null);
+    .prepare('INSERT INTO inbox (title, notes, created_at) VALUES (?, ?, ?)')
+    .run(input.title, input.notes ?? null, now());
   return db
     .prepare('SELECT * FROM inbox WHERE id = ?')
     .get(Number(result.lastInsertRowid)) as InboxItem;

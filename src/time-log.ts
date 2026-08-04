@@ -1,4 +1,5 @@
 import type { DB } from './db/connection.js';
+import { nowMs } from './clock.js';
 import { toCanonicalUtc } from './day-range.js';
 import { getGoal } from './goals.js';
 import { getTask, setTaskStatus, type Task } from './tasks.js';
@@ -91,7 +92,7 @@ export function logTime(db: DB, input: LogTimeInput): LogTimeResult {
     );
   }
 
-  const futureCutoff = Date.now() + FUTURE_TOLERANCE_MS;
+  const futureCutoff = nowMs() + FUTURE_TOLERANCE_MS;
   if (startedAt.getTime() > futureCutoff || stoppedAt.getTime() > futureCutoff) {
     throw new Error(
       'time_log entries cannot be more than 24h in the future',

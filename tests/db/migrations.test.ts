@@ -205,6 +205,9 @@ describe('time_entry timestamp normalization (#95)', () => {
     migrate(db);
 
     const id = insertRaw(db, '2026-07-06T09:00:00Z', '2026-07-06T10:00:00Z');
+    // First migrate canonicalizes the schema-default bookkeeping stamps
+    // (#149); from then on the row is fully canonical and stable.
+    migrate(db);
     const before = getRow(db, id);
     migrate(db);
     const after = getRow(db, id);
@@ -260,6 +263,9 @@ describe('availability_overrides timestamp normalization (#145)', () => {
     migrate(db);
 
     const id = insertRaw(db, '2026-07-21T18:00:00Z', '2026-07-21T22:00:00Z');
+    // First migrate canonicalizes the schema-default created_at (#149);
+    // from then on the row is fully canonical and stable.
+    migrate(db);
     const before = getRow(db, id);
     migrate(db);
     expect(getRow(db, id)).toEqual(before);

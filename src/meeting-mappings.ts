@@ -14,6 +14,7 @@
  * always beats a mapping.
  */
 import type { DB } from './db/connection.js';
+import { now } from './clock.js';
 
 export type MappingMatch = 'exact' | 'contains' | 'regex';
 
@@ -58,10 +59,10 @@ export function addMeetingProjectMapping(
 
   const result = db
     .prepare(
-      `INSERT INTO meeting_project_mappings (pattern, match, project_id)
-       VALUES (?, ?, ?)`,
+      `INSERT INTO meeting_project_mappings (pattern, match, project_id, created_at)
+       VALUES (?, ?, ?, ?)`,
     )
-    .run(input.pattern, match, input.project_id);
+    .run(input.pattern, match, input.project_id, now());
   return db
     .prepare(`SELECT * FROM meeting_project_mappings WHERE id = ?`)
     .get(Number(result.lastInsertRowid)) as MeetingProjectMapping;
