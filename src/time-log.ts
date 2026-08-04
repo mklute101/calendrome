@@ -1,6 +1,9 @@
 import type { DB } from './db/connection.js';
+import type { CalendarClient } from './calendar/index.js';
+import { now, nowMs } from './clock.js';
 import { toCanonicalUtc } from './day-range.js';
 import { getGoal } from './goals.js';
+import { getProject } from './projects.js';
 import { getTask, setTaskStatus, type Task } from './tasks.js';
 import { insertTimeEntry } from './time-entry.js';
 
@@ -91,7 +94,7 @@ export function logTime(db: DB, input: LogTimeInput): LogTimeResult {
     );
   }
 
-  const futureCutoff = Date.now() + FUTURE_TOLERANCE_MS;
+  const futureCutoff = nowMs() + FUTURE_TOLERANCE_MS;
   if (startedAt.getTime() > futureCutoff || stoppedAt.getTime() > futureCutoff) {
     throw new Error(
       'time_log entries cannot be more than 24h in the future',
@@ -130,8 +133,47 @@ export function logTime(db: DB, input: LogTimeInput): LogTimeResult {
   };
 }
 
-export function completeTask(db: DB, taskId: number): Task {
+/**
+ * Mark a task COMPLETE and clear its still-upcoming placements (#105).
+ *
+ * A task finished ahead of its scheduled block used to leave the
+ * UNCONFIRMED placement on the board — showing up in pending review
+ * and on the calendar as if the work were still to come. Completing
+ * now deletes placement entries whose start is still in the future,
+ * removing their paired calendar events the same way `unplaceTask`
+ * does. Placements that have already started are left alone: that
+ * time was plausibly spent, and the EOD wrap is the right place to
+ * confirm or amend it.
+ */
+export async function completeTask(
+  db: DB,
+  calendar: CalendarClient,
+  taskId: number,
+): Promise<Task> {
   const task = getTask(db, taskId);
   if (!task) throw new Error(`task ${taskId} not found`);
+
+  const upcoming = db
+    .prepare(
+      `SELECT id, external_id FROM time_entry
+       WHERE task_id = ? AND source = 'placement'
+         AND status = 'UNCONFIRMED' AND start_at > ?`,
+    )
+    .all(taskId, now()) as { id: number; external_id: string | null }[];
+
+  if (upcoming.length > 0) {
+    const project = getProject(db, task.project_id);
+    for (const entry of upcoming) {
+      if (entry.external_id) {
+        await calendar.deleteEvent({
+          calendar_id: project?.calendar_id ?? null,
+          event_id: entry.external_id,
+        });
+      }
+    }
+    const remove = db.prepare(`DELETE FROM time_entry WHERE id = ?`);
+    for (const entry of upcoming) remove.run(entry.id);
+  }
+
   return setTaskStatus(db, taskId, 'COMPLETE');
 }

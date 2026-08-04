@@ -29,29 +29,34 @@ When the user mentions a non-default timezone ("8pm Rio", "7pm Berlin", "3pm loc
 
 ### Step 0 — Yesterday's pending review
 
-Before today's plan, close out yesterday. Call:
+Before today's plan, close out yesterday — every category, not just
+work: goal progress and habit scores only count CONFIRMED minutes, so
+an unconfirmed evening goal block reads as hours never done (#148).
+Call:
 
 ```
 mcp__calendrome__list_pending_review({
   from: <yesterday's date, YYYY-MM-DD>,
   to:   <yesterday's date, YYYY-MM-DD>,
-  category: 'work'
+  category: 'all'
 })
 ```
 
 (Ranges are day-granular and inclusive — pass plain dates, not
-timestamps; a timestamp is bucketed to its UTC day.)
+timestamps; a timestamp is bucketed to its UTC day. `category: 'all'`
+spans work and personal so goal blocks enter the same reconcile.)
 
 If the list is empty, skip to Step 1.
 
 Otherwise render a compact bullet list (title, planned hours, time range) and ask **one** freeform question. Each row carries `task_title` / `goal_title` (null when unlinked, e.g. gcal-sync meetings) — use those as the title, falling back to `notes`. Example:
 
 ```
-Yesterday has 4 entries waiting for review:
+Yesterday has 5 entries waiting for review:
   · ACME-42 login hotfix       2.0h placed (09:00–11:00)
   · ACME Internal Meeting      0.5h placed (14:00–14:30)
   · Newsletter feed (ACME-41)  2.0h placed (11:00–13:00)
   · GLBX PR review             1.0h placed (15:00–16:00)
+  · Spanish                    1.0h placed (19:00–20:00)
 
 How'd yesterday actually go?
 ```
@@ -223,14 +228,18 @@ Same list-then-one-sentence pattern as the morning brief — just scoped to **to
 mcp__calendrome__list_pending_review({
   from: <today's date, YYYY-MM-DD>,
   to:   <today's date, YYYY-MM-DD>,
-  category: 'work'
+  category: 'all'
 })
 ```
 
+`category: 'all'` folds personal and goal blocks into the same wrap —
+otherwise they rot unconfirmed and goal progress under-reads (#148).
 The range is day-granular and inclusive, so placements later today
 that haven't started yet come back too. Drop any entry whose
 `start_at` is still in the future before rendering — the wrap only
-reviews work that has already started.
+reviews entries that have already started (an evening Spanish block
+still ahead shouldn't be asked about at a 5pm wrap; it'll surface in
+tomorrow's morning brief instead).
 
 ### Step 2 — Render and ask one question
 

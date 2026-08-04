@@ -13,6 +13,7 @@
  * more than the caller pushed without saying so.
  */
 import type { DB } from './db/connection.js';
+import { now } from './clock.js';
 import { toCanonicalUtc, toDayRange } from './day-range.js';
 import { buildMeetingProjectResolver } from './meeting-mappings.js';
 
@@ -113,10 +114,11 @@ export function syncCalendarEvents(
   // Write into the unified time_entry table. On conflict (existing
   // external_id), update only the sync-driven fields and leave confirmation
   // state (status, confirmed_at, actual_minutes, task_id) untouched.
+  const syncStamp = now();
   const upsertTimeEntry = db.prepare(`
     INSERT INTO time_entry (
-      project_id, start_at, end_at, status, source, external_id, is_meeting, synced_at, notes
-    ) VALUES (?, ?, ?, 'UNCONFIRMED', 'gcal-sync', ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), ?)
+      project_id, start_at, end_at, status, source, external_id, is_meeting, synced_at, notes, created_at, updated_at
+    ) VALUES (?, ?, ?, 'UNCONFIRMED', 'gcal-sync', ?, ?, ?, ?, ?, ?)
     ON CONFLICT(external_id) WHERE external_id IS NOT NULL DO UPDATE SET
       project_id = excluded.project_id,
       start_at   = excluded.start_at,
@@ -124,7 +126,7 @@ export function syncCalendarEvents(
       is_meeting = excluded.is_meeting,
       synced_at  = excluded.synced_at,
       notes      = excluded.notes,
-      updated_at = datetime('now')
+      updated_at = excluded.updated_at
   `);
 
   // Title-pattern auto-assignment (#35): events arriving without an
@@ -175,7 +177,10 @@ export function syncCalendarEvents(
         toCanonicalUtc(e.end, `event ${e.id} end`),
         e.id,
         e.is_meeting ? 1 : 0,
+        syncStamp,
         e.summary,
+        syncStamp,
+        syncStamp,
       );
       if (seen.has(e.id)) continue; // duplicate — counted once
       seen.add(e.id);
@@ -246,8 +251,8 @@ export function syncCalendarEvents(
     // leaves no log row, so every row describes a sync that actually
     // committed. The week view's staleness badge reads the latest.
     db.prepare(`
-      INSERT INTO sync_log (window_from, window_to, received, inserted, updated, deleted, warnings)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO sync_log (window_from, window_to, received, inserted, updated, deleted, warnings, synced_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       window?.from ?? null,
       window?.to ?? null,
@@ -256,6 +261,7 @@ export function syncCalendarEvents(
       result.updated,
       result.deleted,
       JSON.stringify(warnings),
+      syncStamp,
     );
   });
   txn();

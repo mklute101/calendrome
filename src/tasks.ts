@@ -1,4 +1,5 @@
 import type { DB } from './db/connection.js';
+import { now } from './clock.js';
 
 export type Priority = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
 export type TaskStatus =
@@ -53,11 +54,12 @@ const ALLOWED_TRANSITIONS: Record<TaskStatus, TaskStatus[]> = {
 };
 
 export function createTask(db: DB, input: CreateTaskInput): Task {
+  const stamp = now();
   const result = db
     .prepare(
       `INSERT INTO tasks
-        (project_id, title, notes, priority, duration_minutes, due, snooze_until, depends_on)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        (project_id, title, notes, priority, duration_minutes, due, snooze_until, depends_on, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       input.project_id,
@@ -68,6 +70,8 @@ export function createTask(db: DB, input: CreateTaskInput): Task {
       input.due ?? null,
       input.snooze_until ?? null,
       input.depends_on ?? null,
+      stamp,
+      stamp,
     );
   return getTask(db, Number(result.lastInsertRowid)) as Task;
 }
@@ -86,7 +90,8 @@ export function updateTask(db: DB, id: number, patch: UpdateTaskInput): Task {
     fields.push(`${k} = ?`);
     values.push(v);
   }
-  fields.push("updated_at = datetime('now')");
+  fields.push('updated_at = ?');
+  values.push(now());
   values.push(id);
   db.prepare(`UPDATE tasks SET ${fields.join(', ')} WHERE id = ?`).run(
     ...values,
@@ -108,8 +113,8 @@ export function setTaskStatus(
     );
   }
   db.prepare(
-    "UPDATE tasks SET status = ?, updated_at = datetime('now') WHERE id = ?",
-  ).run(next, id);
+    'UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?',
+  ).run(next, now(), id);
   return getTask(db, id) as Task;
 }
 

@@ -1,4 +1,5 @@
 import type { DB } from './db/connection.js';
+import { now, nowDate } from './clock.js';
 import { toCanonicalUtc, toDayRange } from './day-range.js';
 
 export type TimeEntryStatus = 'UNCONFIRMED' | 'CONFIRMED';
@@ -22,12 +23,13 @@ export interface TimeEntryInput {
 }
 
 export function insertTimeEntry(db: DB, input: TimeEntryInput): number {
+  const stamp = now();
   const stmt = db.prepare(`
     INSERT INTO time_entry (
       task_id, project_id, goal_id, start_at, end_at, actual_minutes,
       status, confirmed_at, source, external_id, is_meeting,
-      synced_at, harvest_entry_id, notes
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      synced_at, harvest_entry_id, notes, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const result = stmt.run(
     input.task_id ?? null,
@@ -44,6 +46,8 @@ export function insertTimeEntry(db: DB, input: TimeEntryInput): number {
     input.synced_at != null ? toCanonicalUtc(input.synced_at, 'synced_at') : null,
     input.harvest_entry_id ?? null,
     input.notes ?? null,
+    stamp,
+    stamp,
   );
   return Number(result.lastInsertRowid);
 }
@@ -61,10 +65,11 @@ export function confirmTimeEntry(db: DB, id: number, opts: ConfirmOptions): void
 
   const sets: string[] = [
     "status = 'CONFIRMED'",
-    "confirmed_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')",
-    "updated_at = datetime('now')",
+    'confirmed_at = ?',
+    'updated_at = ?',
   ];
-  const args: (number | string | null)[] = [];
+  const stamp = now();
+  const args: (number | string | null)[] = [stamp, stamp];
   if (opts.actual_minutes !== undefined) {
     sets.push('actual_minutes = ?');
     args.push(opts.actual_minutes ?? null);
@@ -180,13 +185,24 @@ export interface PendingReviewRow extends TimeEntryRow {
  * so the two can never disagree about which rows a range contains
  * (#92). The default range ends today, so still-upcoming placements
  * dated today are included.
+ *
+ * `category: 'all'` spans every category so personal/goal placements
+ * enter the same review pass as work ones (#148). Entries with no
+ * project (gcal-sync rows) surface under 'work' and under 'all'.
  */
 export function listPendingReview(db: DB, opts: ListPendingReviewOptions): PendingReviewRow[] {
   const category = opts.category ?? 'work';
   const { fromDay, toDay } = toDayRange(
     opts.from ?? '1970-01-01',
-    opts.to ?? new Date().toISOString(),
+    opts.to ?? nowDate().toISOString(),
   );
+
+  const categoryFilter = category === 'all'
+    ? ''
+    : `AND (p.category_id = ? OR (p.category_id IS NULL AND ? = 'work'))`;
+  const params = category === 'all'
+    ? [fromDay, toDay]
+    : [fromDay, toDay, category, category];
 
   return db.prepare(`
     SELECT te.*, t.title AS task_title, g.title AS goal_title
@@ -197,9 +213,9 @@ export function listPendingReview(db: DB, opts: ListPendingReviewOptions): Pendi
     WHERE te.status = 'UNCONFIRMED'
       AND DATE(te.start_at) >= ?
       AND DATE(te.start_at) <= ?
-      AND (p.category_id = ? OR (p.category_id IS NULL AND ? = 'work'))
+      ${categoryFilter}
     ORDER BY te.start_at ASC
-  `).all(fromDay, toDay, category, category) as PendingReviewRow[];
+  `).all(...params) as PendingReviewRow[];
 }
 
 export interface MoveOptions {
@@ -233,6 +249,6 @@ export function moveTimeEntry(db: DB, id: number, new_start_at: string, opts: Mo
   }
 
   db.prepare(
-    `UPDATE time_entry SET start_at = ?, end_at = ?, updated_at = datetime('now') WHERE id = ?`,
-  ).run(startAt, endAt, id);
+    `UPDATE time_entry SET start_at = ?, end_at = ?, updated_at = ? WHERE id = ?`,
+  ).run(startAt, endAt, now(), id);
 }

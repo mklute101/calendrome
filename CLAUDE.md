@@ -119,6 +119,11 @@ sentence — never a click path.
   (`YYYY-MM-DDTHH:MM:SSZ`): every write path funnels through
   `toCanonicalUtc` in `src/day-range.ts`, and `migrate()` normalizes
   legacy mixed-form rows (#95)
+- Bookkeeping stamps (`created_at`, `updated_at`, `confirmed_at`,
+  `synced_at`, `completed_at`) come from `now()` in `src/clock.ts` —
+  never SQL-side `datetime('now')` — so simulated time is one env var:
+  `CALENDROME_NOW` (fixed ISO timestamp, or `-3d`/`+2h`/`-90m` offset)
+  shifts every server clock read (#149)
 - Tests use in-memory SQLite (`freshDb()`) — isolated, no cleanup
 - No PII in the repo — fictional names, `<FILL IN>` markers in skills
 

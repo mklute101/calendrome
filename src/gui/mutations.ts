@@ -15,6 +15,7 @@
  * `LocalCalendarClient`, the production default.
  */
 import type { DB } from '../db/connection.js';
+import { now } from '../clock.js';
 import type { CalendarClient } from '../calendar/index.js';
 import {
   placeTask,
@@ -101,8 +102,12 @@ export async function guiUnplace(
   return unplaceTask(db, calendar, taskId);
 }
 
-export function guiComplete(db: DB, taskId: number): { task: Task } {
-  return { task: completeTask(db, taskId) };
+export async function guiComplete(
+  db: DB,
+  calendar: CalendarClient,
+  taskId: number,
+): Promise<{ task: Task }> {
+  return { task: await completeTask(db, calendar, taskId) };
 }
 
 /**
@@ -127,8 +132,8 @@ export function reopenTask(
     throw new Error(`cannot reopen to ${to}`);
   }
   db.prepare(
-    `UPDATE tasks SET status = ?, updated_at = datetime('now') WHERE id = ?`,
-  ).run(to, taskId);
+    `UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?`,
+  ).run(to, now(), taskId);
   return { task: getTask(db, taskId)! };
 }
 
@@ -238,9 +243,9 @@ export function reopenHabitInstance(db: DB, id: number): { instance: HabitInstan
       db.prepare(
         `UPDATE time_entry
             SET status = 'UNCONFIRMED', confirmed_at = NULL,
-                updated_at = datetime('now')
+                updated_at = ?
           WHERE id = ?`,
-      ).run(inst.time_entry_id);
+      ).run(now(), inst.time_entry_id);
     }
     db.prepare(
       `UPDATE habit_instances SET status = 'PLANNED', completed_at = NULL WHERE id = ?`,
