@@ -951,8 +951,10 @@ export function buildTools(
      * default range ends today, which includes today's
      * still-upcoming placements. Filters to work-category projects
      * by default so personal placements don't clutter timesheet
-     * reconciliation; pass `category: 'personal'` or omit to
-     * broaden.
+     * reconciliation; pass `category: 'personal'` for that category
+     * or `category: 'all'` to span every category — the review pass
+     * that keeps personal/goal blocks from rotting unconfirmed
+     * (#148).
      *
      * @example
      * list_pending_review({ from: '2026-05-04', to: '2026-05-10' })
@@ -963,7 +965,8 @@ export function buildTools(
       name: 'list_pending_review',
       description:
         'List UNCONFIRMED time_entries that need confirmation or ' +
-        'skip. Defaults to work-category entries only. `from`/`to` are ' +
+        'skip. Defaults to work-category entries only; `category: "all"` ' +
+        'spans every category. `from`/`to` are ' +
         'inclusive UTC days (plain date or ISO timestamp). Rows include ' +
         '`task_title`/`goal_title` (null when unlinked) for rendering.',
       inputSchema: {
@@ -979,7 +982,11 @@ export function buildTools(
             description:
               'Range end: YYYY-MM-DD or ISO timestamp, bucketed to its UTC day (inclusive).',
           },
-          category: { type: 'string' },
+          category: {
+            type: 'string',
+            description:
+              "Category filter: a category id (default 'work'), or 'all' to span every category.",
+          },
         },
       },
       async handler(args) {

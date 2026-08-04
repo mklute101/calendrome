@@ -180,6 +180,10 @@ export interface PendingReviewRow extends TimeEntryRow {
  * so the two can never disagree about which rows a range contains
  * (#92). The default range ends today, so still-upcoming placements
  * dated today are included.
+ *
+ * `category: 'all'` spans every category so personal/goal placements
+ * enter the same review pass as work ones (#148). Entries with no
+ * project (gcal-sync rows) surface under 'work' and under 'all'.
  */
 export function listPendingReview(db: DB, opts: ListPendingReviewOptions): PendingReviewRow[] {
   const category = opts.category ?? 'work';
@@ -187,6 +191,13 @@ export function listPendingReview(db: DB, opts: ListPendingReviewOptions): Pendi
     opts.from ?? '1970-01-01',
     opts.to ?? new Date().toISOString(),
   );
+
+  const categoryFilter = category === 'all'
+    ? ''
+    : `AND (p.category_id = ? OR (p.category_id IS NULL AND ? = 'work'))`;
+  const params = category === 'all'
+    ? [fromDay, toDay]
+    : [fromDay, toDay, category, category];
 
   return db.prepare(`
     SELECT te.*, t.title AS task_title, g.title AS goal_title
@@ -197,9 +208,9 @@ export function listPendingReview(db: DB, opts: ListPendingReviewOptions): Pendi
     WHERE te.status = 'UNCONFIRMED'
       AND DATE(te.start_at) >= ?
       AND DATE(te.start_at) <= ?
-      AND (p.category_id = ? OR (p.category_id IS NULL AND ? = 'work'))
+      ${categoryFilter}
     ORDER BY te.start_at ASC
-  `).all(fromDay, toDay, category, category) as PendingReviewRow[];
+  `).all(...params) as PendingReviewRow[];
 }
 
 export interface MoveOptions {

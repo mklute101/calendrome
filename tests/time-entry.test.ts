@@ -304,6 +304,28 @@ describe('listPendingReview', () => {
     expect(rows[0].project_id).toBe('PERS');
   });
 
+  it("category 'all' spans every category, including project-less entries (#148)", () => {
+    const db = freshDb();
+    seed(db);
+    insertTimeEntry(db, { project_id: 'WORK', start_at: '2020-01-01T09:00:00Z', end_at: '2020-01-01T10:00:00Z', status: 'UNCONFIRMED', source: 'placement' });
+    insertTimeEntry(db, { project_id: 'PERS', start_at: '2020-01-01T19:00:00Z', end_at: '2020-01-01T20:00:00Z', status: 'UNCONFIRMED', source: 'placement' });
+    insertTimeEntry(db, { start_at: '2020-01-01T13:00:00Z', end_at: '2020-01-01T13:30:00Z', status: 'UNCONFIRMED', source: 'gcal-sync', external_id: 'gcal-evt-all', is_meeting: true });
+
+    const rows = listPendingReview(db, { category: 'all' });
+    expect(rows).toHaveLength(3);
+    expect(rows.map((r) => r.project_id)).toEqual(['WORK', null, 'PERS']);
+  });
+
+  it("category 'all' still excludes CONFIRMED entries and respects the range", () => {
+    const db = freshDb();
+    seed(db);
+    insertTimeEntry(db, { project_id: 'PERS', start_at: '2020-01-01T19:00:00Z', end_at: '2020-01-01T20:00:00Z', actual_minutes: 60, status: 'CONFIRMED', confirmed_at: '2020-01-01T20:00:00Z', source: 'placement' });
+    insertTimeEntry(db, { project_id: 'PERS', start_at: '2020-01-05T19:00:00Z', end_at: '2020-01-05T20:00:00Z', status: 'UNCONFIRMED', source: 'placement' });
+
+    const rows = listPendingReview(db, { category: 'all', from: '2020-01-01', to: '2020-01-03' });
+    expect(rows).toHaveLength(0);
+  });
+
   it('orders results by start_at ascending', () => {
     const db = freshDb();
     seed(db);
