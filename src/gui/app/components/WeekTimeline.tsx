@@ -16,6 +16,7 @@ import {
   HOUR_START,
   TIMELINE_HEIGHT,
   durationToPx,
+  offsetToMinutes,
   timeToOffset,
 } from '../lib/geometry';
 import type { DragGhost, DragSource } from '../hooks/useTimelineDrag';
@@ -49,6 +50,7 @@ export function WeekTimeline({
   onSkip,
   onCompleteHabit,
   onSkipHabit,
+  onEmptyClick,
 }: {
   days: DayBucket[];
   meta: ProjectMeta;
@@ -61,6 +63,12 @@ export function WeekTimeline({
   onSkip: (p: Placement) => void;
   onCompleteHabit: (hi: HabitInstance) => void;
   onSkipHabit: (hi: HabitInstance) => void;
+  /** Click on empty timeline space → open the placement picker (#138). */
+  onEmptyClick?: (
+    dayIndex: number,
+    startMinutes: number,
+    at: { x: number; y: number },
+  ) => void;
 }) {
   const todayStr = localISODate(new Date());
   const deadlines = days.flatMap((d) => d.deadlines);
@@ -103,7 +111,25 @@ export function WeekTimeline({
                 </span>
                 <span className="hours">{fmtHours(d.totalMin)}</span>
               </div>
-              <div className="timeline-body" style={{ height: TIMELINE_HEIGHT }}>
+              <div
+                className="timeline-body"
+                style={{ height: TIMELINE_HEIGHT }}
+                onClick={
+                  onEmptyClick
+                    ? (e) => {
+                        // Blocks handle their own clicks/drags; only
+                        // genuinely empty space opens the picker.
+                        if ((e.target as HTMLElement).closest('.timeline-block')) return;
+                        const y =
+                          e.clientY - e.currentTarget.getBoundingClientRect().top;
+                        onEmptyClick(i, offsetToMinutes(y), {
+                          x: e.clientX,
+                          y: e.clientY,
+                        });
+                      }
+                    : undefined
+                }
+              >
                 {Array.from({ length: HOUR_COUNT }, (_, h) => (
                   <div
                     className="timeline-hour-line"

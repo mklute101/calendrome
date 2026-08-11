@@ -17,7 +17,7 @@
  *                instance duration (non-combinable).
  */
 import { useCallback, useRef, useState } from 'react';
-import type { HabitInstance, Placement, Task } from '../types';
+import type { Goal, HabitInstance, Placement, Task } from '../types';
 import { placementLabel } from '../lib/weekdays';
 import {
   HOUR_END,
@@ -31,6 +31,7 @@ export type DragSource =
   | { kind: 'move'; placement: Placement; color: string }
   | { kind: 'resize'; placement: Placement; color: string }
   | { kind: 'place'; task: Task; color: string }
+  | { kind: 'place-goal'; goal: Goal; color: string }
   | { kind: 'move-habit'; habit: HabitInstance; color: string };
 
 export interface DragGhost {
@@ -81,18 +82,24 @@ export function useTimelineDrag(opts: {
       const label =
         source.kind === 'place'
           ? source.task.title
-          : source.kind === 'move-habit'
-            ? source.habit.habit_title
-            : placementLabel(source.placement);
+          : source.kind === 'place-goal'
+            ? source.goal.title
+            : source.kind === 'move-habit'
+              ? source.habit.habit_title
+              : placementLabel(source.placement);
       const duration =
         source.kind === 'place'
           ? source.task.duration_minutes
-          : source.kind === 'move-habit'
-            ? source.habit.habit_duration
-            : source.placement.duration_minutes;
+          : source.kind === 'place-goal'
+            ? (source.goal.min_chunk_minutes ?? 60)
+            : source.kind === 'move-habit'
+              ? source.habit.habit_duration
+              : source.placement.duration_minutes;
 
+      // Panel-origin drags ('place' / 'place-goal') have no origin
+      // block on the grid to measure a grab offset against.
       const blockRect =
-        source.kind !== 'place'
+        source.kind !== 'place' && source.kind !== 'place-goal'
           ? (e.currentTarget.closest('.timeline-block') ?? e.currentTarget).getBoundingClientRect()
           : null;
       const grabOffsetY = blockRect ? e.clientY - blockRect.top : 0;

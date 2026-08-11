@@ -5,6 +5,7 @@ import { createTask, getTask } from '../src/tasks.js';
 import { insertTimeEntry } from '../src/time-entry.js';
 import {
   guiPlace,
+  guiPlaceGoal,
   guiMove,
   guiConfirm,
   guiSkip,
@@ -20,6 +21,8 @@ import {
   reopenHabitInstance,
 } from '../src/gui/mutations.js';
 import { createHabit, generateHabitInstances } from '../src/habits.js';
+import { createGoal } from '../src/goals.js';
+import { createAvailabilityOverride } from '../src/availability.js';
 
 function setup() {
   const db = freshDb();
@@ -404,5 +407,98 @@ describe('GUI budget mutations (#106 M2)', () => {
         minutes: 999,
       }),
     ).toThrow(/only 300m assigned/);
+  });
+});
+
+describe('guiPlaceGoal (#138)', () => {
+  function goalSetup() {
+    const { db, calendar, task } = setup();
+    const goal = createGoal(db, {
+      project_id: 'acme',
+      title: 'AWS cert',
+      target_minutes: 1800,
+      due: '2026-12-31',
+      min_chunk_minutes: 30,
+    });
+    return { db, calendar, task, goal };
+  }
+
+  it('inserts an UNCONFIRMED goal placement, end from duration, notes default', () => {
+    const { db, goal } = goalSetup();
+    const { entry } = guiPlaceGoal(db, {
+      goal_id: goal.id,
+      start: '2026-07-13T09:00:00Z',
+      duration_minutes: 45,
+    });
+    expect(entry.status).toBe('UNCONFIRMED');
+    expect(entry.source).toBe('placement');
+    expect(entry.goal_id).toBe(goal.id);
+    expect(entry.project_id).toBe('acme');
+    expect(entry.task_id).toBeNull();
+    expect(entry.start_at).toBe('2026-07-13T09:00:00Z');
+    expect(entry.end_at).toBe('2026-07-13T09:45:00Z');
+    expect(entry.notes).toBe('AWS cert');
+  });
+
+  it('throws not-found on unknown goal and requires end or duration', () => {
+    const { db, goal } = goalSetup();
+    expect(() =>
+      guiPlaceGoal(db, { goal_id: 999, start: '2026-07-13T09:00:00Z' }),
+    ).toThrow(/not found/);
+    expect(() =>
+      guiPlaceGoal(db, { goal_id: goal.id, start: '2026-07-13T09:00:00Z' }),
+    ).toThrow(/duration_minutes/);
+    expect(() =>
+      guiPlaceGoal(db, { goal_id: goal.id, start: 'nonsense', duration_minutes: 30 }),
+    ).toThrow(/ISO 8601/);
+  });
+
+  it('returns the informational note over blocked time, omits it on a clean slot', () => {
+    const { db, goal } = goalSetup();
+    // Monday 09:00 UTC is inside the seeded work window — no note.
+    const clean = guiPlaceGoal(db, {
+      goal_id: goal.id,
+      start: '2026-07-13T09:30:00Z',
+      duration_minutes: 30,
+    });
+    expect(clean.note).toBeUndefined();
+
+    createAvailabilityOverride(db, {
+      start: '2026-07-14T09:00:00Z',
+      end: '2026-07-14T12:00:00Z',
+      available: 0,
+      reason: 'blocked',
+    });
+    const blocked = guiPlaceGoal(db, {
+      goal_id: goal.id,
+      start: '2026-07-14T10:00:00Z',
+      duration_minutes: 30,
+    });
+    expect(blocked.note).toMatch(/blocked/);
+  });
+
+  it('guiPlace carries the same note on a blocked slot', async () => {
+    const { db, calendar, task } = goalSetup();
+    createAvailabilityOverride(db, {
+      start: '2026-07-14T09:00:00Z',
+      end: '2026-07-14T12:00:00Z',
+      available: 0,
+      reason: 'blocked',
+    });
+    const placed = await guiPlace(db, calendar, {
+      task_id: task.id,
+      start: '2026-07-14T10:00:00Z',
+    });
+    expect(placed.note).toMatch(/blocked/);
+    const other = createTask(db, {
+      project_id: 'acme',
+      title: 'Clean slot task',
+      duration_minutes: 60,
+    });
+    const clean = await guiPlace(db, calendar, {
+      task_id: other.id,
+      start: '2026-07-13T09:00:00Z',
+    });
+    expect(clean.note).toBeUndefined();
   });
 });

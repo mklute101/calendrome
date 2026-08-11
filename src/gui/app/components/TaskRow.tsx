@@ -59,16 +59,28 @@ export function TaskRow({
   const due = task.due ? String(task.due).slice(0, 10) : '';
   const snoozed = task.snooze_until ? String(task.snooze_until).slice(0, 10) : '';
   const placeable = task.status === 'NEW' || task.status === 'IN_PROGRESS';
+  const draggable = onDragStart && placeable;
+
+  // The whole row is the drag handle (#138) — the ⠿ grip alone was a
+  // precise-hit target that read as decoration. Action buttons and
+  // menus are excluded so their clicks stay clicks; the drag hook's
+  // 4px threshold keeps ordinary row clicks from becoming drags.
+  const startRowDrag = (e: React.PointerEvent) => {
+    if (!draggable) return;
+    const el = e.target as HTMLElement;
+    if (el.closest('button, a, input, .snooze-menu')) return;
+    onDragStart(e, task);
+  };
 
   return (
-    <div className="task-row" style={{ '--c': color } as React.CSSProperties}>
+    <div
+      className={`task-row${draggable ? ' draggable' : ''}`}
+      style={{ '--c': color } as React.CSSProperties}
+      onPointerDown={startRowDrag}
+    >
       <div className="task-row-main">
-        {onDragStart && placeable && (
-          <span
-            className="task-grip"
-            title="Drag onto the timeline to place"
-            onPointerDown={(e) => onDragStart(e, task)}
-          >
+        {draggable && (
+          <span className="task-grip" title="Drag onto the timeline to place">
             ⠿
           </span>
         )}

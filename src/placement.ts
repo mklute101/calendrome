@@ -16,7 +16,8 @@ import type { DB } from './db/connection.js';
 import type { CalendarClient } from './calendar/index.js';
 import { getTask, setTaskStatus, type Task } from './tasks.js';
 import { getProject } from './projects.js';
-import { insertTimeEntry } from './time-entry.js';
+import { getGoal } from './goals.js';
+import { insertTimeEntry, type TimeEntryRow } from './time-entry.js';
 
 export interface PlaceTaskArgs {
   task_id: number;
@@ -103,6 +104,61 @@ export async function placeTask(
     task: getTask(db, args.task_id)!,
     event,
     time_entry_id: timeEntryId,
+  };
+}
+
+export interface PlaceGoalBlockArgs {
+  goal_id: number;
+  start: string;
+  /** Exactly one of end / duration_minutes is required. */
+  end?: string;
+  duration_minutes?: number;
+  /** Defaults to the goal's title. */
+  notes?: string | null;
+}
+
+/**
+ * Schedule an UNCONFIRMED time_entry against a goal's bucket — the
+ * composition shared by the `place_goal_block` MCP tool and the GUI
+ * write API. Unlike `placeTask`, a goal block deliberately creates no
+ * calendar event: goal hours live only on the calendrome grid until
+ * confirmed. Keep that asymmetry — don't "fix" it here.
+ */
+export function placeGoalBlock(
+  db: DB,
+  args: PlaceGoalBlockArgs,
+): { entry: TimeEntryRow } {
+  const goal = getGoal(db, args.goal_id);
+  if (!goal) throw new Error(`goal ${args.goal_id} not found`);
+
+  let end: string;
+  if (typeof args.end === 'string') {
+    end = args.end;
+  } else {
+    const dur = args.duration_minutes;
+    if (typeof dur !== 'number' || Number.isNaN(dur)) {
+      throw new Error(`missing required number field: duration_minutes`);
+    }
+    const startMs = Date.parse(args.start);
+    if (Number.isNaN(startMs)) {
+      throw new Error(`start is not a valid ISO 8601 timestamp: ${args.start}`);
+    }
+    end = new Date(startMs + dur * 60_000).toISOString();
+  }
+
+  const id = insertTimeEntry(db, {
+    project_id: goal.project_id,
+    goal_id: args.goal_id,
+    start_at: args.start,
+    end_at: end,
+    status: 'UNCONFIRMED',
+    source: 'placement',
+    notes: args.notes ?? goal.title,
+  });
+  return {
+    entry: db
+      .prepare('SELECT * FROM time_entry WHERE id = ?')
+      .get(id) as TimeEntryRow,
   };
 }
 

@@ -38,6 +38,7 @@ import {
 } from '../calendar/index.js';
 import {
   guiPlace,
+  guiPlaceGoal,
   guiMove,
   guiConfirm,
   guiSkip,
@@ -226,6 +227,31 @@ export function createApp(
     }
     const db = getDb();
     mutate(res, () => guiPlace(db, calendar, { task_id, start, end })).finally(
+      () => db.close(),
+    );
+  });
+
+  /**
+   * Place a block against a goal's bucket (same path as the
+   * `place_goal_block` MCP tool — no calendar event). Body:
+   * `{goal_id, start, duration_minutes?, end?}` — one of
+   * `duration_minutes` / `end` is required.
+   */
+  app.post('/api/goal-blocks', (req, res) => {
+    const { goal_id, start, duration_minutes, end } = req.body ?? {};
+    if (
+      typeof goal_id !== 'number' ||
+      typeof start !== 'string' ||
+      (typeof end !== 'string' && typeof duration_minutes !== 'number')
+    ) {
+      res.status(400).json({
+        error:
+          'body requires goal_id (number), start (string), and duration_minutes (number) or end (string)',
+      });
+      return;
+    }
+    const db = getDb();
+    mutate(res, () => guiPlaceGoal(db, { goal_id, start, duration_minutes, end })).finally(
       () => db.close(),
     );
   });
