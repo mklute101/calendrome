@@ -19,3 +19,7 @@ website/docs.json
 src-tauri/target/
 src-tauri/gen/
 .tauri-dev.log
+
+# committed demo dataset (see demo/README.md)
+!demo/calendrome-demo.db
+.claude/worktrees/
