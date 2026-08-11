@@ -1,4 +1,5 @@
 import type { DB } from './db/connection.js';
+import { now } from './clock.js';
 
 export interface Project {
   id: string;
@@ -44,9 +45,10 @@ export interface UpdateProjectInput {
 }
 
 export function createProject(db: DB, input: CreateProjectInput): Project {
+  const stamp = now();
   db.prepare(
-    `INSERT INTO projects (id, name, prefix, calendar_id, color, weekly_budget_minutes, harvest_project_id, harvest_task_id, category_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO projects (id, name, prefix, calendar_id, color, weekly_budget_minutes, harvest_project_id, harvest_task_id, category_id, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     input.id,
     input.name,
@@ -57,6 +59,8 @@ export function createProject(db: DB, input: CreateProjectInput): Project {
     input.harvest_project_id ?? null,
     input.harvest_task_id ?? null,
     input.category_id ?? 'work',
+    stamp,
+    stamp,
   );
   return getProject(db, input.id) as Project;
 }
@@ -79,7 +83,8 @@ export function updateProject(
     fields.push(`${k} = ?`);
     values.push(v);
   }
-  fields.push("updated_at = datetime('now')");
+  fields.push('updated_at = ?');
+  values.push(now());
   values.push(id);
   db.prepare(`UPDATE projects SET ${fields.join(', ')} WHERE id = ?`).run(
     ...values,

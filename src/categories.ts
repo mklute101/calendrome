@@ -13,6 +13,7 @@
  * on a fresh DB; new categories can be created via MCP.
  */
 import type { DB } from './db/connection.js';
+import { now } from './clock.js';
 
 export interface CategoryWindow {
   // 0=Sun..6=Sat
@@ -69,14 +70,15 @@ export interface UpdateCategoryInput {
 
 export function createCategory(db: DB, input: CreateCategoryInput): Category {
   db.prepare(
-    `INSERT INTO categories (id, name, display_order, default_window, timezone)
-     VALUES (?, ?, ?, ?, ?)`,
+    `INSERT INTO categories (id, name, display_order, default_window, timezone, created_at)
+     VALUES (?, ?, ?, ?, ?, ?)`,
   ).run(
     input.id,
     input.name,
     input.display_order ?? 0,
     input.default_window ? JSON.stringify(input.default_window) : null,
     input.timezone ?? 'UTC',
+    now(),
   );
   return getCategory(db, input.id) as Category;
 }

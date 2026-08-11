@@ -24,8 +24,10 @@ If settings are missing, point the user to `/calendrome:onboard` and stop.
 ### Step 0 — Gather step: reconcile last week's drift
 
 Before any new-week planning happens, surface anything from the prior
-week that's still sitting unconfirmed. The user gets one sentence to
-reconcile it; then we move on.
+week that's still sitting unconfirmed — work *and* personal: goal
+progress and habit scores only count CONFIRMED minutes, so a Spanish
+block left unconfirmed reads as hours never done (#148). The user gets
+one sentence to reconcile it all; then we move on.
 
 Call:
 
@@ -33,13 +35,14 @@ Call:
 mcp__calendrome__list_pending_review {
   from: "<last Monday ISO date>",
   to:   "<last Sunday ISO date>",
-  category: "work"
+  category: "all"
 }
 ```
 
 (The range is the previous Mon–Sun. Both bounds are day-granular and
 inclusive — passing this Monday as `to` would pull today's placements
-into last week's review.)
+into last week's review. `category: "all"` spans every category so
+personal and goal blocks enter the same sweep as work.)
 
 **If the result is empty:** brief acknowledgement and continue —
 
@@ -54,6 +57,7 @@ label, falling back to `notes` — then ask for one sentence:
 **Tue 2026-05-06**
 - 09:00–11:00 (120m) — ACME-42 Fix login bug [pending]
 - 14:00–15:00 (60m)  — GLBX-7 Oak help [pending]
+- 19:00–20:00 (60m)  — Spanish [pending]
 
 **Fri 2026-05-09**
 - 10:00–12:00 (120m) — ACME-51 Refactor auth [pending]
@@ -75,6 +79,9 @@ Typical phrasings:
   the 8h Oak block.
 - *"ACME-42 was actually 90 minutes."* →
   `confirm_placement(<id>, { actual_minutes: 90 })`.
+- *"Spanish happened, skipped the workout."* → `confirm_placement` for
+  the goal block, `skip_placement` for the habit entry — personal
+  blocks reconcile with the same verbs as work.
 
 Tools you'll reach for here:
 

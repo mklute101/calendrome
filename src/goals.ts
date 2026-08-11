@@ -17,6 +17,7 @@
  * the wall-clock span (the `v_task_time_spent` idiom).
  */
 import type { DB } from './db/connection.js';
+import { now as clockNow, nowDate } from './clock.js';
 
 export interface Goal {
   id: number;
@@ -91,8 +92,8 @@ export function assertMonday(weekStart: string, label = 'week_start'): void {
   }
 }
 
-/** Monday of the UTC week containing `now` (defaults to today). */
-export function currentWeekMonday(now: Date = new Date()): string {
+/** Monday of the UTC week containing `now` (defaults to the clock's today). */
+export function currentWeekMonday(now: Date = nowDate()): string {
   const dow = now.getUTCDay(); // 0=Sun..6=Sat
   const diff = dow === 0 ? -6 : 1 - dow;
   const mon = new Date(now.getTime() + diff * 86_400_000);
@@ -148,8 +149,8 @@ export function createGoal(db: DB, input: CreateGoalInput): Goal {
   const result = db
     .prepare(
       `INSERT INTO goals
-         (project_id, title, notes, target_minutes, due, refill_period, min_chunk_minutes)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+         (project_id, title, notes, target_minutes, due, refill_period, min_chunk_minutes, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       input.project_id,
@@ -159,6 +160,7 @@ export function createGoal(db: DB, input: CreateGoalInput): Goal {
       due,
       refill,
       input.min_chunk_minutes ?? null,
+      clockNow(),
     );
   return getGoal(db, Number(result.lastInsertRowid)) as Goal;
 }

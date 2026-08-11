@@ -1,4 +1,5 @@
 import type { DB } from './db/connection.js';
+import { now } from './clock.js';
 import { toCanonicalUtc } from './day-range.js';
 import {
   confirmTimeEntry,
@@ -186,8 +187,8 @@ export function createHabit(db: DB, input: CreateHabitInput): Habit {
   const result = db
     .prepare(
       `INSERT INTO habits
-        (project_id, title, notes, duration_minutes, days_of_week, times_per_week, start_time, timezone)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        (project_id, title, notes, duration_minutes, days_of_week, times_per_week, start_time, timezone, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       input.project_id,
@@ -198,6 +199,7 @@ export function createHabit(db: DB, input: CreateHabitInput): Habit {
       timesPerWeek,
       input.start_time,
       input.timezone ?? 'UTC',
+      now(),
     );
   return getHabit(db, Number(result.lastInsertRowid)) as Habit;
 }
@@ -382,8 +384,8 @@ export function completeHabitInstance(
 ): HabitInstance {
   const completeTx = db.transaction(() => {
     db.prepare(
-      "UPDATE habit_instances SET status = 'COMPLETE', completed_at = datetime('now') WHERE id = ?",
-    ).run(id);
+      "UPDATE habit_instances SET status = 'COMPLETE', completed_at = ? WHERE id = ?",
+    ).run(now(), id);
     const row = db
       .prepare('SELECT time_entry_id FROM habit_instances WHERE id = ?')
       .get(id) as { time_entry_id: number | null } | undefined;

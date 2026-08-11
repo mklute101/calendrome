@@ -15,6 +15,7 @@
  * lives in the planner skill, not here — this module is just storage.
  */
 import type { DB } from './db/connection.js';
+import { now } from './clock.js';
 import { toCanonicalUtc } from './day-range.js';
 
 export interface AvailabilityOverride {
@@ -49,8 +50,8 @@ export function createAvailabilityOverride(
   }
   const result = db
     .prepare(
-      `INSERT INTO availability_overrides (start, end, available, category_id, reason)
-       VALUES (?, ?, ?, ?, ?)`,
+      `INSERT INTO availability_overrides (start, end, available, category_id, reason, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
     )
     .run(
       start,
@@ -58,6 +59,7 @@ export function createAvailabilityOverride(
       input.available,
       input.category_id ?? null,
       input.reason ?? null,
+      now(),
     );
   const id = Number(result.lastInsertRowid);
   return getAvailabilityOverride(db, id) as AvailabilityOverride;

@@ -70,6 +70,7 @@ export function migrate(db: DB): void {
 
   normalizeTimeEntryTimestamps(db);
   normalizeAvailabilityTimestamps(db);
+  normalizeBookkeepingTimestamps(db);
 }
 
 /**
@@ -144,4 +145,43 @@ function normalizeAvailabilityTimestamps(db: DB): void {
     WHERE start != ${canon('start')}
        OR end   != ${canon('end')}
   `).run();
+}
+
+/**
+ * Same one-shot normalization for bookkeeping stamps (#149).
+ * Historical rows carry `datetime('now')` output (`YYYY-MM-DD
+ * HH:MM:SS`) from schema defaults and SQL-side stamping; new writes go
+ * through `src/clock.ts` and land in the canonical `…T…Z` form. Mixed
+ * forms are exactly the format-sniffing hazard #95 removed for domain
+ * timestamps, so collapse the legacy rows here once. Same strftime
+ * idiom as above; none of these tables have cross-column CHECKs, so
+ * bulk UPDATEs suffice. Idempotent: canonical values map to
+ * themselves.
+ */
+function normalizeBookkeepingTimestamps(db: DB): void {
+  const canon = (col: string) => `strftime('%Y-%m-%dT%H:%M:%SZ', ${col})`;
+  const tables: Record<string, string[]> = {
+    projects: ['created_at', 'updated_at'],
+    tasks: ['created_at', 'updated_at'],
+    habits: ['created_at'],
+    habit_instances: ['completed_at'],
+    categories: ['created_at'],
+    availability_overrides: ['created_at'],
+    goals: ['created_at'],
+    assignments: ['updated_at'],
+    envelope_moves: ['created_at'],
+    meeting_project_mappings: ['created_at'],
+    inbox: ['created_at'],
+    sync_log: ['synced_at'],
+    time_entry: ['created_at', 'updated_at'],
+  };
+  for (const [table, cols] of Object.entries(tables)) {
+    const sets = cols
+      .map((c) => `${c} = COALESCE(${canon(c)}, ${c})`)
+      .join(', ');
+    const where = cols
+      .map((c) => `(${c} IS NOT NULL AND ${c} != ${canon(c)})`)
+      .join(' OR ');
+    db.prepare(`UPDATE ${table} SET ${sets} WHERE ${where}`).run();
+  }
 }
