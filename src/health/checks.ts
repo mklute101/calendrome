@@ -59,7 +59,15 @@ function sample(ids: Array<number | string>): string {
   return ids.length > 10 ? `${shown}, +${ids.length - 10} more` : shown;
 }
 
-const CANONICAL_GLOB =
+/**
+ * SQL GLOB translation of `CANONICAL_UTC` in `src/day-range.ts` — the
+ * single source of truth for the stored timestamp form. A regex cannot
+ * run inside a SQLite WHERE clause, so the pattern is restated as a
+ * GLOB; `tests/health.test.ts` asserts the two stay in agreement, so a
+ * change to the canonical form cannot silently drift past this check.
+ * Exported for that guard test only.
+ */
+export const CANONICAL_GLOB =
   '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z';
 
 /**

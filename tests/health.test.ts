@@ -16,12 +16,14 @@ import { FakeCalendarClient } from '../src/calendar/index.js';
 import { buildTools } from '../src/mcp/tools/index.js';
 import {
   runHealthChecks,
+  CANONICAL_GLOB,
   checkTimeEntryCanonicalUtc,
   checkHabitTimezoneNotUtc,
   checkTaskDueNotPlacementWritten,
   checkPlacementBackingCommitment,
   checkCalendarEventIdUnique,
 } from '../src/health/checks.js';
+import { CANONICAL_UTC } from '../src/day-range.js';
 
 /**
  * Invariant health checks (#164): every check gets a deliberately
@@ -84,6 +86,30 @@ describe('checkTimeEntryCanonicalUtc', () => {
     const result = checkTimeEntryCanonicalUtc(db);
     expect(result.ok).toBe(false);
     expect(result.detail).toMatch(/2 time_entry row\(s\)/);
+  });
+
+  it('keeps CANONICAL_GLOB in agreement with CANONICAL_UTC (day-range.ts)', () => {
+    // The check restates the canonical form as a SQL GLOB because a
+    // regex cannot run inside a WHERE clause. This guard evaluates
+    // both against every timestamp shape the write paths have
+    // produced, so a change to the canonical form in day-range.ts
+    // cannot silently drift past the health check.
+    const db = freshDb();
+    const glob = db.prepare(`SELECT (? GLOB ?) AS m`);
+    const samples = [
+      '2026-07-13T09:00:00Z', // canonical
+      '2026-07-06T19:15:00-05:00', // offset-stamped (#95)
+      '2026-07-07T09:00:00.000Z', // fractional seconds (#95)
+      '2026-07-13t09:00:00z', // lowercase separator/suffix
+      '2026-07-13', // plain date
+      '2026-07-13 09:00:00', // space-separated SQLite form
+      '2026-07-13T09:00:00', // zoneless
+      '2026-07-13T09:00Z', // minute precision
+    ];
+    for (const value of samples) {
+      const viaGlob = (glob.get(value, CANONICAL_GLOB) as { m: number }).m === 1;
+      expect(viaGlob, value).toBe(CANONICAL_UTC.test(value));
+    }
   });
 });
 
