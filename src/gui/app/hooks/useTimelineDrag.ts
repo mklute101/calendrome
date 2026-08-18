@@ -188,6 +188,23 @@ export function useTimelineDrag(opts: {
         setGhost(null);
         document.body.classList.remove('dragging');
         opts.onDragStateChange?.(false);
+        if (s.passedThreshold) {
+          // The browser fires a synthetic click after pointerup, and
+          // React has already re-rendered with `dragging` false by the
+          // time it arrives — so the empty-slot handler would open the
+          // picker on every drop. Swallow that one click in capture
+          // phase; the timeout releases the guard immediately after
+          // the current input sequence so a real click is never eaten.
+          const swallow = (ev: MouseEvent) => {
+            ev.stopPropagation();
+            ev.preventDefault();
+          };
+          window.addEventListener('click', swallow, { capture: true, once: true });
+          setTimeout(
+            () => window.removeEventListener('click', swallow, { capture: true }),
+            0,
+          );
+        }
         if (dropped && s.passedThreshold && s.ghost?.valid) {
           opts.onDrop(s.source, {
             dayIndex: s.ghost.dayIndex,

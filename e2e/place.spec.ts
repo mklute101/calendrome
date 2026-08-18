@@ -133,6 +133,25 @@ test('clicking an empty slot opens the picker; picking places; Escape closes', a
   expect(placement!.duration_minutes).toBe(45);
 });
 
+test('moving a placement does not open the picker', async ({ page }) => {
+  await page.goto(BASE);
+  const block = page.locator('.timeline-block', { hasText: 'Drag me task' });
+  await expect(block).toBeVisible();
+  const from = (await block.boundingBox())!;
+
+  // Drop lower in the same column — the worst case for the synthetic
+  // click after pointerup: its target is the day's own timeline-body,
+  // which owns the empty-slot picker handler.
+  await page.mouse.move(from.x + from.width / 2, from.y + 8);
+  await page.mouse.down();
+  await page.mouse.move(from.x + from.width / 2, from.y + 78, { steps: 6 });
+  await page.mouse.move(from.x + from.width / 2, from.y + 128, { steps: 4 });
+  await page.mouse.up();
+
+  await expect(page.locator('.toast', { hasText: 'Moved' })).toBeVisible();
+  await expect(page.locator('.place-picker')).toBeHidden();
+});
+
 test('row action buttons still click without starting a drag', async ({ page }) => {
   await page.goto(BASE);
   await page.click('button:has-text("Tasks")');
