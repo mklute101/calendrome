@@ -1,0 +1,19 @@
+# Local observability backend for calendrome (#162).
+#
+# grafana/otel-lgtm bundles Loki, Grafana, Tempo, and Prometheus in
+# one image, accepts OTLP directly on 4317/4318, and ships Grafana
+# pre-wired to all three signals. The app runs on the host and the
+# container publishes the ports, so no extra networking is needed.
+#
+#   docker compose -f docker-compose.otel.yml up -d
+#   docker compose -f docker-compose.otel.yml down
+#
+# See the "Observability" section of README.md.
+services:
+  otel-lgtm:
+    image: grafana/otel-lgtm
+    container_name: calendrome-otel-lgtm
+    ports:
+      - "127.0.0.1:3000:3000" # Grafana UI
+      - "127.0.0.1:4317:4317" # OTLP gRPC
+      - "127.0.0.1:4318:4318" # OTLP HTTP (default exporter target)

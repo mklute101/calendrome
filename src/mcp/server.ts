@@ -17,6 +17,10 @@
  * drift apart until restart (#90). Opening per call costs well under a
  * millisecond against human-frequency tool calls.
  */
+// Must be the first import: the OTel bootstrap (inert unless
+// CALENDROME_OTEL=1) has to evaluate before any instrumented module
+// loads (#162).
+import '../observability/otel.js';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
