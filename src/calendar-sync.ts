@@ -16,6 +16,7 @@ import type { DB } from './db/connection.js';
 import { now } from './clock.js';
 import { toCanonicalUtc, toDayRange } from './day-range.js';
 import { buildMeetingProjectResolver } from './meeting-mappings.js';
+import { recordEntityWrite } from './observability/spans.js';
 
 export interface CalendarEventInput {
   id: string;
@@ -171,9 +172,10 @@ export function syncCalendarEvents(
 
     const seen = new Set<string>();
     for (const e of events) {
+      const startAt = toCanonicalUtc(e.start, `event ${e.id} start`);
       upsertTimeEntry.run(
         e.project_id ?? resolveProject(e.summary),
-        toCanonicalUtc(e.start, `event ${e.id} start`),
+        startAt,
         toCanonicalUtc(e.end, `event ${e.id} end`),
         e.id,
         e.is_meeting ? 1 : 0,
@@ -182,6 +184,12 @@ export function syncCalendarEvents(
         syncStamp,
         syncStamp,
       );
+      // Wide-span annotation (#163): gcal-sync is a time_entry write
+      // path too — evening events roll to the next UTC day exactly
+      // like manual logs, so each upsert records the day pair. The
+      // external event id is structural; the summary never goes near
+      // the span.
+      recordEntityWrite({ entity_type: 'time_entry', entity_id: e.id, start_at: startAt });
       if (seen.has(e.id)) continue; // duplicate — counted once
       seen.add(e.id);
       if (existing.has(e.id)) result.updated++;
@@ -242,6 +250,7 @@ export function syncCalendarEvents(
              AND status = 'UNCONFIRMED'
              AND external_id IN (${candidates.map(() => '?').join(',')})
         `).run(...candidates.map((c) => c.id));
+        recordEntityWrite({ entity_type: 'time_entry', rows: candidates.length });
         result.deleted = candidates.length;
         result.pruned_events = candidates;
       }

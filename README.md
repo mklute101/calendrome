@@ -233,5 +233,9 @@ Redaction is enforced at a single boundary: span attributes can only
 be set through the allowlist in `src/observability/spans.ts`.
 Structural values pass (ids, enums, counts, day strings, timezone
 names, paths); project names, client names, and free-text note or
-title bodies can never reach a span. Tests assert the boundary holds
-(`tests/observability-spans.test.ts`).
+title bodies can never reach a span. Exception events and status
+messages go through the same boundary: errors are recorded via
+`recordSpanError`, which drops everything after the first colon in
+the message (the repo's error convention puts echoed caller input
+there) and reduces stacks to their frames. Tests assert the boundary
+holds (`tests/observability-spans.test.ts`).

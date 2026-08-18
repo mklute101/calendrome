@@ -32,8 +32,8 @@ describe('observability bootstrap', () => {
  * (Recording-path assertions live in observability-spans.test.ts.)
  */
 describe('span helpers without an SDK (flag off)', () => {
-  it('annotateSpan and recordEntityWrite are inert no-ops', async () => {
-    const { annotateSpan, recordEntityWrite } = await import(
+  it('annotateSpan, recordEntityWrite, and recordSpanError are inert no-ops', async () => {
+    const { annotateSpan, recordEntityWrite, recordSpanError } = await import(
       '../src/observability/spans.js'
     );
     expect(() =>
@@ -46,6 +46,7 @@ describe('span helpers without an SDK (flag off)', () => {
         start_at: '2026-03-10T01:00:00Z',
       }),
     ).not.toThrow();
+    expect(() => recordSpanError(new Error('boom: with detail'))).not.toThrow();
   });
 
   it('guiSpanMiddleware still calls next()', async () => {

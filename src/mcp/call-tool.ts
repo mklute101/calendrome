@@ -24,7 +24,7 @@
 import { SpanKind, SpanStatusCode, trace } from '@opentelemetry/api';
 import { openDatabase } from '../db/connection.js';
 import type { CalendarClient } from '../calendar/index.js';
-import { annotateSpan } from '../observability/spans.js';
+import { annotateSpan, recordSpanError } from '../observability/spans.js';
 import { buildTools } from './tools/index.js';
 
 /**
@@ -88,10 +88,14 @@ export async function callTool(
         };
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        // Record the failure on the span; the client-facing result is
-        // unchanged (same isError text block as before #163).
-        span.recordException(err instanceof Error ? err : new Error(message));
-        span.setStatus({ code: SpanStatusCode.ERROR, message });
+        // Record the failure on the span through the redaction
+        // boundary: validation errors echo caller input in their
+        // message ("... is not a valid ISO 8601 timestamp: <input>"),
+        // so the raw message and stack must not reach the exporter.
+        // The client-facing result is unchanged (same isError text
+        // block as before #163) — the client sent the input, so
+        // echoing it back leaks nothing.
+        recordSpanError(err, span);
         return {
           isError: true,
           content: [{ type: 'text', text: message }],

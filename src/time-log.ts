@@ -6,6 +6,7 @@ import { getGoal } from './goals.js';
 import { getProject } from './projects.js';
 import { getTask, setTaskStatus, type Task } from './tasks.js';
 import { insertTimeEntry } from './time-entry.js';
+import { recordEntityWrite } from './observability/spans.js';
 
 export interface LogTimeInput {
   task_id?: number;
@@ -172,7 +173,10 @@ export async function completeTask(
       }
     }
     const remove = db.prepare(`DELETE FROM time_entry WHERE id = ?`);
-    for (const entry of upcoming) remove.run(entry.id);
+    for (const entry of upcoming) {
+      remove.run(entry.id);
+      recordEntityWrite({ entity_type: 'time_entry', entity_id: entry.id });
+    }
   }
 
   return setTaskStatus(db, taskId, 'COMPLETE');

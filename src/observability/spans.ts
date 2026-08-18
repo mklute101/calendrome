@@ -9,8 +9,11 @@
  * strings, timezone names, and paths pass; project names, client
  * names, and free-text note/title bodies can never reach a span
  * because no allowlisted key admits free text (every string validator
- * rejects whitespace except `calendrome.db_path`, which must look
- * like a filesystem path).
+ * rejects whitespace except `calendrome.db_path`, which is
+ * operator-supplied configuration, never caller data). Exception
+ * events and status messages are part of the same boundary: errors
+ * are recorded only through `recordSpanError`, which scrubs echoed
+ * caller values out of the message and the stack.
  *
  * Everything here goes through `@opentelemetry/api` only. Without an
  * SDK registered (the default — `CALENDROME_OTEL` unset), the api
@@ -27,7 +30,7 @@
  * on the wrong timesheet row) become a trace query instead of a bug
  * report days later.
  */
-import { trace, type Span } from '@opentelemetry/api';
+import { SpanStatusCode, trace, type Span } from '@opentelemetry/api';
 
 /** YYYY-MM-DD. */
 const PLAIN_DAY = /^\d{4}-\d{2}-\d{2}$/;
@@ -121,11 +124,56 @@ function localDay(utcMs: number, tz: string): string | null {
   }
 }
 
+/**
+ * Scrub an error message for span export. The repo's error convention
+ * puts echoed caller values after a colon (`start_at is not a valid
+ * ISO 8601 timestamp: <raw input>`), so everything from the first
+ * colon on is dropped — the static head keeps its diagnostic value
+ * while caller free text (which could be a title, a note body, or a
+ * project name typo'd into a date field) never reaches the exporter.
+ */
+function scrubErrorMessage(raw: string): string {
+  const colon = raw.indexOf(':');
+  const head = colon === -1 ? raw : raw.slice(0, colon);
+  return head.slice(0, 256);
+}
+
+/**
+ * Record a handler failure on `span` (default: the active span):
+ * exception event + ERROR status, both carrying the scrubbed message.
+ * The stack is reduced to its `at ...` frames — the first line of a
+ * raw stack embeds the unscrubbed message, and frames are structural
+ * file paths. The only way errors get recorded on spans anywhere in
+ * calendrome, for the same reason `annotateSpan` is the only way
+ * attributes do: exception events are part of the redaction boundary
+ * (#163).
+ */
+export function recordSpanError(err: unknown, span?: Span): void {
+  const target = span ?? trace.getActiveSpan();
+  if (!target || !target.isRecording()) return;
+  const message = scrubErrorMessage(
+    err instanceof Error ? err.message : String(err),
+  );
+  const stack =
+    err instanceof Error && err.stack
+      ? err.stack
+          .split('\n')
+          .filter((line) => /^\s+at /.test(line))
+          .join('\n')
+      : undefined;
+  target.recordException({
+    name: err instanceof Error ? err.name : 'Error',
+    message,
+    ...(stack ? { stack } : {}),
+  });
+  target.setStatus({ code: SpanStatusCode.ERROR, message });
+}
+
 export interface EntityWrite {
   /** What kind of row was touched, e.g. 'time_entry'. */
   entity_type: string;
-  /** The row's id. */
-  entity_id: string | number;
+  /** The row's id; omit for bulk writes without a single id. */
+  entity_id?: string | number;
   /**
    * The entry's UTC start timestamp, when the write carries one.
    * Triggers the side-by-side `local_day` / `utc_day` bucketing pair.

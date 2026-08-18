@@ -38,12 +38,14 @@ const calendar = new FakeCalendarClient();
 // before the provider registers is permanently no-op.
 const tracer = () => trace.getTracer('calendrome-tests');
 
-/** All finished spans' attributes flattened into one string, for
- * "this text never reached any span" redaction assertions. */
+/** Every finished span's exported surface — name, attributes,
+ * exception events (message and stack), status message — flattened
+ * into one string, for "this text never reached any span" redaction
+ * assertions. */
 const allAttributeText = (): string =>
   exporter
     .getFinishedSpans()
-    .map((s) => JSON.stringify([s.name, s.attributes, s.events]))
+    .map((s) => JSON.stringify([s.name, s.attributes, s.events, s.status]))
     .join('\n');
 
 const findSpan = (name: string) => {
@@ -166,6 +168,60 @@ describe('callTool wide spans (#163)', () => {
     expect(logged.isError).toBeUndefined();
 
     expect(exporter.getFinishedSpans().length).toBeGreaterThan(0);
+    expect(allAttributeText()).not.toContain('CANARY');
+  });
+
+  it('scrubs caller free text out of exception events and status messages', async () => {
+    // Validation errors echo caller input ("started_at is not a valid
+    // ISO 8601 timestamp: <input>"). The client gets that echo back
+    // verbatim, but the span's exception event, stack, and status
+    // message must carry only the scrubbed head.
+    const result = await callTool(dbPath, calendar, 'log_time', {
+      project_id: 'acme',
+      started_at: 'CANARY_ERR meeting with a confidential client',
+      stopped_at: '2026-03-10T15:00:00Z',
+    });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('CANARY_ERR'); // client echo unchanged
+
+    const span = findSpan('tools/call log_time');
+    expect(span.status.code).toBe(SpanStatusCode.ERROR);
+    expect(span.status.message).toBe(
+      'started_at is not a valid ISO 8601 timestamp',
+    );
+    const exception = span.events.find((e) => e.name === 'exception');
+    expect(exception).toBeDefined();
+    expect(allAttributeText()).not.toContain('CANARY');
+  });
+
+  it('records entity/rows/day attributes on the calendar-sync write path', async () => {
+    const result = await callTool(dbPath, calendar, 'sync_calendar_events', {
+      events: [
+        {
+          id: 'evt_a1',
+          calendar_id: 'primary',
+          summary: 'CANARY_SUMMARY standup with the secret client',
+          start: '2026-03-10T01:00:00Z', // evening of 2026-03-09 CDT
+          end: '2026-03-10T01:30:00Z',
+          is_meeting: true,
+        },
+        {
+          id: 'evt_b2',
+          calendar_id: 'primary',
+          summary: 'CANARY_SUMMARY planning',
+          start: '2026-03-10T14:00:00Z',
+          end: '2026-03-10T15:00:00Z',
+          is_meeting: true,
+        },
+      ],
+    });
+    expect(result.isError).toBeUndefined();
+
+    const span = findSpan('tools/call sync_calendar_events');
+    expect(span.attributes['calendrome.entity_type']).toBe('time_entry');
+    expect(span.attributes['calendrome.rows_written']).toBe(2);
+    expect(span.attributes['calendrome.utc_day']).toBe('2026-03-10');
+    expect(span.attributes['calendrome.tz']).toBe('America/Chicago');
     expect(allAttributeText()).not.toContain('CANARY');
   });
 });
