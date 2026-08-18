@@ -76,6 +76,7 @@ describe('MCP tools layer', () => {
       'list_availability',
       'delete_availability',
       'clear_availability',
+      'check_health',
       'gui_start',
       'gui_stop',
       'gui_status',
