@@ -25,6 +25,7 @@ import {
   type UnplaceTaskResult,
 } from '../placement.js';
 import { notePlacedEntry } from '../supply.js';
+import { recordEntityWrite } from '../observability/spans.js';
 import {
   moveTimeEntry,
   confirmTimeEntry,
@@ -266,6 +267,7 @@ export function reopenHabitInstance(db: DB, id: number): { instance: HabitInstan
                 updated_at = ?
           WHERE id = ?`,
       ).run(now(), inst.time_entry_id);
+      recordEntityWrite({ entity_type: 'time_entry', entity_id: inst.time_entry_id });
     }
     db.prepare(
       `UPDATE habit_instances SET status = 'PLANNED', completed_at = NULL WHERE id = ?`,

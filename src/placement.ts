@@ -18,6 +18,7 @@ import { getTask, setTaskStatus, type Task } from './tasks.js';
 import { getProject } from './projects.js';
 import { getGoal } from './goals.js';
 import { insertTimeEntry, type TimeEntryRow } from './time-entry.js';
+import { recordEntityWrite } from './observability/spans.js';
 
 export interface PlaceTaskArgs {
   task_id: number;
@@ -210,6 +211,7 @@ export async function unplaceTask(
 
   if (pairedEntry) {
     db.prepare(`DELETE FROM time_entry WHERE id = ?`).run(pairedEntry.id);
+    recordEntityWrite({ entity_type: 'time_entry', entity_id: pairedEntry.id });
   }
 
   // Only flip status when the task was actually SCHEDULED. For NEW

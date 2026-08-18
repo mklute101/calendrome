@@ -197,3 +197,45 @@ client killing the process.
 
 Tear the backend down with
 `docker compose -f docker-compose.otel.yml down`.
+
+### Wide spans
+
+Every MCP tool call runs inside one wide span (`tools/call <name>`,
+created in `src/mcp/call-tool.ts`), and every GUI `/api` request is
+one auto-instrumented request span enriched by a middleware — one
+span per unit of work carrying many attributes, rather than many thin
+spans. Alongside the semantic conventions (`rpc.system=jsonrpc`,
+`rpc.method=tools/call`; standard HTTP attributes on the GUI side),
+spans carry domain attributes: `calendrome.tool`, `calendrome.tz`,
+`calendrome.local_day`, `calendrome.utc_day`,
+`calendrome.entity_type`, `calendrome.entity_id`,
+`calendrome.rows_written`, and `calendrome.db_path`. The deeper
+attributes flow up from the core `time_entry` write paths via
+`recordEntityWrite` (`src/observability/spans.ts`), so both surfaces
+record identically. Failing tool calls get `recordException` and
+ERROR status while the client still receives the usual `isError`
+text result.
+
+`local_day` and `utc_day` are recorded side by side on purpose: a
+day-bucketing disagreement (an evening local-time entry rolling to
+the next UTC day) becomes a Tempo TraceQL query instead of a bug
+report —
+
+```
+{ span.calendrome.local_day != nil && span.calendrome.utc_day != nil && span.calendrome.local_day != span.calendrome.utc_day }
+```
+
+The local day is computed in the process's resolved timezone;
+`CALENDROME_TZ` overrides it (useful in tests, or when the machine's
+zone is not the one you live in).
+
+Redaction is enforced at a single boundary: span attributes can only
+be set through the allowlist in `src/observability/spans.ts`.
+Structural values pass (ids, enums, counts, day strings, timezone
+names, paths); project names, client names, and free-text note or
+title bodies can never reach a span. Exception events and status
+messages go through the same boundary: errors are recorded via
+`recordSpanError`, which drops everything after the first colon in
+the message (the repo's error convention puts echoed caller input
+there) and reduces stacks to their frames. Tests assert the boundary
+holds (`tests/observability-spans.test.ts`).

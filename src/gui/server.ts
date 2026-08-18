@@ -23,6 +23,7 @@
 // CALENDROME_OTEL=1) has to evaluate before any instrumented module
 // loads — express in particular (#162).
 import '../observability/otel.js';
+import { guiSpanMiddleware } from '../observability/spans.js';
 import express from 'express';
 import { readFileSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -95,6 +96,14 @@ export function createApp(
   // The SPA uses hash routing; the old standalone /tasks page is now
   // the #/tasks route. Keep the old URL working.
   app.get('/tasks', (_req, res) => res.redirect('/#/tasks'));
+
+  // Wide-span enrichment (#163): stamp domain attributes (db_path,
+  // tz) on the active request span created by http/express
+  // auto-instrumentation under CALENDROME_OTEL=1. Deeper attributes
+  // (entity identity, rows written, the local/UTC day pair) land on
+  // the same span from the core write paths via `recordEntityWrite`.
+  // No-op with the flag off: there is no active span to annotate.
+  app.use('/api', guiSpanMiddleware(resolve(dbPath)));
 
   // Origin guard for writes (see header). GET stays unguarded — the
   // payloads are already readable by any local process via the DB.

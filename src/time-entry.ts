@@ -1,6 +1,7 @@
 import type { DB } from './db/connection.js';
 import { now, nowDate } from './clock.js';
 import { toCanonicalUtc, toDayRange } from './day-range.js';
+import { recordEntityWrite } from './observability/spans.js';
 
 export type TimeEntryStatus = 'UNCONFIRMED' | 'CONFIRMED';
 export type TimeEntrySource = 'placement' | 'gcal-sync' | 'habit' | 'manual';
@@ -24,6 +25,7 @@ export interface TimeEntryInput {
 
 export function insertTimeEntry(db: DB, input: TimeEntryInput): number {
   const stamp = now();
+  const startAt = toCanonicalUtc(input.start_at, 'start_at');
   const stmt = db.prepare(`
     INSERT INTO time_entry (
       task_id, project_id, goal_id, start_at, end_at, actual_minutes,
@@ -35,7 +37,7 @@ export function insertTimeEntry(db: DB, input: TimeEntryInput): number {
     input.task_id ?? null,
     input.project_id ?? null,
     input.goal_id ?? null,
-    toCanonicalUtc(input.start_at, 'start_at'),
+    startAt,
     toCanonicalUtc(input.end_at, 'end_at'),
     input.actual_minutes ?? null,
     input.status,
@@ -49,7 +51,12 @@ export function insertTimeEntry(db: DB, input: TimeEntryInput): number {
     stamp,
     stamp,
   );
-  return Number(result.lastInsertRowid);
+  const id = Number(result.lastInsertRowid);
+  // Wide-span annotation (#163): the start timestamp triggers the
+  // local/UTC day-bucketing pair on the active span. No-op when no
+  // SDK is registered.
+  recordEntityWrite({ entity_type: 'time_entry', entity_id: id, start_at: startAt });
+  return id;
 }
 
 export interface ConfirmOptions {
@@ -84,6 +91,7 @@ export function confirmTimeEntry(db: DB, id: number, opts: ConfirmOptions): void
   }
   args.push(id);
   db.prepare(`UPDATE time_entry SET ${sets.join(', ')} WHERE id = ?`).run(...args);
+  recordEntityWrite({ entity_type: 'time_entry', entity_id: id });
 }
 
 export function skipTimeEntry(db: DB, id: number): void {
@@ -95,6 +103,7 @@ export function skipTimeEntry(db: DB, id: number): void {
     throw new Error('cannot skip a gcal-synced entry; delete it in Google Calendar and re-sync');
   }
   db.prepare(`DELETE FROM time_entry WHERE id = ?`).run(id);
+  recordEntityWrite({ entity_type: 'time_entry', entity_id: id });
 }
 
 export interface DeleteTimeEntryOptions {
@@ -138,6 +147,7 @@ export function deleteTimeEntry(
     );
   }
   db.prepare(`DELETE FROM time_entry WHERE id = ?`).run(id);
+  recordEntityWrite({ entity_type: 'time_entry', entity_id: id, start_at: row.start_at });
   return { deleted: true, entry: row };
 }
 
@@ -251,4 +261,5 @@ export function moveTimeEntry(db: DB, id: number, new_start_at: string, opts: Mo
   db.prepare(
     `UPDATE time_entry SET start_at = ?, end_at = ?, updated_at = ? WHERE id = ?`,
   ).run(startAt, endAt, now(), id);
+  recordEntityWrite({ entity_type: 'time_entry', entity_id: id, start_at: startAt });
 }
