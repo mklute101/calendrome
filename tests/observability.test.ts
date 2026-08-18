@@ -22,3 +22,40 @@ describe('observability bootstrap', () => {
     expect(process.listenerCount('beforeExit')).toBe(before.beforeExit);
   });
 });
+
+/**
+ * The #163 span helpers ride `@opentelemetry/api` only, which is a
+ * verified no-op without a registered SDK: `trace.getActiveSpan()`
+ * returns undefined and `startActiveSpan` hands out a non-recording
+ * span. This file never registers a provider, so these tests pin the
+ * flag-off default path: every helper is inert and throw-free.
+ * (Recording-path assertions live in observability-spans.test.ts.)
+ */
+describe('span helpers without an SDK (flag off)', () => {
+  it('annotateSpan and recordEntityWrite are inert no-ops', async () => {
+    const { annotateSpan, recordEntityWrite } = await import(
+      '../src/observability/spans.js'
+    );
+    expect(() =>
+      annotateSpan({ 'calendrome.tool': 'log_time' }),
+    ).not.toThrow();
+    expect(() =>
+      recordEntityWrite({
+        entity_type: 'time_entry',
+        entity_id: 1,
+        start_at: '2026-03-10T01:00:00Z',
+      }),
+    ).not.toThrow();
+  });
+
+  it('guiSpanMiddleware still calls next()', async () => {
+    const { guiSpanMiddleware } = await import(
+      '../src/observability/spans.js'
+    );
+    let nextCalled = false;
+    guiSpanMiddleware('/tmp/x.db')({}, {}, () => {
+      nextCalled = true;
+    });
+    expect(nextCalled).toBe(true);
+  });
+});
