@@ -30,6 +30,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { openDatabase } from '../db/connection.js';
 import { migrate } from '../db/migrate.js';
+import { runHealthChecks } from '../health/checks.js';
 import { listProjects } from '../projects.js';
 import { listCategories } from '../categories.js';
 import { buildWeekPayload } from './week-data.js';
@@ -159,6 +160,24 @@ export function createApp(
       })
       .join('-');
     res.json({ db: resolve(dbPath), stamp });
+  });
+
+  /**
+   * Run the invariant health checks (#164) over the served database.
+   * Identical structure to the `check_health` MCP tool:
+   * `{ok, failing, db, checks: [{name, ok, detail}]}` — `ok: false`
+   * plus a non-zero `failing` count make trouble obvious in the
+   * shape. `db` is this process's resolved database path (same idea
+   * as `/api/version`); diffing it against the MCP surface's answer
+   * catches the two processes serving different files.
+   */
+  app.get('/api/health', (_req, res) => {
+    const db = getDb();
+    try {
+      res.json(runHealthChecks(db));
+    } finally {
+      db.close();
+    }
   });
 
   /**

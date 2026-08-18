@@ -102,6 +102,7 @@ import {
   listCalendarEvents,
   type CalendarEventInput,
 } from '../../calendar-sync.js';
+import { runHealthChecks } from '../../health/checks.js';
 
 export interface ToolDescriptor {
   name: string;
@@ -2230,6 +2231,39 @@ export function buildTools(
       async handler(args) {
         const weekStart = args?.week_start ?? currentWeekMonday();
         return { supply: computeWeekSupply(db, weekStart) };
+      },
+    },
+
+    // -------- health --------
+    /**
+     * Run the invariant health checks (#164) over the current
+     * database: canonical UTC `time_entry` timestamps, active habits
+     * left on the default UTC timezone, task dues written by the old
+     * `place_task` bug, placements with no backing task or goal, and
+     * duplicate calendar event ids. Returns `{ok, failing, db,
+     * checks: [{name, ok, detail}]}` — `ok: false` with a non-zero
+     * `failing` count means stop and investigate before acting on the
+     * data. `db` is this process's resolved database path; compare it
+     * with the GUI's `GET /api/health` (identical structure) to catch
+     * the two processes serving different files. Cheap enough to call
+     * at the start of every planning session.
+     *
+     * @example
+     * check_health()
+     *
+     * @see list_pending_review, sync_calendar_events
+     */
+    {
+      name: 'check_health',
+      description:
+        'Run invariant health checks over the database (canonical UTC ' +
+        'timestamps, habit timezones, stale placement-written task dues, ' +
+        'orphaned placements, duplicate calendar event ids). Returns ' +
+        '{ok, failing, db, checks}; a non-zero failing count means ' +
+        'investigate before acting on the data.',
+      inputSchema: { type: 'object', properties: {} },
+      async handler() {
+        return runHealthChecks(db);
       },
     },
 
