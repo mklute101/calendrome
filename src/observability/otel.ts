@@ -4,14 +4,18 @@
  * Imported before anything else in both entry points
  * (`src/mcp/server.ts`, `src/gui/server.ts`). Entirely inert unless
  * `CALENDROME_OTEL=1`: the flag check happens before any OTel package
- * is loaded (dynamic imports), so the default path gains no startup
- * cost and no network egress.
+ * is loaded (synchronous `createRequire` calls below), so the default
+ * path gains no startup cost and no network egress.
  *
- * When enabled, the top-level `await` below blocks evaluation of the
- * rest of the entry point's module graph until the SDK has started.
- * That ordering is what lets auto-instrumentation patch CommonJS
- * dependencies (express, outbound http) via require-in-the-middle
- * before they are first loaded.
+ * ORDERING — the bootstrap must be fully synchronous. Node evaluates
+ * the CommonJS dependency graph (express and everything under it)
+ * concurrently with any pending top-level await in this module, so an
+ * async bootstrap loses the race and require-in-the-middle never sees
+ * express or http load — the SDK starts but auto-instrumentation
+ * patches nothing and no spans are ever produced. A synchronous
+ * module body evaluates to completion before the first CJS facade in
+ * the entry point's import list, which is why the OTel packages are
+ * loaded with `createRequire` rather than `import()`.
  *
  * CONSTRAINT — the MCP server's stdout is the JSON-RPC transport.
  * Nothing here may ever write to stdout: OTLP HTTP exporter only,
@@ -27,11 +31,18 @@
  * event loop simply drains.
  */
 import { existsSync, readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { dirname, join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import type * as otelApi from '@opentelemetry/api';
+import type * as otelSdkNode from '@opentelemetry/sdk-node';
+import type * as otelAutoInstr from '@opentelemetry/auto-instrumentations-node';
+import type * as otelOtlpHttp from '@opentelemetry/exporter-trace-otlp-http';
+import type * as otelResources from '@opentelemetry/resources';
+import type * as otelSemconv from '@opentelemetry/semantic-conventions';
 
 if (process.env.CALENDROME_OTEL === '1') {
-  await bootstrap();
+  bootstrap();
 }
 
 /**
@@ -71,22 +82,26 @@ function readServiceVersion(): string {
   return '0.0.0';
 }
 
-async function bootstrap(): Promise<void> {
-  const [
-    { diag, DiagLogLevel },
-    { NodeSDK, tracing },
-    { getNodeAutoInstrumentations },
-    { OTLPTraceExporter },
-    { resourceFromAttributes },
-    { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION },
-  ] = await Promise.all([
-    import('@opentelemetry/api'),
-    import('@opentelemetry/sdk-node'),
-    import('@opentelemetry/auto-instrumentations-node'),
-    import('@opentelemetry/exporter-trace-otlp-http'),
-    import('@opentelemetry/resources'),
-    import('@opentelemetry/semantic-conventions'),
-  ]);
+function bootstrap(): void {
+  const require = createRequire(import.meta.url);
+  const { diag, DiagLogLevel, trace } = require(
+    '@opentelemetry/api',
+  ) as typeof otelApi;
+  const { NodeSDK, tracing } = require(
+    '@opentelemetry/sdk-node',
+  ) as typeof otelSdkNode;
+  const { getNodeAutoInstrumentations } = require(
+    '@opentelemetry/auto-instrumentations-node',
+  ) as typeof otelAutoInstr;
+  const { OTLPTraceExporter } = require(
+    '@opentelemetry/exporter-trace-otlp-http',
+  ) as typeof otelOtlpHttp;
+  const { resourceFromAttributes } = require(
+    '@opentelemetry/resources',
+  ) as typeof otelResources;
+  const { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } = require(
+    '@opentelemetry/semantic-conventions',
+  ) as typeof otelSemconv;
 
   // All diag levels route to stderr. DiagConsoleLogger is unusable
   // here: console.log/info/debug write to stdout, which is the MCP
@@ -136,6 +151,17 @@ async function bootstrap(): Promise<void> {
   });
 
   sdk.start();
+
+  // One guaranteed span per process lifetime. The MCP server speaks
+  // JSON-RPC over stdio, so with no manual tool-handler spans yet
+  // (#163) a plain session touches neither express nor outbound
+  // HTTP and auto-instrumentation alone would export nothing. This
+  // marks startup in the trace backend for both processes. Name and
+  // resource attributes only — no user data.
+  trace
+    .getTracer('calendrome-observability')
+    .startSpan('process.start')
+    .end();
 
   let shuttingDown = false;
   const flush = async (): Promise<void> => {

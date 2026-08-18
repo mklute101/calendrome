@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { spawn } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { createServer } from 'node:http';
+import type { Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -24,7 +26,10 @@ interface ExchangeResult {
   exitCode: number | null;
 }
 
-async function runExchange(otel: boolean): Promise<ExchangeResult> {
+async function runExchange(
+  otel: boolean,
+  endpoint?: string,
+): Promise<ExchangeResult> {
   const dbDir = mkdtempSync(join(tmpdir(), 'calendrome-otel-smoke-'));
   const env: NodeJS.ProcessEnv = {
     ...process.env,
@@ -34,8 +39,11 @@ async function runExchange(otel: boolean): Promise<ExchangeResult> {
   delete env.OTEL_EXPORTER_OTLP_ENDPOINT;
   if (otel) {
     env.CALENDROME_OTEL = '1';
-    // Point at a port where nothing listens so export always fails.
-    env.OTEL_EXPORTER_OTLP_ENDPOINT = 'http://127.0.0.1:49151';
+    // Default: point at a port where nothing listens so export
+    // always fails. Tests that assert on exported spans pass a live
+    // capture endpoint instead.
+    env.OTEL_EXPORTER_OTLP_ENDPOINT =
+      endpoint ?? 'http://127.0.0.1:49151';
   }
 
   const child = spawn(process.execPath, [SERVER], {
@@ -135,6 +143,52 @@ describe.skipIf(!existsSync(SERVER))('MCP protocol integrity', () => {
       // Exporter failure must not crash the server; it exits cleanly
       // after stdin closes even while flushing spans it cannot send.
       expect(result.exitCode).toBe(0);
+    },
+  );
+
+  it(
+    'exports spans over OTLP and flushes them before exit',
+    { timeout: 60_000 },
+    async () => {
+      // Local OTLP sink capturing POST bodies. The exporter from
+      // @opentelemetry/exporter-trace-otlp-http sends JSON, so the
+      // captured body can be searched as a string. This is the test
+      // that fails if the bootstrap loses the module-evaluation race
+      // (SDK started after the CJS graph loaded -> nothing patched,
+      // no spans, empty flush) or if shutdown flushing breaks.
+      const bodies: string[] = [];
+      const sink: Server = createServer((req, res) => {
+        let body = '';
+        req.on('data', (d: Buffer) => (body += d.toString()));
+        req.on('end', () => {
+          if (req.url?.startsWith('/v1/traces')) bodies.push(body);
+          res.writeHead(200, { 'content-type': 'application/json' });
+          res.end('{}');
+        });
+      });
+      await new Promise<void>((resolve) =>
+        sink.listen(0, '127.0.0.1', resolve),
+      );
+      const address = sink.address();
+      if (address === null || typeof address === 'string') {
+        throw new Error('sink did not bind to a port');
+      }
+
+      try {
+        const result = await runExchange(
+          true,
+          `http://127.0.0.1:${address.port}`,
+        );
+        assertOnlyJsonRpc(result.stdoutLines);
+        expect(result.exitCode).toBe(0);
+        // The shutdown flush must have delivered spans before the
+        // process exited -- a short-lived MCP session's spans survive.
+        const exported = bodies.join('\n');
+        expect(exported).toContain('calendrome-mcp');
+        expect(exported).toContain('process.start');
+      } finally {
+        sink.close();
+      }
     },
   );
 
