@@ -1,7 +1,7 @@
 {
   "name": "calendrome",
   "version": "0.1.0",
-  "description": "Local, project-based task scheduling MCP server \u2014 a Reclaim.ai replacement",
+  "description": "Local, project-based task scheduling MCP server — a Reclaim.ai replacement",
   "type": "module",
   "private": true,
   "scripts": {
@@ -18,6 +18,12 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
+    "@opentelemetry/api": "1.9.1",
+    "@opentelemetry/auto-instrumentations-node": "0.79.0",
+    "@opentelemetry/exporter-trace-otlp-http": "0.221.0",
+    "@opentelemetry/resources": "2.10.0",
+    "@opentelemetry/sdk-node": "0.221.0",
+    "@opentelemetry/semantic-conventions": "1.43.0",
     "better-sqlite3": "^11.3.0",
     "express": "^5.2.1"
   },

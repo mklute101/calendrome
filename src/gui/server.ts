@@ -19,6 +19,10 @@
  * your schedule: cross-origin fetches to localhost require a CORS
  * preflight we never answer, and form posts carry a foreign Origin.
  */
+// Must be the first import: the OTel bootstrap (inert unless
+// CALENDROME_OTEL=1) has to evaluate before any instrumented module
+// loads — express in particular (#162).
+import '../observability/otel.js';
 import express from 'express';
 import { readFileSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';

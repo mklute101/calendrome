@@ -162,3 +162,38 @@ surface — try it in a sandbox DB first
 
 ### Layout
 - `get_week_layout` — tasks + habits + events for a date range, by day
+
+## Observability (optional)
+
+Both servers ship an opt-in OpenTelemetry bootstrap
+(`src/observability/otel.ts`). It is entirely inert by default — no
+startup cost, no network egress — and activates only when
+`CALENDROME_OTEL=1` is set on the process. When active, it exports
+traces over OTLP HTTP (endpoint from `OTEL_EXPORTER_OTLP_ENDPOINT`,
+default `http://localhost:4318`) with `service.name` set to
+`calendrome-mcp` or `calendrome-gui`. Nothing OTel-related ever
+writes to stdout — the MCP server's stdout is the JSON-RPC transport.
+
+Bring up the local trace backend (Grafana, Tempo, Loki, and
+Prometheus in one container):
+
+```bash
+docker compose -f docker-compose.otel.yml up -d
+```
+
+Then run either server with the flag on:
+
+```bash
+CALENDROME_OTEL=1 node dist/src/mcp/server.js
+CALENDROME_OTEL=1 node dist/src/gui/server.js
+```
+
+Open Grafana at `http://localhost:3000` (anonymous admin login by
+default), go to Explore, pick the Tempo data source, and search for
+`service.name = calendrome-mcp` (or `calendrome-gui`). Express and
+outbound HTTP spans appear via auto-instrumentation. Traces from a
+short-lived MCP session are flushed on shutdown, so they survive the
+client killing the process.
+
+Tear the backend down with
+`docker compose -f docker-compose.otel.yml down`.
