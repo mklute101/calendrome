@@ -13,6 +13,10 @@ services:
   otel-lgtm:
     image: grafana/otel-lgtm
     container_name: calendrome-otel-lgtm
+    # Instrumentation is only useful if the collector is already up
+    # when the bug fires: survive daemon restarts and reboots until
+    # explicitly stopped (docker compose down).
+    restart: unless-stopped
     ports:
       - "127.0.0.1:3000:3000" # Grafana UI
       - "127.0.0.1:4317:4317" # OTLP gRPC
