@@ -239,3 +239,56 @@ messages go through the same boundary: errors are recorded via
 the message (the repo's error convention puts echoed caller input
 there) and reduces stacks to their frames. Tests assert the boundary
 holds (`tests/observability-spans.test.ts`).
+
+### Health checks
+
+Tracing shows what happened; the health checks say whether the
+database is in a bad state right now. Five invariant assertions
+(`src/health/checks.ts`) run as single SQL queries and are exposed
+identically as `GET /api/health` on the GUI server and a
+`check_health` MCP tool — an assistant session can call it at the
+start of planning and see failures before acting on bad data. Both
+surfaces report the resolved database path, so "are the GUI and MCP
+serving the same file?" is answered by diffing the two responses.
+
+For scheduled runs there is a CLI wrapper:
+
+```bash
+node scripts/check-health.mjs            # exit 0 healthy, 1 failing, 2 broken
+node scripts/check-health.mjs --json     # raw HealthReport
+node scripts/check-health.mjs --notify   # macOS notification on failure
+```
+
+It reads `CALENDROME_DB` (defaulting to `calendrome.db` at the repo
+root) and needs a build (`npm run build`). Silence is the expected
+output — schedule it nightly and you hear about it only when an
+invariant breaks. On macOS, a `launchd` agent at
+`~/Library/LaunchAgents/com.calendrome.health.plist` along these
+lines runs it every morning (a run missed while the machine slept
+fires on wake):
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.calendrome.health</string>
+  <key>ProgramArguments</key><array>
+    <string>/path/to/node</string>
+    <string>/path/to/calendrome/scripts/check-health.mjs</string>
+    <string>--notify</string>
+  </array>
+  <key>EnvironmentVariables</key><dict>
+    <key>CALENDROME_DB</key><string>/path/to/calendrome.db</string>
+  </dict>
+  <key>StartCalendarInterval</key><dict>
+    <key>Hour</key><integer>7</integer>
+    <key>Minute</key><integer>30</integer>
+  </dict>
+  <key>StandardErrorPath</key>
+  <string>/tmp/calendrome-health.log</string>
+</dict></plist>
+```
+
+Load it once with `launchctl load
+~/Library/LaunchAgents/com.calendrome.health.plist`.
