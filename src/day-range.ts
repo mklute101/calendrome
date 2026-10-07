@@ -131,8 +131,10 @@ function offsetFormatter(timeZone: string): Intl.DateTimeFormat {
 function dayFormatter(timeZone: string): Intl.DateTimeFormat {
   let dtf = dayFormatters.get(timeZone);
   if (!dtf) {
-    // en-CA formats as YYYY-MM-DD directly.
-    dtf = new Intl.DateTimeFormat('en-CA', {
+    // Read back through formatToParts (like tzOffsetMs) rather than
+    // trusting a locale's output shape: small-icu builds may not have
+    // the en-CA pattern that emits YYYY-MM-DD.
+    dtf = new Intl.DateTimeFormat('en-US', {
       timeZone,
       year: 'numeric',
       month: '2-digit',
@@ -184,7 +186,9 @@ export function addDays(day: string, n: number): string {
 /** Calendar date (YYYY-MM-DD) that a UTC instant falls on in `timeZone`. */
 export function localDayOf(instant: Date, timeZone: string): string {
   if (timeZone === 'UTC') return instant.toISOString().slice(0, 10);
-  return dayFormatter(timeZone).format(instant);
+  const parts = dayFormatter(timeZone).formatToParts(instant);
+  const get = (type: string): string => parts.find((p) => p.type === type)?.value ?? '';
+  return `${get('year').padStart(4, '0')}-${get('month').padStart(2, '0')}-${get('day').padStart(2, '0')}`;
 }
 
 /** Monday of the ISO week containing the plain date `day`. */

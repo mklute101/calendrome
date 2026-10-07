@@ -16,7 +16,6 @@
  */
 import type { DB } from '../../db/connection.js';
 import { toDayRange } from '../../day-range.js';
-import { nowDate } from '../../clock.js';
 import { guiStart, guiStop, guiStatus } from '../../gui/launcher.js';
 import {
   createProject,
@@ -63,7 +62,6 @@ import {
   deactivateGoal,
   getGoal,
   goalProgress,
-  currentWeekMonday,
 } from '../../goals.js';
 import {
   assignHours,
@@ -74,7 +72,6 @@ import {
 } from '../../assignments.js';
 import {
   currentLocalWeekMonday,
-  projectTimezone,
   createCategory,
   listCategories,
   updateCategory,
@@ -481,7 +478,9 @@ export function buildTools(
       description:
         'Create a recurring habit time block. Frequency is exactly one of ' +
         'days_of_week (fixed days, e.g. "1,3,5") or times_per_week ' +
-        '(N-per-week target, any days).',
+        '(N-per-week target, any days). timezone is the IANA zone the ' +
+        "habit's instances and weekly score follow; it defaults to the " +
+        "project's category timezone (#146) and must be a valid IANA name.",
       inputSchema: {
         type: 'object',
         required: ['project_id', 'title', 'duration_minutes', 'start_time'],
@@ -1888,9 +1887,10 @@ export function buildTools(
       description:
         'List goals, each with weekly-ask progress for week_start. ' +
         "week_start is the Monday in the goal's project category local time " +
-        '(#146); when omitted, each goal defaults to the local Monday of the ' +
-        'week now falls in for its own category (so a Sunday-evening call west ' +
-        'of UTC still reports the week being finished). Pass active to filter.',
+        '(#146). When omitted it defaults to the local Monday of the week now ' +
+        'falls in; when categories span timezones that is the earliest ' +
+        "category's Monday (same default as get_envelopes and get_supply) — " +
+        'pass week_start to pin it. Pass active to filter.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -1899,27 +1899,21 @@ export function buildTools(
             type: 'string',
             description:
               "Monday ISO date in the goal's category local time. Default: " +
-              'per goal, the local Monday of the week now falls in.',
+              'the local Monday of the week now falls in (earliest across ' +
+              'categories when they span timezones).',
           },
         },
       },
       async handler(args) {
+        const weekStart = args?.week_start ?? currentLocalWeekMonday(db);
         const goals = listGoals(db, { active: args?.active });
-        const now = nowDate();
-        const withProgress = goals.map((g) => {
-          const weekStart =
-            args?.week_start ??
-            currentWeekMonday(now, projectTimezone(db, g.project_id));
-          return { ...g, progress: goalProgress(db, g.id, weekStart) };
-        });
-        // Top-level echo: the explicit week, else the earliest per-goal
-        // default (goals only disagree within hours of a Monday boundary).
-        const weekStart =
-          args?.week_start ??
-          (withProgress.length > 0
-            ? withProgress.map((g) => g.progress.week_start).sort()[0]
-            : currentLocalWeekMonday(db, now));
-        return { week_start: weekStart, goals: withProgress };
+        return {
+          week_start: weekStart,
+          goals: goals.map((g) => ({
+            ...g,
+            progress: goalProgress(db, g.id, weekStart),
+          })),
+        };
       },
     },
     /**
@@ -2186,8 +2180,10 @@ export function buildTools(
         'YNAB-style budget view for a week: one row per active project, ' +
         'goal, and habit with assigned/activity/available, funding status ' +
         "and a human status_line. week_start is the Monday in each envelope's " +
-        'category local time (#146); when omitted it defaults to the local ' +
-        'Monday of the week now falls in, per category, earliest wins.',
+        'category local time (#146). When omitted it defaults to the local ' +
+        'Monday of the week now falls in; when categories span timezones that ' +
+        "is the earliest category's Monday (same default as list_goals and " +
+        'get_supply) — pass week_start to pin it.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -2195,7 +2191,8 @@ export function buildTools(
             type: 'string',
             description:
               'Monday ISO date in category local time. Default: the local ' +
-              'Monday of the week now falls in (earliest across categories).',
+              'Monday of the week now falls in (earliest across categories ' +
+              'when they span timezones).',
           },
         },
       },
@@ -2240,9 +2237,11 @@ export function buildTools(
         'are guidelines — placing outside one claims its own hours, no ' +
         'open_time needed), per category, with total supply, assigned, ' +
         'and To-Be-Assigned (supply − assigned; negative = overcommitted). ' +
-        "week_start is the Monday in each category's local time (#146); " +
-        'when omitted it defaults to the local Monday of the week now falls ' +
-        'in, per category, earliest wins.',
+        "week_start is the Monday in each category's local time (#146). " +
+        'When omitted it defaults to the local Monday of the week now falls ' +
+        "in; when categories span timezones that is the earliest category's " +
+        'Monday (same default as list_goals and get_envelopes) — pass ' +
+        'week_start to pin it.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -2250,7 +2249,8 @@ export function buildTools(
             type: 'string',
             description:
               'Monday ISO date in category local time. Default: the local ' +
-              'Monday of the week now falls in (earliest across categories).',
+              'Monday of the week now falls in (earliest across categories ' +
+              'when they span timezones).',
           },
         },
       },

@@ -9,8 +9,8 @@ import {
   deactivateGoal,
   goalProgress,
   assertMonday,
-  currentWeekMonday,
 } from '../src/goals.js';
+import { currentWeekMonday } from '../src/day-range.js';
 import { insertTimeEntry } from '../src/time-entry.js';
 import { logTime } from '../src/time-log.js';
 

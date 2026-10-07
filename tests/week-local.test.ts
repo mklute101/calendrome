@@ -14,7 +14,7 @@ import { insertTimeEntry } from '../src/time-entry.js';
 import { budgetWeekRange, getProjectBudget } from '../src/budgets.js';
 import { envelopeWeekRange, getEnvelopes } from '../src/assignments.js';
 import { computeWeekSupply, supplyWeekRange } from '../src/supply.js';
-import { currentWeekMonday, weekRange } from '../src/day-range.js';
+import { currentWeekMonday, localDayOf, weekRange } from '../src/day-range.js';
 import { buildTools } from '../src/mcp/tools/index.js';
 
 /**
@@ -98,6 +98,14 @@ describe('weekRange / currentWeekMonday helper', () => {
   it('rejects malformed week_start', () => {
     expect(() => weekRange('nope', 'UTC')).toThrow(/invalid week_start/);
     expect(() => weekRange('2026-07-20T00:00:00Z', 'UTC')).toThrow(/invalid week_start/);
+  });
+
+  it('localDayOf reads the local calendar date through formatToParts', () => {
+    const instant = new Date('2026-07-27T00:30:00Z');
+    expect(localDayOf(instant, 'UTC')).toBe('2026-07-27');
+    expect(localDayOf(instant, 'America/Chicago')).toBe('2026-07-26');
+    expect(localDayOf(instant, 'Asia/Tokyo')).toBe('2026-07-27');
+    expect(localDayOf(new Date('2026-01-01T03:00:00Z'), 'Pacific/Honolulu')).toBe('2025-12-31');
   });
 
   it('currentWeekMonday follows the local week, defaulting to UTC', () => {
@@ -347,6 +355,42 @@ describe('acceptance 4: supply, envelopes and budgets bound the same instants', 
     expect(row?.activity.confirmed_minutes).toBe(30);
   });
 
+  it('create_habit rejects an invalid timezone and defaults to the project category clock', async () => {
+    const db = freshDb();
+    updateCategory(db, 'work', { timezone: 'America/Chicago' });
+    createProject(db, { id: 'acme', name: 'Acme', prefix: 'ACME' });
+    const tool = buildTools(db).find((t) => t.name === 'create_habit');
+    if (!tool) throw new Error('create_habit tool missing');
+    await expect(
+      tool.handler({
+        project_id: 'acme',
+        title: 'Typo',
+        duration_minutes: 30,
+        days_of_week: '0',
+        start_time: '19:00',
+        timezone: 'America/Chicgo',
+      }),
+    ).rejects.toThrow(/not a valid IANA timezone/);
+
+    const { habit } = (await tool.handler({
+      project_id: 'acme',
+      title: 'Evening walk',
+      duration_minutes: 30,
+      days_of_week: '0',
+      start_time: '19:00',
+    })) as { habit: { id: number; timezone: string } };
+    expect(habit.timezone).toBe('America/Chicago');
+
+    // Its Sunday 19:00 instance scores in the same week budgets count it.
+    const [inst] = generateHabitInstances(db, habit.id, '2026-07-26', '2026-07-26');
+    expect(inst.scheduled_start).toBe('2026-07-27T00:00:00Z');
+    completeHabitInstance(db, inst.id);
+    expect(habitWeekScore(db, habit.id, WEEK2)).toEqual({ done: 1, target: 1 });
+    expect(getProjectBudget(db, 'acme', WEEK2).confirmed_minutes).toBe(30);
+    expect(habitWeekScore(db, habit.id, WEEK3)).toEqual({ done: 0, target: 1 });
+    expect(getProjectBudget(db, 'acme', WEEK3).confirmed_minutes).toBe(0);
+  });
+
   it('supply with no categories is an empty by_category, not a throw', () => {
     const db = freshDb();
     db.prepare('DELETE FROM categories').run();
@@ -372,6 +416,16 @@ describe('default week_start follows the category clock (review fix 1)', () => {
     });
     confirmed(db, 'spanish', '2026-07-24T00:00:00Z', 45, { goal_id: goal.id });
     confirmed(db, 'spanish', '2026-07-27T00:00:00Z', 75, { goal_id: goal.id });
+    // A goal under the UTC work category: with the shared "earliest
+    // local Monday" default it is reported for the same week as the
+    // Chicago goal, so the three tools never disagree on the week.
+    createProject(db, { id: 'acme', name: 'Acme', prefix: 'ACME' });
+    const workGoal = createGoal(db, {
+      project_id: 'acme',
+      title: 'Work goal',
+      target_minutes: 60,
+      refill_period: 'week',
+    });
     // Sunday 2026-07-26 19:30 CDT — already Monday in UTC.
     process.env.CALENDROME_NOW = '2026-07-27T00:30:00Z';
 
@@ -385,12 +439,17 @@ describe('default week_start follows the category clock (review fix 1)', () => {
     expect(row?.progress.week_start).toBe(WEEK2);
     expect(row?.progress.week_confirmed).toBe(120);
     expect(out.week_start).toBe(WEEK2);
+    expect(out.goals.find((g) => g.id === workGoal.id)?.progress.week_start).toBe(WEEK2);
   });
 
-  it('get_envelopes and get_supply default to the earliest local Monday across categories', async () => {
+  it('list_goals, get_envelopes and get_supply share the earliest-local-Monday default', async () => {
     const db = setupChicago();
     process.env.CALENDROME_NOW = '2026-07-27T00:30:00Z';
     const tools = buildTools(db);
+    const goals = (await tools.find((t) => t.name === 'list_goals')!.handler({})) as {
+      week_start: string;
+    };
+    expect(goals.week_start).toBe(WEEK2);
     const envelopes = (await tools.find((t) => t.name === 'get_envelopes')!.handler({})) as {
       week_start: string;
     };

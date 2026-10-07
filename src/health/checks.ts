@@ -30,7 +30,8 @@
  *   project category and a habit entry by the habit's own timezone.
  *   When those clocks differ, a Sunday-evening entry can land in one
  *   week for budgets and the next for envelopes. A stored timezone
- *   `Intl` rejects is reported by this check, not thrown.
+ *   `Intl` rejects is reported by this check, not thrown; entries
+ *   with no project are skipped (budgets never count them).
  *
  * The sixth concern from the issue — GUI and MCP serving different
  * database files — cannot be asserted from inside one process, so the
@@ -42,7 +43,7 @@
  * not in prose.
  */
 import { resolve } from 'node:path';
-import { currentWeekMonday } from '../day-range.js';
+import { assertValidTimezone, currentWeekMonday } from '../day-range.js';
 import type { DB } from '../db/connection.js';
 
 export interface HealthCheck {
@@ -219,7 +220,8 @@ export function checkCalendarEventIdUnique(db: DB): HealthCheck {
 export function checkWeekBucketAgreement(db: DB): HealthCheck {
   const name = 'week_bucket_agreement';
   // Category resolution mirrors `projectTimezone`: a project with no
-  // category falls back to 'work'.
+  // category falls back to 'work'. Rows with no project are skipped:
+  // budgets never count them, so there is no second bucket to differ.
   const rows = db
     .prepare(
       `SELECT te.id, te.start_at,
@@ -230,7 +232,7 @@ export function checkWeekBucketAgreement(db: DB): HealthCheck {
                 ELSE COALESCE(pc.timezone, 'UTC')
               END AS envelope_tz
          FROM time_entry te
-         LEFT JOIN projects p ON p.id = te.project_id
+         JOIN projects p ON p.id = te.project_id
          LEFT JOIN categories pc ON pc.id = COALESCE(p.category_id, 'work')
          LEFT JOIN goals g ON g.id = te.goal_id
          LEFT JOIN projects gp ON gp.id = g.project_id
@@ -248,35 +250,62 @@ export function checkWeekBucketAgreement(db: DB): HealthCheck {
     budget_tz: string;
     envelope_tz: string;
   }>;
-  const split: number[] = [];
+
+  // Validate each distinct stored timezone once; a bad one is this
+  // check's failure, reported in full rather than thrown.
+  const zones = new Set<string>();
   for (const r of rows) {
-    const at = new Date(r.start_at);
+    zones.add(r.budget_tz);
+    zones.add(r.envelope_tz);
+  }
+  const invalid: string[] = [];
+  for (const zone of zones) {
     try {
-      if (currentWeekMonday(at, r.budget_tz) !== currentWeekMonday(at, r.envelope_tz)) {
-        split.push(r.id);
-      }
-    } catch (err) {
-      // An unparseable stored timezone must fail this check, not abort
-      // the whole report — the other checks still run.
-      return {
-        name,
-        ok: false,
-        detail:
-          `time_entry ${r.id} cannot be bucketed: stored timezone rejected ` +
-          `(${r.budget_tz} / ${r.envelope_tz}): ` +
-          (err instanceof Error ? err.message : String(err)),
-      };
+      assertValidTimezone(zone);
+    } catch {
+      invalid.push(zone);
     }
   }
+  if (invalid.length > 0) {
+    return {
+      name,
+      ok: false,
+      detail:
+        `${invalid.length} stored timezone(s) Intl rejects, so affected ` +
+        `entries cannot be bucketed: ${sample(invalid)}`,
+    };
+  }
+
+  // Row-level failures (an unparseable start_at) belong to the
+  // canonical-timestamp check; skip the row here and keep counting.
+  const split: number[] = [];
+  const skipped: number[] = [];
+  for (const r of rows) {
+    const at = new Date(r.start_at);
+    if (Number.isNaN(at.getTime())) {
+      skipped.push(r.id);
+      continue;
+    }
+    if (currentWeekMonday(at, r.budget_tz) !== currentWeekMonday(at, r.envelope_tz)) {
+      split.push(r.id);
+    }
+  }
+  const skippedNote =
+    skipped.length === 0
+      ? ''
+      : ` (${skipped.length} row(s) with unparseable start_at skipped, see ` +
+        `time_entry_canonical_utc: id ${sample(skipped)})`;
   return {
     name,
     ok: split.length === 0,
     detail:
       split.length === 0
-        ? 'every confirmed time_entry rolls up into the same category-local week for budgets and envelopes'
+        ? 'every confirmed time_entry rolls up into the same category-local week for budgets and envelopes' +
+          skippedNote
         : `${split.length} confirmed time_entry row(s) counted in different ` +
           `weeks by budgets vs envelopes (project category and goal/habit ` +
-          `timezone disagree): id ${sample(split)}`,
+          `timezone disagree): id ${sample(split)}` +
+          skippedNote,
   };
 }
 

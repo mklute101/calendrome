@@ -1,12 +1,15 @@
 import type { DB } from './db/connection.js';
+import { projectTimezone } from './categories.js';
 import { now } from './clock.js';
 import {
   addDays,
+  assertValidTimezone,
   localDayOf,
   mondayOfDay,
   toCanonicalUtc,
   weekRange,
   zonedTimeToUtcMs,
+  type WeekRange,
 } from './day-range.js';
 import {
   confirmTimeEntry,
@@ -117,6 +120,12 @@ export function createHabit(db: DB, input: CreateHabitInput): Habit {
   const daysOfWeek = input.days_of_week ?? null;
   const timesPerWeek = input.times_per_week ?? null;
   validateFrequency(daysOfWeek, timesPerWeek);
+  // The habit's clock is what its instances are materialized in and
+  // what its week scoring follows (#146). Default to the project's
+  // category timezone so a habit created without one is scored on the
+  // same clock its budget is; reject names Intl does not know.
+  const timezone = input.timezone ?? projectTimezone(db, input.project_id);
+  assertValidTimezone(timezone);
   const result = db
     .prepare(
       `INSERT INTO habits
@@ -131,7 +140,7 @@ export function createHabit(db: DB, input: CreateHabitInput): Habit {
       daysOfWeek ?? '',
       timesPerWeek,
       input.start_time,
-      input.timezone ?? 'UTC',
+      timezone,
       now(),
     );
   return getHabit(db, Number(result.lastInsertRowid)) as Habit;
@@ -425,6 +434,7 @@ export function habitWeekScore(
   db: DB,
   habitId: number,
   weekStart: string,
+  range?: WeekRange,
 ): { done: number; target: number } {
   const habit = getHabit(db, habitId);
   if (!habit) throw new Error(`habit ${habitId} not found`);
@@ -434,7 +444,7 @@ export function habitWeekScore(
   // Sunday-evening instance under a differently-zoned category would
   // score in the wrong week. This deliberately departs from the
   // project -> category chain the other envelopes use.
-  const { startIso, endIso } = weekRange(weekStart, habit.timezone || 'UTC');
+  const { startIso, endIso } = range ?? weekRange(weekStart, habit.timezone || 'UTC');
 
   const row = db
     .prepare(

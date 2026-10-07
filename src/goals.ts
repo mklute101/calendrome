@@ -19,11 +19,7 @@
 import type { DB } from './db/connection.js';
 import { projectTimezone } from './categories.js';
 import { now as clockNow } from './clock.js';
-import { currentWeekMonday, weekRange } from './day-range.js';
-
-// Re-exported for callers that reach the week helper through goals
-// (the MCP tool index, tests); the implementation lives in day-range.
-export { currentWeekMonday };
+import { weekRange, type WeekRange } from './day-range.js';
 
 export interface Goal {
   id: number;
@@ -214,13 +210,20 @@ export function deactivateGoal(db: DB, id: number): void {
  *     scheduled minutes (needed_this_week === 0).
  *   - on_track: otherwise — there's still an ask and still time.
  */
-export function goalProgress(db: DB, goalId: number, weekStart: string): GoalProgress {
+export function goalProgress(
+  db: DB,
+  goalId: number,
+  weekStart: string,
+  range?: WeekRange,
+): GoalProgress {
   const goal = getGoal(db, goalId);
   if (!goal) throw new Error(`goal ${goalId} not found`);
   assertMonday(weekStart);
   // The week is local Monday-to-Monday in the goal's project's category
-  // timezone (#146), the same bounds envelopes use for this goal.
-  const { startIso, endIso } = weekRange(weekStart, projectTimezone(db, goal.project_id));
+  // timezone (#146), the same bounds envelopes use for this goal; a
+  // caller that already resolved them passes `range`.
+  const { startIso, endIso } =
+    range ?? weekRange(weekStart, projectTimezone(db, goal.project_id));
 
   const allTime = db
     .prepare(

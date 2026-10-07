@@ -236,7 +236,7 @@ export function computeWeekSupply(db: DB, weekStart: string): WeekSupply {
     };
   }
   const categoryWeeks = new Map<string, WeekRange>(
-    categories.map((c) => [c.id, weekRange(weekStart, c.timezone)]),
+    categories.map((c) => [c.id, supplyWeekRange(db, c.id, weekStart)]),
   );
   let weekStartIso = '';
   let weekEndIso = '';

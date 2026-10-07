@@ -458,7 +458,7 @@ export function getEnvelopes(db: DB, weekStart: string): EnvelopeRow[] {
       confirmed: number;
       scheduled: number;
     };
-    const progress = goalProgress(db, goal.id, weekStart);
+    const progress = goalProgress(db, goal.id, weekStart, { startIso, endIso });
     rows.push(
       buildRow('goal', String(goal.id), goal.title, activity, progress.needed_this_week),
     );
@@ -474,7 +474,7 @@ export function getEnvelopes(db: DB, weekStart: string): EnvelopeRow[] {
     const activityTotal =
       Math.round(activity.confirmed) + Math.round(activity.scheduled);
     const needed = Math.max(0, ask - activityTotal);
-    const score = habitWeekScore(db, habit.id, weekStart);
+    const score = habitWeekScore(db, habit.id, weekStart, { startIso, endIso });
     rows.push(
       buildRow('habit', String(habit.id), habit.title, activity, needed, score),
     );

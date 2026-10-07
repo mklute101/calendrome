@@ -412,7 +412,7 @@ describe('checkWeekBucketAgreement (#146, acceptance 6)', () => {
     });
     const check = checkWeekBucketAgreement(db);
     expect(check.ok).toBe(false);
-    expect(check.detail).toMatch(/America\/Chicgo/);
+    expect(check.detail).toMatch(/Intl rejects.*America\/Chicgo/);
     // The report still runs every other check.
     const report = runHealthChecks(db);
     expect(report.checks).toHaveLength(6);
@@ -437,6 +437,34 @@ describe('checkWeekBucketAgreement (#146, acceptance 6)', () => {
     const [inst] = generateHabitInstances(db, habit.id, '2026-07-26', '2026-07-26');
     completeHabitInstance(db, inst.id);
     expect(checkWeekBucketAgreement(db).ok).toBe(false);
+  });
+
+  it('ignores entries with no project: budgets never count them (review fix)', () => {
+    const db = freshDb();
+    updateCategory(db, 'personal', { timezone: 'Europe/Berlin' });
+    db.prepare(
+      `INSERT INTO projects (id, name, prefix, category_id)
+       VALUES ('berlin', 'Berlin', 'BER', 'personal')`,
+    ).run();
+    const goal = createGoal(db, {
+      project_id: 'berlin',
+      title: 'Berlin goal',
+      target_minutes: 180,
+      refill_period: 'week',
+    });
+    // Mon 2026-07-27 00:30 CEST is still Sunday in UTC; with no project
+    // there is no budget bucket to disagree with the goal envelope.
+    insertTimeEntry(db, {
+      project_id: null,
+      goal_id: goal.id,
+      start_at: '2026-07-26T22:30:00Z',
+      end_at: '2026-07-26T23:00:00Z',
+      actual_minutes: 30,
+      status: 'CONFIRMED',
+      confirmed_at: '2026-07-26T23:00:00Z',
+      source: 'manual',
+    });
+    expect(checkWeekBucketAgreement(db).ok).toBe(true);
   });
 
   it('passes for a cross-timezone entry that does not straddle a week boundary', () => {
