@@ -1,6 +1,7 @@
 import type { DB } from './db/connection.js';
+import { projectTimezone } from './categories.js';
 import { now } from './clock.js';
-import { toCanonicalUtc } from './day-range.js';
+import { toCanonicalUtc, weekRange } from './day-range.js';
 import {
   confirmTimeEntry,
   insertTimeEntry,
@@ -490,18 +491,15 @@ export function habitWeekScore(
 ): { done: number; target: number } {
   const habit = getHabit(db, habitId);
   if (!habit) throw new Error(`habit ${habitId} not found`);
-  const start = Date.parse(`${weekStart}T00:00:00Z`);
-  if (Number.isNaN(start)) throw new Error(`invalid week_start: ${weekStart}`);
-  const startIso = new Date(start).toISOString().replace(/\.\d{3}Z$/, 'Z');
-  const endIso = new Date(start + 7 * 86_400_000 - 1)
-    .toISOString()
-    .replace(/\.\d{3}Z$/, 'Z');
+  // The week is local Monday-to-Monday in the habit's project's
+  // category timezone (#146), like every other envelope rollup.
+  const { startIso, endIso } = weekRange(weekStart, projectTimezone(db, habit.project_id));
 
   const row = db
     .prepare(
       `SELECT COUNT(*) AS n FROM habit_instances
         WHERE habit_id = ? AND status = 'COMPLETE'
-          AND scheduled_start >= ? AND scheduled_start <= ?`,
+          AND scheduled_start >= ? AND scheduled_start < ?`,
     )
     .get(habitId, startIso, endIso) as { n: number };
 

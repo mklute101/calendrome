@@ -17,7 +17,13 @@
  * the wall-clock span (the `v_task_time_spent` idiom).
  */
 import type { DB } from './db/connection.js';
-import { now as clockNow, nowDate } from './clock.js';
+import { projectTimezone } from './categories.js';
+import { now as clockNow } from './clock.js';
+import { currentWeekMonday, weekRange } from './day-range.js';
+
+// Re-exported for callers that reach the week helper through goals
+// (the MCP tool index, tests); the implementation lives in day-range.
+export { currentWeekMonday };
 
 export interface Goal {
   id: number;
@@ -90,27 +96,6 @@ export function assertMonday(weekStart: string, label = 'week_start'): void {
   if (dow !== 1) {
     throw new Error(`${label} must be a Monday, got ${weekStart} (day ${dow})`);
   }
-}
-
-/** Monday of the UTC week containing `now` (defaults to the clock's today). */
-export function currentWeekMonday(now: Date = nowDate()): string {
-  const dow = now.getUTCDay(); // 0=Sun..6=Sat
-  const diff = dow === 0 ? -6 : 1 - dow;
-  const mon = new Date(now.getTime() + diff * 86_400_000);
-  return mon.toISOString().slice(0, 10);
-}
-
-/** Inclusive-start/exclusive-end ISO bounds of the week (budgets.ts convention). */
-export function weekRange(weekStart: string): { startIso: string; endIso: string } {
-  const start = Date.parse(`${weekStart}T00:00:00Z`);
-  if (Number.isNaN(start)) {
-    throw new Error(`invalid week_start: ${weekStart}`);
-  }
-  const end = start + 7 * 86_400_000 - 1;
-  return {
-    startIso: new Date(start).toISOString(),
-    endIso: new Date(end).toISOString(),
-  };
 }
 
 // Effective minutes of a time_entry: explicit actual_minutes wins,
@@ -233,7 +218,9 @@ export function goalProgress(db: DB, goalId: number, weekStart: string): GoalPro
   const goal = getGoal(db, goalId);
   if (!goal) throw new Error(`goal ${goalId} not found`);
   assertMonday(weekStart);
-  const { startIso, endIso } = weekRange(weekStart);
+  // The week is local Monday-to-Monday in the goal's project's category
+  // timezone (#146), the same bounds envelopes use for this goal.
+  const { startIso, endIso } = weekRange(weekStart, projectTimezone(db, goal.project_id));
 
   const allTime = db
     .prepare(
@@ -249,7 +236,7 @@ export function goalProgress(db: DB, goalId: number, weekStart: string): GoalPro
          COALESCE(SUM(CASE WHEN te.status = 'CONFIRMED'   THEN ${DURATION_SQL} ELSE 0 END), 0) AS confirmed,
          COALESCE(SUM(CASE WHEN te.status = 'UNCONFIRMED' THEN ${DURATION_SQL} ELSE 0 END), 0) AS scheduled
        FROM time_entry te
-       WHERE te.goal_id = ? AND te.start_at >= ? AND te.start_at <= ?`,
+       WHERE te.goal_id = ? AND te.start_at >= ? AND te.start_at < ?`,
     )
     .get(goalId, startIso, endIso) as { confirmed: number; scheduled: number };
 

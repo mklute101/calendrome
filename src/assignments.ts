@@ -25,14 +25,10 @@
  * project's row; the project row is the "everything else" bucket.
  */
 import type { DB } from './db/connection.js';
+import { projectTimezone } from './categories.js';
 import { now } from './clock.js';
-import {
-  assertMonday,
-  goalProgress,
-  getGoal,
-  listGoals,
-  weekRange,
-} from './goals.js';
+import { weekRange, type WeekRange } from './day-range.js';
+import { assertMonday, goalProgress, getGoal, listGoals } from './goals.js';
 import { getHabit, habitWeekScore, listHabits } from './habits.js';
 import { listProjects } from './projects.js';
 
@@ -305,9 +301,36 @@ function fmtHours(minutes: number): string {
  * with assigned / activity / available and a YNAB-style funding
  * status. See the module header for the attribution rule.
  */
+/**
+ * The week an envelope rolls up (#146): local Monday-to-Monday in the
+ * timezone of the envelope's project's category — a project envelope
+ * is its own project; goal and habit envelopes resolve through theirs.
+ * Exported so the parity test can assert budgets, envelopes and
+ * supply bound the same instants.
+ */
+export function envelopeWeekRange(
+  db: DB,
+  type: EnvelopeType,
+  id: string,
+  weekStart: string,
+): WeekRange {
+  let projectId: string;
+  if (type === 'project') {
+    projectId = id;
+  } else if (type === 'goal') {
+    const goal = getGoal(db, Number(id));
+    if (!goal) throw new Error(`goal ${id} not found`);
+    projectId = goal.project_id;
+  } else {
+    const habit = getHabit(db, Number(id));
+    if (!habit) throw new Error(`habit ${id} not found`);
+    projectId = habit.project_id;
+  }
+  return weekRange(weekStart, projectTimezone(db, projectId));
+}
+
 export function getEnvelopes(db: DB, weekStart: string): EnvelopeRow[] {
   assertMonday(weekStart);
-  const { startIso, endIso } = weekRange(weekStart);
 
   const assignmentRows = db
     .prepare('SELECT * FROM assignments WHERE week_start = ?')
@@ -324,18 +347,18 @@ export function getEnvelopes(db: DB, weekStart: string): EnvelopeRow[] {
   const projectActivity = db.prepare(
     `SELECT ${activitySql} FROM time_entry te
       WHERE te.project_id = ? AND te.goal_id IS NULL AND te.source != 'habit'
-        AND te.start_at >= ? AND te.start_at <= ?`,
+        AND te.start_at >= ? AND te.start_at < ?`,
   );
   const goalActivity = db.prepare(
     `SELECT ${activitySql} FROM time_entry te
       WHERE te.goal_id = ?
-        AND te.start_at >= ? AND te.start_at <= ?`,
+        AND te.start_at >= ? AND te.start_at < ?`,
   );
   const habitActivity = db.prepare(
     `SELECT ${activitySql} FROM time_entry te
       JOIN habit_instances hi ON hi.time_entry_id = te.id
       WHERE te.source = 'habit' AND hi.habit_id = ?
-        AND te.start_at >= ? AND te.start_at <= ?`,
+        AND te.start_at >= ? AND te.start_at < ?`,
   );
 
   const rows: EnvelopeRow[] = [];
@@ -408,6 +431,7 @@ export function getEnvelopes(db: DB, weekStart: string): EnvelopeRow[] {
   };
 
   for (const project of listProjects(db, { active: true })) {
+    const { startIso, endIso } = weekRange(weekStart, projectTimezone(db, project.id));
     const activity = projectActivity.get(project.id, startIso, endIso) as {
       confirmed: number;
       scheduled: number;
@@ -416,6 +440,7 @@ export function getEnvelopes(db: DB, weekStart: string): EnvelopeRow[] {
   }
 
   for (const goal of listGoals(db, { active: true })) {
+    const { startIso, endIso } = weekRange(weekStart, projectTimezone(db, goal.project_id));
     const activity = goalActivity.get(goal.id, startIso, endIso) as {
       confirmed: number;
       scheduled: number;
@@ -427,6 +452,7 @@ export function getEnvelopes(db: DB, weekStart: string): EnvelopeRow[] {
   }
 
   for (const habit of listHabits(db, { active: true })) {
+    const { startIso, endIso } = weekRange(weekStart, projectTimezone(db, habit.project_id));
     const activity = habitActivity.get(habit.id, startIso, endIso) as {
       confirmed: number;
       scheduled: number;

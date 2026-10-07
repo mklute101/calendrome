@@ -122,6 +122,10 @@ sentence — never a click path.
   (`YYYY-MM-DDTHH:MM:SSZ`): every write path funnels through
   `toCanonicalUtc` in `src/day-range.ts`, and `migrate()` normalizes
   legacy mixed-form rows (#95)
+- Weekly accounting is category-local: budgets, goals, envelopes and
+  supply bound a `week_start` Monday as `[Mon 00:00, next Mon 00:00)`
+  in the envelope's category timezone via `weekRange(weekStart, tz)`
+  in `src/day-range.ts`; a `UTC` category is the old UTC week (#146)
 - Bookkeeping stamps (`created_at`, `updated_at`, `confirmed_at`,
   `synced_at`, `completed_at`) come from `now()` in `src/clock.ts` —
   never SQL-side `datetime('now')` — so simulated time is one env var:

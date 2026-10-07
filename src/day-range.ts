@@ -19,6 +19,8 @@
  * `DATE(te.start_at)` against these plain-date bounds.
  */
 
+import { nowDate } from './clock.js';
+
 /**
  * Canonical stored timestamp form: UTC, second precision, `Z` suffix
  * (`YYYY-MM-DDTHH:MM:SSZ`). Every `time_entry` write path funnels its
@@ -74,4 +76,117 @@ export function toDayRange(from: string, to: string): DayRange {
     fromDay: toUtcDay(from, 'from'),
     toDay: toUtcDay(to, 'to'),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Week boundaries for weekly accounting (#146).
+//
+// Range *reads* above are inclusive UTC day buckets. Weekly *rollups*
+// (budgets, goals, envelopes, supply) are user-facing pacing, so their
+// week follows the envelope's category timezone: `[Mon 00:00, next
+// Mon 00:00)` in local wall-clock time, resolved to UTC instants. A
+// 'UTC' timezone reproduces the former `T00:00:00Z` arithmetic exactly.
+// ---------------------------------------------------------------------------
+
+/** Offset (ms to add to UTC to get wall-clock time) of `timeZone` at `utcMs`. */
+export function tzOffsetMs(timeZone: string, utcMs: number): number {
+  const dtf = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23',
+  });
+  const parts = dtf.formatToParts(new Date(utcMs));
+  const get = (type: string): number =>
+    Number(parts.find((p) => p.type === type)?.value ?? 0);
+  const asUtc = Date.UTC(
+    get('year'),
+    get('month') - 1,
+    get('day'),
+    get('hour'),
+    get('minute'),
+    get('second'),
+  );
+  return asUtc - utcMs;
+}
+
+/**
+ * UTC instant (epoch ms) of local `day` (YYYY-MM-DD) + `hhmm` in
+ * `timeZone`. Two offset iterations handle DST-boundary days.
+ */
+export function zonedTimeToUtcMs(day: string, hhmm: string, timeZone: string): number {
+  const naive = Date.parse(`${day}T${hhmm}:00Z`);
+  if (Number.isNaN(naive)) {
+    throw new Error(`invalid local time: ${day} ${hhmm}`);
+  }
+  if (timeZone === 'UTC') return naive;
+  let offset = tzOffsetMs(timeZone, naive);
+  offset = tzOffsetMs(timeZone, naive - offset);
+  return naive - offset;
+}
+
+/** Plain-date arithmetic: `day` + n calendar days (YYYY-MM-DD). */
+export function addDays(day: string, n: number): string {
+  const ms = Date.parse(`${day}T00:00:00Z`);
+  if (Number.isNaN(ms)) throw new Error(`invalid date: ${day}`);
+  return new Date(ms + n * 86_400_000).toISOString().slice(0, 10);
+}
+
+/** Calendar date (YYYY-MM-DD) that a UTC instant falls on in `timeZone`. */
+export function localDayOf(instant: Date, timeZone: string): string {
+  if (timeZone === 'UTC') return instant.toISOString().slice(0, 10);
+  // en-CA formats as YYYY-MM-DD directly.
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(instant);
+}
+
+/** Monday of the ISO week containing the plain date `day`. */
+export function mondayOfDay(day: string): string {
+  const dow = new Date(`${day}T00:00:00Z`).getUTCDay(); // 0=Sun..6=Sat
+  if (Number.isNaN(dow)) throw new Error(`invalid date: ${day}`);
+  return addDays(day, dow === 0 ? -6 : 1 - dow);
+}
+
+export interface WeekRange {
+  /** Canonical UTC instant of local Monday 00:00 (inclusive). */
+  startIso: string;
+  /** Canonical UTC instant of the following local Monday 00:00 (exclusive). */
+  endIso: string;
+}
+
+/**
+ * UTC bounds of the week starting on local Monday `weekStart` in
+ * `timezone`: `[Mon 00:00, next Mon 00:00)` wall-clock, as canonical
+ * UTC strings (`YYYY-MM-DDTHH:MM:SSZ`). DST-safe: a week spanning a
+ * change is 167h or 169h long, never forced to 168h. Queries compare
+ * `start_at >= startIso AND start_at < endIso`.
+ */
+export function weekRange(weekStart: string, timezone = 'UTC'): WeekRange {
+  if (!PLAIN_DATE.test(weekStart) || Number.isNaN(Date.parse(`${weekStart}T00:00:00Z`))) {
+    throw new Error(`invalid week_start: ${weekStart}`);
+  }
+  const startMs = zonedTimeToUtcMs(weekStart, '00:00', timezone);
+  const endMs = zonedTimeToUtcMs(addDays(weekStart, 7), '00:00', timezone);
+  return {
+    startIso: toCanonicalUtc(new Date(startMs).toISOString(), 'week start'),
+    endIso: toCanonicalUtc(new Date(endMs).toISOString(), 'week end'),
+  };
+}
+
+/**
+ * Monday (YYYY-MM-DD) of the week containing `now` in `timezone`.
+ * Defaults to the clock's now and UTC — the week an instant belongs
+ * to only has one answer per timezone, so callers rolling up an
+ * envelope pass its category's timezone.
+ */
+export function currentWeekMonday(now: Date = nowDate(), timezone = 'UTC'): string {
+  return mondayOfDay(localDayOf(now, timezone));
 }

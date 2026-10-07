@@ -24,6 +24,12 @@
  *   `external_id` and relies on the partial unique index; duplicate
  *   ids (legacy DBs predating the index, hand edits) double-count
  *   meetings and break the upsert.
+ * - `week_bucket_agreement`: weekly accounting follows the category
+ *   timezone (#146). Budgets bucket a CONFIRMED entry by its
+ *   project's category; envelopes bucket a goal or habit entry by
+ *   the goal's/habit's project. When those categories sit in
+ *   different timezones, a Sunday-evening entry can land in one week
+ *   for budgets and the next for envelopes.
  *
  * The sixth concern from the issue — GUI and MCP serving different
  * database files — cannot be asserted from inside one process, so the
@@ -35,6 +41,7 @@
  * not in prose.
  */
 import { resolve } from 'node:path';
+import { currentWeekMonday } from '../day-range.js';
 import type { DB } from '../db/connection.js';
 
 export interface HealthCheck {
@@ -200,6 +207,64 @@ export function checkCalendarEventIdUnique(db: DB): HealthCheck {
   };
 }
 
+/**
+ * A CONFIRMED entry whose project category timezone is non-UTC must
+ * roll up into the same week for budgets (keyed by `te.project_id`)
+ * and envelopes (keyed by the goal's or habit's project). The SQL
+ * narrows to rows where the two chains resolve to different
+ * timezones; the week comparison itself runs here through the same
+ * helper the rollups use (#146).
+ */
+export function checkWeekBucketAgreement(db: DB): HealthCheck {
+  const rows = db
+    .prepare(
+      `SELECT te.id, te.start_at,
+              COALESCE(pc.timezone, 'UTC') AS budget_tz,
+              CASE
+                WHEN te.goal_id IS NOT NULL THEN COALESCE(gc.timezone, 'UTC')
+                WHEN hi.habit_id IS NOT NULL THEN COALESCE(hc.timezone, 'UTC')
+                ELSE COALESCE(pc.timezone, 'UTC')
+              END AS envelope_tz
+         FROM time_entry te
+         LEFT JOIN projects p ON p.id = te.project_id
+         LEFT JOIN categories pc ON pc.id = p.category_id
+         LEFT JOIN goals g ON g.id = te.goal_id
+         LEFT JOIN projects gp ON gp.id = g.project_id
+         LEFT JOIN categories gc ON gc.id = gp.category_id
+         LEFT JOIN habit_instances hi
+                ON hi.time_entry_id = te.id AND te.source = 'habit'
+         LEFT JOIN habits h ON h.id = hi.habit_id
+         LEFT JOIN projects hp ON hp.id = h.project_id
+         LEFT JOIN categories hc ON hc.id = hp.category_id
+        WHERE te.status = 'CONFIRMED'
+          AND budget_tz != envelope_tz
+          AND (budget_tz != 'UTC' OR envelope_tz != 'UTC')
+        ORDER BY te.id`,
+    )
+    .all() as Array<{
+    id: number;
+    start_at: string;
+    budget_tz: string;
+    envelope_tz: string;
+  }>;
+  const split = rows.filter((r) => {
+    const at = new Date(r.start_at);
+    return (
+      currentWeekMonday(at, r.budget_tz) !== currentWeekMonday(at, r.envelope_tz)
+    );
+  });
+  return {
+    name: 'week_bucket_agreement',
+    ok: split.length === 0,
+    detail:
+      split.length === 0
+        ? 'every confirmed time_entry rolls up into the same category-local week for budgets and envelopes'
+        : `${split.length} confirmed time_entry row(s) counted in different ` +
+          `weeks by budgets vs envelopes (project and goal/habit categories ` +
+          `disagree on timezone): id ${sample(split.map((r) => r.id))}`,
+  };
+}
+
 /** Resolved path of the file this connection serves, like /api/version. */
 function resolveDbPath(db: DB): string {
   const name = db.name;
@@ -219,6 +284,7 @@ export function runHealthChecks(db: DB): HealthReport {
     checkTaskDueNotPlacementWritten(db),
     checkPlacementBackingCommitment(db),
     checkCalendarEventIdUnique(db),
+    checkWeekBucketAgreement(db),
   ];
   const failing = checks.filter((c) => !c.ok).length;
   return { ok: failing === 0, failing, db: resolveDbPath(db), checks };

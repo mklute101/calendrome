@@ -573,7 +573,8 @@ export function buildTools(
     {
       name: 'get_project_budget',
       description:
-        'For a project + week, return assigned/confirmed/scheduled/available/overspent',
+        'For a project + week, return assigned/confirmed/scheduled/available/overspent. ' +
+        "week_start is the Monday in the project's category local time (#146).",
       inputSchema: {
         type: 'object',
         required: ['project_id', 'week_start'],
@@ -595,7 +596,8 @@ export function buildTools(
     {
       name: 'get_all_budgets',
       description:
-        'Get the assigned/confirmed/scheduled/available rollup for every active project for a given week',
+        'Get the assigned/confirmed/scheduled/available rollup for every active project for a given week. ' +
+        "week_start is the Monday in each project's category local time (#146).",
       inputSchema: {
         type: 'object',
         required: ['week_start'],
@@ -1882,7 +1884,8 @@ export function buildTools(
       name: 'list_goals',
       description:
         'List goals, each with weekly-ask progress for week_start ' +
-        "(defaults to the current week's Monday). Pass active to filter.",
+        "(defaults to the current week's Monday). week_start is the Monday " +
+        "in the goal's project category local time (#146). Pass active to filter.",
       inputSchema: {
         type: 'object',
         properties: {
@@ -2168,7 +2171,8 @@ export function buildTools(
       description:
         'YNAB-style budget view for a week: one row per active project, ' +
         'goal, and habit with assigned/activity/available, funding status ' +
-        'and a human status_line.',
+        "and a human status_line. week_start is the Monday in each envelope's " +
+        'category local time (#146).',
       inputSchema: {
         type: 'object',
         properties: {
@@ -2218,7 +2222,8 @@ export function buildTools(
         '− block_time + open_time + out-of-window scheduled time (windows ' +
         'are guidelines — placing outside one claims its own hours, no ' +
         'open_time needed), per category, with total supply, assigned, ' +
-        'and To-Be-Assigned (supply − assigned; negative = overcommitted).',
+        'and To-Be-Assigned (supply − assigned; negative = overcommitted). ' +
+        "week_start is the Monday in each category's local time (#146).",
       inputSchema: {
         type: 'object',
         properties: {

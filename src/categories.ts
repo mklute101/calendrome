@@ -131,3 +131,22 @@ export function updateCategory(
   if (!updated) throw new Error(`category ${id} not found`);
   return updated;
 }
+
+/**
+ * IANA timezone that weekly accounting for `projectId` follows (#146):
+ * the project's category timezone. A missing project, a project with
+ * no category, or an unknown category resolve to 'UTC', which keeps
+ * the former UTC-week arithmetic byte-identical.
+ */
+export function projectTimezone(db: DB, projectId: string | null): string {
+  if (projectId === null) return 'UTC';
+  const row = db
+    .prepare(
+      `SELECT c.timezone AS timezone
+         FROM projects p
+         LEFT JOIN categories c ON c.id = p.category_id
+        WHERE p.id = ?`,
+    )
+    .get(projectId) as { timezone: string | null } | undefined;
+  return row?.timezone ?? 'UTC';
+}
