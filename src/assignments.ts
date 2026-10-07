@@ -303,34 +303,47 @@ function fmtHours(minutes: number): string {
  */
 /**
  * The week an envelope rolls up (#146): local Monday-to-Monday in the
- * timezone of the envelope's project's category — a project envelope
- * is its own project; goal and habit envelopes resolve through theirs.
- * Exported so the parity test can assert budgets, envelopes and
- * supply bound the same instants.
+ * envelope's timezone. A project envelope follows its own category; a
+ * goal envelope follows its project's category; a habit envelope
+ * follows the habit's *own* `timezone` column, because that is the
+ * clock its instances were materialized in (see `habitWeekScore`).
+ * `getEnvelopes` calls this for every row (with a per-call project
+ * timezone memo); it is exported so the parity test asserts the path
+ * production actually runs.
  */
 export function envelopeWeekRange(
   db: DB,
   type: EnvelopeType,
   id: string,
   weekStart: string,
+  tzOfProject: (projectId: string) => string = (p) => projectTimezone(db, p),
 ): WeekRange {
-  let projectId: string;
   if (type === 'project') {
-    projectId = id;
-  } else if (type === 'goal') {
+    return weekRange(weekStart, tzOfProject(id));
+  }
+  if (type === 'goal') {
     const goal = getGoal(db, Number(id));
     if (!goal) throw new Error(`goal ${id} not found`);
-    projectId = goal.project_id;
-  } else {
-    const habit = getHabit(db, Number(id));
-    if (!habit) throw new Error(`habit ${id} not found`);
-    projectId = habit.project_id;
+    return weekRange(weekStart, tzOfProject(goal.project_id));
   }
-  return weekRange(weekStart, projectTimezone(db, projectId));
+  const habit = getHabit(db, Number(id));
+  if (!habit) throw new Error(`habit ${id} not found`);
+  return weekRange(weekStart, habit.timezone || 'UTC');
 }
 
 export function getEnvelopes(db: DB, weekStart: string): EnvelopeRow[] {
   assertMonday(weekStart);
+
+  // One category lookup per distinct project per call, not per row.
+  const tzMemo = new Map<string, string>();
+  const tzOfProject = (projectId: string): string => {
+    let tz = tzMemo.get(projectId);
+    if (tz === undefined) {
+      tz = projectTimezone(db, projectId);
+      tzMemo.set(projectId, tz);
+    }
+    return tz;
+  };
 
   const assignmentRows = db
     .prepare('SELECT * FROM assignments WHERE week_start = ?')
@@ -431,7 +444,7 @@ export function getEnvelopes(db: DB, weekStart: string): EnvelopeRow[] {
   };
 
   for (const project of listProjects(db, { active: true })) {
-    const { startIso, endIso } = weekRange(weekStart, projectTimezone(db, project.id));
+    const { startIso, endIso } = envelopeWeekRange(db, 'project', project.id, weekStart, tzOfProject);
     const activity = projectActivity.get(project.id, startIso, endIso) as {
       confirmed: number;
       scheduled: number;
@@ -440,7 +453,7 @@ export function getEnvelopes(db: DB, weekStart: string): EnvelopeRow[] {
   }
 
   for (const goal of listGoals(db, { active: true })) {
-    const { startIso, endIso } = weekRange(weekStart, projectTimezone(db, goal.project_id));
+    const { startIso, endIso } = envelopeWeekRange(db, 'goal', String(goal.id), weekStart, tzOfProject);
     const activity = goalActivity.get(goal.id, startIso, endIso) as {
       confirmed: number;
       scheduled: number;
@@ -452,7 +465,7 @@ export function getEnvelopes(db: DB, weekStart: string): EnvelopeRow[] {
   }
 
   for (const habit of listHabits(db, { active: true })) {
-    const { startIso, endIso } = weekRange(weekStart, projectTimezone(db, habit.project_id));
+    const { startIso, endIso } = envelopeWeekRange(db, 'habit', String(habit.id), weekStart, tzOfProject);
     const activity = habitActivity.get(habit.id, startIso, endIso) as {
       confirmed: number;
       scheduled: number;

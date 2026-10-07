@@ -88,19 +88,64 @@ export function toDayRange(from: string, to: string): DayRange {
 // 'UTC' timezone reproduces the former `T00:00:00Z` arithmetic exactly.
 // ---------------------------------------------------------------------------
 
+/**
+ * Throw unless `timeZone` is an IANA name the runtime knows. Every
+ * rollup resolves week bounds through `Intl`, which raises a bare
+ * RangeError on a typo ('America/Chicgo'); the write side rejects it
+ * with a clear message instead, so a bad value never reaches the DB.
+ */
+export function assertValidTimezone(timeZone: string, label = 'timezone'): void {
+  if (typeof timeZone !== 'string' || timeZone === '') {
+    throw new Error(`${label} must be an IANA timezone name, got: ${String(timeZone)}`);
+  }
+  try {
+    new Intl.DateTimeFormat(undefined, { timeZone });
+  } catch {
+    throw new Error(`${label} is not a valid IANA timezone: ${timeZone}`);
+  }
+}
+
+// Intl.DateTimeFormat construction is the expensive part of every
+// offset lookup; one formatter per zone (per shape) is reused.
+const offsetFormatters = new Map<string, Intl.DateTimeFormat>();
+const dayFormatters = new Map<string, Intl.DateTimeFormat>();
+
+function offsetFormatter(timeZone: string): Intl.DateTimeFormat {
+  let dtf = offsetFormatters.get(timeZone);
+  if (!dtf) {
+    dtf = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hourCycle: 'h23',
+    });
+    offsetFormatters.set(timeZone, dtf);
+  }
+  return dtf;
+}
+
+function dayFormatter(timeZone: string): Intl.DateTimeFormat {
+  let dtf = dayFormatters.get(timeZone);
+  if (!dtf) {
+    // en-CA formats as YYYY-MM-DD directly.
+    dtf = new Intl.DateTimeFormat('en-CA', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    });
+    dayFormatters.set(timeZone, dtf);
+  }
+  return dtf;
+}
+
 /** Offset (ms to add to UTC to get wall-clock time) of `timeZone` at `utcMs`. */
 export function tzOffsetMs(timeZone: string, utcMs: number): number {
-  const dtf = new Intl.DateTimeFormat('en-US', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hourCycle: 'h23',
-  });
-  const parts = dtf.formatToParts(new Date(utcMs));
+  const parts = offsetFormatter(timeZone).formatToParts(new Date(utcMs));
   const get = (type: string): number =>
     Number(parts.find((p) => p.type === type)?.value ?? 0);
   const asUtc = Date.UTC(
@@ -139,13 +184,7 @@ export function addDays(day: string, n: number): string {
 /** Calendar date (YYYY-MM-DD) that a UTC instant falls on in `timeZone`. */
 export function localDayOf(instant: Date, timeZone: string): string {
   if (timeZone === 'UTC') return instant.toISOString().slice(0, 10);
-  // en-CA formats as YYYY-MM-DD directly.
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(instant);
+  return dayFormatter(timeZone).format(instant);
 }
 
 /** Monday of the ISO week containing the plain date `day`. */

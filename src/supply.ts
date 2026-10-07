@@ -222,12 +222,28 @@ export function computeWeekSupply(db: DB, weekStart: string): WeekSupply {
   // (#146). Rows are fetched once over the union of those spans and
   // clipped per category below.
   const categories = listCategories(db);
+  if (categories.length === 0) {
+    const assigned = getEnvelopes(db, weekStart).reduce(
+      (sum, row) => sum + (row.assigned ?? 0),
+      0,
+    );
+    return {
+      week_start: weekStart,
+      by_category: [],
+      total_supply_minutes: 0,
+      assigned_minutes: assigned,
+      to_be_assigned_minutes: -assigned,
+    };
+  }
   const categoryWeeks = new Map<string, WeekRange>(
     categories.map((c) => [c.id, weekRange(weekStart, c.timezone)]),
   );
-  const spans = [weekRange(weekStart, 'UTC'), ...categoryWeeks.values()];
-  const weekStartIso = spans.map((r) => r.startIso).sort()[0];
-  const weekEndIso = spans.map((r) => r.endIso).sort().at(-1) as string;
+  let weekStartIso = '';
+  let weekEndIso = '';
+  for (const r of categoryWeeks.values()) {
+    if (weekStartIso === '' || r.startIso < weekStartIso) weekStartIso = r.startIso;
+    if (r.endIso > weekEndIso) weekEndIso = r.endIso;
+  }
 
   // Synced events overlapping the week, merged so a double-booked hour
   // subtracts once. Both UNCONFIRMED and CONFIRMED occupy time.

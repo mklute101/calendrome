@@ -8,7 +8,11 @@ import type { DB } from '../src/db/connection.js';
 import { openDatabase } from '../src/db/connection.js';
 import { migrate } from '../src/db/migrate.js';
 import { createTask } from '../src/tasks.js';
-import { createHabit } from '../src/habits.js';
+import {
+  completeHabitInstance,
+  createHabit,
+  generateHabitInstances,
+} from '../src/habits.js';
 import { createGoal } from '../src/goals.js';
 import { insertTimeEntry } from '../src/time-entry.js';
 import { createApp } from '../src/gui/server.js';
@@ -383,6 +387,56 @@ describe('checkWeekBucketAgreement (#146, acceptance 6)', () => {
       source: 'manual',
     });
     expect(checkWeekBucketAgreement(db).ok).toBe(true);
+  });
+
+  it('reports a failing check instead of throwing on an invalid stored timezone', () => {
+    const db = freshDb();
+    seedSplitCategories(db);
+    // Bypass updateCategory's validation: a hand-edited or legacy row.
+    db.prepare(`UPDATE categories SET timezone = 'America/Chicgo' WHERE id = 'personal'`).run();
+    const goal = createGoal(db, {
+      project_id: 'acme',
+      title: 'Cross-project goal',
+      target_minutes: 180,
+      refill_period: 'week',
+    });
+    insertTimeEntry(db, {
+      project_id: 'spanish',
+      goal_id: goal.id,
+      start_at: SUNDAY_EVENING_CDT,
+      end_at: '2026-07-27T01:15:00Z',
+      actual_minutes: 75,
+      status: 'CONFIRMED',
+      confirmed_at: SUNDAY_EVENING_CDT,
+      source: 'manual',
+    });
+    const check = checkWeekBucketAgreement(db);
+    expect(check.ok).toBe(false);
+    expect(check.detail).toMatch(/America\/Chicgo/);
+    // The report still runs every other check.
+    const report = runHealthChecks(db);
+    expect(report.checks).toHaveLength(6);
+    expect(report.failing).toBe(1);
+    expect(report.checks.find((c) => c.name === 'week_bucket_agreement')?.ok).toBe(false);
+  });
+
+  it('a habit entry is bucketed by the habit timezone, not its project category', () => {
+    const db = freshDb();
+    seedSplitCategories(db);
+    // Project in UTC 'work'; habit in America/Chicago. A Sunday 19:00
+    // CDT instance is Monday in UTC: budgets (work, UTC) say week 07-27,
+    // the habit envelope (Chicago) says week 07-20.
+    const habit = createHabit(db, {
+      project_id: 'acme',
+      title: 'Evening walk',
+      duration_minutes: 30,
+      days_of_week: '0',
+      start_time: '19:00',
+      timezone: 'America/Chicago',
+    });
+    const [inst] = generateHabitInstances(db, habit.id, '2026-07-26', '2026-07-26');
+    completeHabitInstance(db, inst.id);
+    expect(checkWeekBucketAgreement(db).ok).toBe(false);
   });
 
   it('passes for a cross-timezone entry that does not straddle a week boundary', () => {

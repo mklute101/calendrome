@@ -1,10 +1,15 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { freshDb } from './helpers/db.js';
 import type { DB } from '../src/db/connection.js';
 import { updateCategory } from '../src/categories.js';
 import { createProject } from '../src/projects.js';
 import { createGoal, goalProgress } from '../src/goals.js';
-import { createHabit } from '../src/habits.js';
+import {
+  completeHabitInstance,
+  createHabit,
+  generateHabitInstances,
+  habitWeekScore,
+} from '../src/habits.js';
 import { insertTimeEntry } from '../src/time-entry.js';
 import { budgetWeekRange, getProjectBudget } from '../src/budgets.js';
 import { envelopeWeekRange, getEnvelopes } from '../src/assignments.js';
@@ -232,6 +237,7 @@ describe('acceptance 4: supply, envelopes and budgets bound the same instants', 
     const budget = budgetWeekRange(db, 'spanish', WEEK2);
     const projectEnvelope = envelopeWeekRange(db, 'project', 'spanish', WEEK2);
     const goalEnvelope = envelopeWeekRange(db, 'goal', String(goal.id), WEEK2);
+    // The habit envelope follows the habit's own timezone (also Chicago here).
     const habitEnvelope = envelopeWeekRange(db, 'habit', String(habit.id), WEEK2);
     const supply = supplyWeekRange(db, 'personal', WEEK2);
 
@@ -271,12 +277,134 @@ describe('acceptance 4: supply, envelopes and budgets bound the same instants', 
     expect(supply3).toBe(budget3);
   });
 
-  it('a project with no category behaves as UTC', () => {
+  it('a project with no category follows the work category, like supply does', () => {
     const db = freshDb();
     db.prepare(
       `INSERT INTO projects (id, name, prefix, category_id) VALUES ('loose', 'Loose', 'LOOS', NULL)`,
     ).run();
+    // work is UTC by default...
     expect(budgetWeekRange(db, 'loose', WEEK2)).toEqual(weekRange(WEEK2, 'UTC'));
     expect(envelopeWeekRange(db, 'project', 'loose', WEEK2)).toEqual(weekRange(WEEK2, 'UTC'));
+    // ...and the NULL-category project tracks it when it moves.
+    updateCategory(db, 'work', { timezone: 'America/Chicago' });
+    expect(budgetWeekRange(db, 'loose', WEEK2)).toEqual(weekRange(WEEK2, 'America/Chicago'));
+    expect(envelopeWeekRange(db, 'project', 'loose', WEEK2)).toEqual(supplyWeekRange(db, 'work', WEEK2));
+  });
+
+  it('NULL-category project: a Sunday 23:30 CDT entry lands in one week for all three', () => {
+    const db = freshDb();
+    updateCategory(db, 'work', { timezone: 'America/Chicago' });
+    db.prepare(
+      `INSERT INTO projects (id, name, prefix, category_id) VALUES ('loose', 'Loose', 'LOOS', NULL)`,
+    ).run();
+    // Sun 23:30-23:59 CDT, outside the work window (Mon-Fri 9-5).
+    confirmed(db, 'loose', '2026-07-27T04:30:00Z', 29);
+
+    const budget2 = getProjectBudget(db, 'loose', WEEK2).confirmed_minutes;
+    const envelope2 = getEnvelopes(db, WEEK2).find((e) => e.envelope_id === 'loose')
+      ?.activity.confirmed_minutes;
+    const supply2 = computeWeekSupply(db, WEEK2).by_category.find(
+      (c) => c.category_id === 'work',
+    )?.scheduled_outside_minutes;
+    expect(budget2).toBe(29);
+    expect(envelope2).toBe(29);
+    expect(supply2).toBe(29);
+    expect(getProjectBudget(db, 'loose', WEEK3).confirmed_minutes).toBe(0);
+    expect(
+      getEnvelopes(db, WEEK3).find((e) => e.envelope_id === 'loose')?.activity.confirmed_minutes,
+    ).toBe(0);
+    expect(
+      computeWeekSupply(db, WEEK3).by_category.find((c) => c.category_id === 'work')
+        ?.scheduled_outside_minutes,
+    ).toBe(0);
+  });
+
+  it('a habit envelope is bounded by the habit timezone, not its project category', () => {
+    // Category stays UTC; the habit is America/Chicago. Instances are
+    // materialized in the habit's clock, so scoring follows it too.
+    const db = freshDb();
+    createProject(db, { id: 'acme', name: 'Acme', prefix: 'ACME' });
+    const habit = createHabit(db, {
+      project_id: 'acme',
+      title: 'Evening walk',
+      duration_minutes: 30,
+      days_of_week: '0',
+      start_time: '19:00',
+      timezone: 'America/Chicago',
+    });
+    expect(envelopeWeekRange(db, 'habit', String(habit.id), WEEK2)).toEqual(
+      weekRange(WEEK2, 'America/Chicago'),
+    );
+    const [inst] = generateHabitInstances(db, habit.id, '2026-07-26', '2026-07-26');
+    expect(inst.scheduled_start).toBe('2026-07-27T00:00:00Z'); // Sun 19:00 CDT
+    completeHabitInstance(db, inst.id);
+    expect(habitWeekScore(db, habit.id, WEEK2)).toEqual({ done: 1, target: 1 });
+    expect(habitWeekScore(db, habit.id, WEEK3)).toEqual({ done: 0, target: 1 });
+    const row = getEnvelopes(db, WEEK2).find(
+      (e) => e.envelope_type === 'habit' && e.envelope_id === String(habit.id),
+    );
+    expect(row?.week_score).toEqual({ done: 1, target: 1 });
+    expect(row?.activity.confirmed_minutes).toBe(30);
+  });
+
+  it('supply with no categories is an empty by_category, not a throw', () => {
+    const db = freshDb();
+    db.prepare('DELETE FROM categories').run();
+    const supply = computeWeekSupply(db, WEEK2);
+    expect(supply.by_category).toEqual([]);
+    expect(supply.total_supply_minutes).toBe(0);
+    expect(supply.to_be_assigned_minutes).toBe(-supply.assigned_minutes);
+  });
+});
+
+describe('default week_start follows the category clock (review fix 1)', () => {
+  afterEach(() => {
+    delete process.env.CALENDROME_NOW;
+  });
+
+  it('list_goals with no week_start at Sunday 19:30 CDT reports the week being finished', async () => {
+    const db = setupChicago();
+    const goal = createGoal(db, {
+      project_id: 'spanish',
+      title: 'Spanish practice',
+      target_minutes: 180,
+      refill_period: 'week',
+    });
+    confirmed(db, 'spanish', '2026-07-24T00:00:00Z', 45, { goal_id: goal.id });
+    confirmed(db, 'spanish', '2026-07-27T00:00:00Z', 75, { goal_id: goal.id });
+    // Sunday 2026-07-26 19:30 CDT — already Monday in UTC.
+    process.env.CALENDROME_NOW = '2026-07-27T00:30:00Z';
+
+    const tool = buildTools(db).find((t) => t.name === 'list_goals');
+    if (!tool) throw new Error('list_goals tool missing');
+    const out = (await tool.handler({})) as {
+      week_start: string;
+      goals: Array<{ id: number; progress: { week_start: string; week_confirmed: number } }>;
+    };
+    const row = out.goals.find((g) => g.id === goal.id);
+    expect(row?.progress.week_start).toBe(WEEK2);
+    expect(row?.progress.week_confirmed).toBe(120);
+    expect(out.week_start).toBe(WEEK2);
+  });
+
+  it('get_envelopes and get_supply default to the earliest local Monday across categories', async () => {
+    const db = setupChicago();
+    process.env.CALENDROME_NOW = '2026-07-27T00:30:00Z';
+    const tools = buildTools(db);
+    const envelopes = (await tools.find((t) => t.name === 'get_envelopes')!.handler({})) as {
+      week_start: string;
+    };
+    const supply = (await tools.find((t) => t.name === 'get_supply')!.handler({})) as {
+      supply: { week_start: string };
+    };
+    // work (UTC) says 07-27, personal (Chicago) says 07-20: earliest wins.
+    expect(envelopes.week_start).toBe(WEEK2);
+    expect(supply.supply.week_start).toBe(WEEK2);
+    // Once Chicago crosses midnight too, both agree on the new week.
+    process.env.CALENDROME_NOW = '2026-07-27T06:00:00Z';
+    const later = (await tools.find((t) => t.name === 'get_envelopes')!.handler({})) as {
+      week_start: string;
+    };
+    expect(later.week_start).toBe(WEEK3);
   });
 });
