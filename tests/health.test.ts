@@ -8,7 +8,11 @@ import type { DB } from '../src/db/connection.js';
 import { openDatabase } from '../src/db/connection.js';
 import { migrate } from '../src/db/migrate.js';
 import { createTask } from '../src/tasks.js';
-import { createHabit } from '../src/habits.js';
+import {
+  completeHabitInstance,
+  createHabit,
+  generateHabitInstances,
+} from '../src/habits.js';
 import { createGoal } from '../src/goals.js';
 import { insertTimeEntry } from '../src/time-entry.js';
 import { createApp } from '../src/gui/server.js';
@@ -22,7 +26,9 @@ import {
   checkTaskDueNotPlacementWritten,
   checkPlacementBackingCommitment,
   checkCalendarEventIdUnique,
+  checkWeekBucketAgreement,
 } from '../src/health/checks.js';
+import { updateCategory } from '../src/categories.js';
 import { CANONICAL_UTC } from '../src/day-range.js';
 
 /**
@@ -318,6 +324,173 @@ describe('checkCalendarEventIdUnique', () => {
   });
 });
 
+describe('checkWeekBucketAgreement (#146, acceptance 6)', () => {
+  // personal: America/Chicago; work stays UTC. Sunday 2026-07-26
+  // 19:00 CDT is 2026-07-27T00:00:00Z — a Chicago week-2 instant that
+  // is already Monday in UTC.
+  const SUNDAY_EVENING_CDT = '2026-07-27T00:00:00Z';
+
+  function seedSplitCategories(db: DB): void {
+    updateCategory(db, 'personal', { timezone: 'America/Chicago' });
+    db.prepare(
+      `INSERT INTO projects (id, name, prefix, category_id)
+       VALUES ('spanish', 'Spanish', 'SPAN', 'personal'),
+              ('acme', 'Acme', 'ACME', 'work')`,
+    ).run();
+  }
+
+  it('fails when a confirmed goal entry is bucketed by two different timezones', () => {
+    const db = freshDb();
+    seedSplitCategories(db);
+    // Goal lives under the UTC project; the entry is logged against
+    // the Chicago project. Budgets (Chicago) put it in week 07-20,
+    // the goal envelope (UTC) in week 07-27.
+    const goal = createGoal(db, {
+      project_id: 'acme',
+      title: 'Cross-project goal',
+      target_minutes: 180,
+      refill_period: 'week',
+    });
+    insertTimeEntry(db, {
+      project_id: 'spanish',
+      goal_id: goal.id,
+      start_at: SUNDAY_EVENING_CDT,
+      end_at: '2026-07-27T01:15:00Z',
+      actual_minutes: 75,
+      status: 'CONFIRMED',
+      confirmed_at: SUNDAY_EVENING_CDT,
+      source: 'manual',
+    });
+    const check = checkWeekBucketAgreement(db);
+    expect(check.ok).toBe(false);
+    expect(check.name).toBe('week_bucket_agreement');
+    expect(check.detail).toMatch(/different weeks/);
+  });
+
+  it('passes when the goal and the entry share a category timezone', () => {
+    const db = freshDb();
+    seedSplitCategories(db);
+    const goal = createGoal(db, {
+      project_id: 'spanish',
+      title: 'Spanish practice',
+      target_minutes: 180,
+      refill_period: 'week',
+    });
+    insertTimeEntry(db, {
+      project_id: 'spanish',
+      goal_id: goal.id,
+      start_at: SUNDAY_EVENING_CDT,
+      end_at: '2026-07-27T01:15:00Z',
+      actual_minutes: 75,
+      status: 'CONFIRMED',
+      confirmed_at: SUNDAY_EVENING_CDT,
+      source: 'manual',
+    });
+    expect(checkWeekBucketAgreement(db).ok).toBe(true);
+  });
+
+  it('reports a failing check instead of throwing on an invalid stored timezone', () => {
+    const db = freshDb();
+    seedSplitCategories(db);
+    // Bypass updateCategory's validation: a hand-edited or legacy row.
+    db.prepare(`UPDATE categories SET timezone = 'America/Chicgo' WHERE id = 'personal'`).run();
+    const goal = createGoal(db, {
+      project_id: 'acme',
+      title: 'Cross-project goal',
+      target_minutes: 180,
+      refill_period: 'week',
+    });
+    insertTimeEntry(db, {
+      project_id: 'spanish',
+      goal_id: goal.id,
+      start_at: SUNDAY_EVENING_CDT,
+      end_at: '2026-07-27T01:15:00Z',
+      actual_minutes: 75,
+      status: 'CONFIRMED',
+      confirmed_at: SUNDAY_EVENING_CDT,
+      source: 'manual',
+    });
+    const check = checkWeekBucketAgreement(db);
+    expect(check.ok).toBe(false);
+    expect(check.detail).toMatch(/Intl rejects.*America\/Chicgo/);
+    // The report still runs every other check.
+    const report = runHealthChecks(db);
+    expect(report.checks).toHaveLength(6);
+    expect(report.failing).toBe(1);
+    expect(report.checks.find((c) => c.name === 'week_bucket_agreement')?.ok).toBe(false);
+  });
+
+  it('a habit entry is bucketed by the habit timezone, not its project category', () => {
+    const db = freshDb();
+    seedSplitCategories(db);
+    // Project in UTC 'work'; habit in America/Chicago. A Sunday 19:00
+    // CDT instance is Monday in UTC: budgets (work, UTC) say week 07-27,
+    // the habit envelope (Chicago) says week 07-20.
+    const habit = createHabit(db, {
+      project_id: 'acme',
+      title: 'Evening walk',
+      duration_minutes: 30,
+      days_of_week: '0',
+      start_time: '19:00',
+      timezone: 'America/Chicago',
+    });
+    const [inst] = generateHabitInstances(db, habit.id, '2026-07-26', '2026-07-26');
+    completeHabitInstance(db, inst.id);
+    expect(checkWeekBucketAgreement(db).ok).toBe(false);
+  });
+
+  it('ignores entries with no project: budgets never count them (review fix)', () => {
+    const db = freshDb();
+    updateCategory(db, 'personal', { timezone: 'Europe/Berlin' });
+    db.prepare(
+      `INSERT INTO projects (id, name, prefix, category_id)
+       VALUES ('berlin', 'Berlin', 'BER', 'personal')`,
+    ).run();
+    const goal = createGoal(db, {
+      project_id: 'berlin',
+      title: 'Berlin goal',
+      target_minutes: 180,
+      refill_period: 'week',
+    });
+    // Mon 2026-07-27 00:30 CEST is still Sunday in UTC; with no project
+    // there is no budget bucket to disagree with the goal envelope.
+    insertTimeEntry(db, {
+      project_id: null,
+      goal_id: goal.id,
+      start_at: '2026-07-26T22:30:00Z',
+      end_at: '2026-07-26T23:00:00Z',
+      actual_minutes: 30,
+      status: 'CONFIRMED',
+      confirmed_at: '2026-07-26T23:00:00Z',
+      source: 'manual',
+    });
+    expect(checkWeekBucketAgreement(db).ok).toBe(true);
+  });
+
+  it('passes for a cross-timezone entry that does not straddle a week boundary', () => {
+    const db = freshDb();
+    seedSplitCategories(db);
+    const goal = createGoal(db, {
+      project_id: 'acme',
+      title: 'Cross-project goal',
+      target_minutes: 180,
+      refill_period: 'week',
+    });
+    // Wednesday noon is the same week in both zones.
+    insertTimeEntry(db, {
+      project_id: 'spanish',
+      goal_id: goal.id,
+      start_at: '2026-07-22T17:00:00Z',
+      end_at: '2026-07-22T18:00:00Z',
+      actual_minutes: 60,
+      status: 'CONFIRMED',
+      confirmed_at: '2026-07-22T18:00:00Z',
+      source: 'manual',
+    });
+    expect(checkWeekBucketAgreement(db).ok).toBe(true);
+  });
+});
+
 describe('runHealthChecks', () => {
   it('reports ok with zero failing on a clean database', () => {
     const db = freshDb();
@@ -326,7 +499,7 @@ describe('runHealthChecks', () => {
     expect(report.ok).toBe(true);
     expect(report.failing).toBe(0);
     expect(report.db).toBe(':memory:');
-    expect(report.checks).toHaveLength(5);
+    expect(report.checks).toHaveLength(6);
     expect(report.checks.every((c) => c.ok)).toBe(true);
   });
 

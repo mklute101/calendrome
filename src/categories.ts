@@ -13,7 +13,8 @@
  * on a fresh DB; new categories can be created via MCP.
  */
 import type { DB } from './db/connection.js';
-import { now } from './clock.js';
+import { now, nowDate } from './clock.js';
+import { assertValidTimezone, currentWeekMonday } from './day-range.js';
 
 export interface CategoryWindow {
   // 0=Sun..6=Sat
@@ -69,6 +70,7 @@ export interface UpdateCategoryInput {
 }
 
 export function createCategory(db: DB, input: CreateCategoryInput): Category {
+  if (input.timezone !== undefined) assertValidTimezone(input.timezone);
   db.prepare(
     `INSERT INTO categories (id, name, display_order, default_window, timezone, created_at)
      VALUES (?, ?, ?, ?, ?, ?)`,
@@ -117,6 +119,7 @@ export function updateCategory(
     values.push(patch.default_window ? JSON.stringify(patch.default_window) : null);
   }
   if (patch.timezone !== undefined) {
+    assertValidTimezone(patch.timezone);
     fields.push('timezone = ?');
     values.push(patch.timezone);
   }
@@ -130,4 +133,35 @@ export function updateCategory(
   const updated = getCategory(db, id);
   if (!updated) throw new Error(`category ${id} not found`);
   return updated;
+}
+
+/**
+ * IANA timezone that weekly accounting for `projectId` follows (#146):
+ * the project's category timezone. A project with no category — or an
+ * entry with no project at all — falls back to the 'work' category,
+ * the same `COALESCE(category_id, 'work')` rule the supply computation
+ * and the GUI apply, so every surface buckets such rows identically.
+ * An unknown category resolves to 'UTC' (the former arithmetic).
+ */
+export function projectTimezone(db: DB, projectId: string | null): string {
+  const row = db
+    .prepare(
+      `SELECT timezone FROM categories
+        WHERE id = COALESCE((SELECT category_id FROM projects WHERE id = ?), 'work')`,
+    )
+    .get(projectId) as { timezone: string } | undefined;
+  return row?.timezone ?? 'UTC';
+}
+
+/**
+ * Default `week_start` for tools called without one (#146): the local
+ * Monday of the week `now` falls in, per category. Categories only
+ * disagree within a few hours of a Monday boundary; the earliest wins
+ * so a Sunday-evening caller west of UTC still sees the week they are
+ * finishing. 'UTC' when no categories exist.
+ */
+export function currentLocalWeekMonday(db: DB, now: Date = nowDate()): string {
+  const mondays = listCategories(db).map((c) => currentWeekMonday(now, c.timezone));
+  if (mondays.length === 0) return currentWeekMonday(now, 'UTC');
+  return mondays.sort()[0];
 }

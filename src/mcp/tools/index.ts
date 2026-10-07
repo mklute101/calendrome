@@ -62,7 +62,6 @@ import {
   deactivateGoal,
   getGoal,
   goalProgress,
-  currentWeekMonday,
 } from '../../goals.js';
 import {
   assignHours,
@@ -72,6 +71,7 @@ import {
   type EnvelopeType,
 } from '../../assignments.js';
 import {
+  currentLocalWeekMonday,
   createCategory,
   listCategories,
   updateCategory,
@@ -478,7 +478,9 @@ export function buildTools(
       description:
         'Create a recurring habit time block. Frequency is exactly one of ' +
         'days_of_week (fixed days, e.g. "1,3,5") or times_per_week ' +
-        '(N-per-week target, any days).',
+        '(N-per-week target, any days). timezone is the IANA zone the ' +
+        "habit's instances and weekly score follow; it defaults to the " +
+        "project's category timezone (#146) and must be a valid IANA name.",
       inputSchema: {
         type: 'object',
         required: ['project_id', 'title', 'duration_minutes', 'start_time'],
@@ -573,7 +575,8 @@ export function buildTools(
     {
       name: 'get_project_budget',
       description:
-        'For a project + week, return assigned/confirmed/scheduled/available/overspent',
+        'For a project + week, return assigned/confirmed/scheduled/available/overspent. ' +
+        "week_start is the Monday in the project's category local time (#146).",
       inputSchema: {
         type: 'object',
         required: ['project_id', 'week_start'],
@@ -595,7 +598,8 @@ export function buildTools(
     {
       name: 'get_all_budgets',
       description:
-        'Get the assigned/confirmed/scheduled/available rollup for every active project for a given week',
+        'Get the assigned/confirmed/scheduled/available rollup for every active project for a given week. ' +
+        "week_start is the Monday in each project's category local time (#146).",
       inputSchema: {
         type: 'object',
         required: ['week_start'],
@@ -1881,20 +1885,27 @@ export function buildTools(
     {
       name: 'list_goals',
       description:
-        'List goals, each with weekly-ask progress for week_start ' +
-        "(defaults to the current week's Monday). Pass active to filter.",
+        'List goals, each with weekly-ask progress for week_start. ' +
+        "week_start is the Monday in the goal's project category local time " +
+        '(#146). When omitted it defaults to the local Monday of the week now ' +
+        'falls in; when categories span timezones that is the earliest ' +
+        "category's Monday (same default as get_envelopes and get_supply) — " +
+        'pass week_start to pin it. Pass active to filter.',
       inputSchema: {
         type: 'object',
         properties: {
           active: { type: 'boolean' },
           week_start: {
             type: 'string',
-            description: "Monday ISO date. Default: current week's Monday.",
+            description:
+              "Monday ISO date in the goal's category local time. Default: " +
+              'the local Monday of the week now falls in (earliest across ' +
+              'categories when they span timezones).',
           },
         },
       },
       async handler(args) {
-        const weekStart = args?.week_start ?? currentWeekMonday();
+        const weekStart = args?.week_start ?? currentLocalWeekMonday(db);
         const goals = listGoals(db, { active: args?.active });
         return {
           week_start: weekStart,
@@ -2168,18 +2179,25 @@ export function buildTools(
       description:
         'YNAB-style budget view for a week: one row per active project, ' +
         'goal, and habit with assigned/activity/available, funding status ' +
-        'and a human status_line.',
+        "and a human status_line. week_start is the Monday in each envelope's " +
+        'category local time (#146). When omitted it defaults to the local ' +
+        'Monday of the week now falls in; when categories span timezones that ' +
+        "is the earliest category's Monday (same default as list_goals and " +
+        'get_supply) — pass week_start to pin it.',
       inputSchema: {
         type: 'object',
         properties: {
           week_start: {
             type: 'string',
-            description: "Monday ISO date. Default: current week's Monday.",
+            description:
+              'Monday ISO date in category local time. Default: the local ' +
+              'Monday of the week now falls in (earliest across categories ' +
+              'when they span timezones).',
           },
         },
       },
       async handler(args) {
-        const weekStart = args?.week_start ?? currentWeekMonday();
+        const weekStart = args?.week_start ?? currentLocalWeekMonday(db);
         return { week_start: weekStart, envelopes: getEnvelopes(db, weekStart) };
       },
     },
@@ -2218,18 +2236,26 @@ export function buildTools(
         '− block_time + open_time + out-of-window scheduled time (windows ' +
         'are guidelines — placing outside one claims its own hours, no ' +
         'open_time needed), per category, with total supply, assigned, ' +
-        'and To-Be-Assigned (supply − assigned; negative = overcommitted).',
+        'and To-Be-Assigned (supply − assigned; negative = overcommitted). ' +
+        "week_start is the Monday in each category's local time (#146). " +
+        'When omitted it defaults to the local Monday of the week now falls ' +
+        "in; when categories span timezones that is the earliest category's " +
+        'Monday (same default as list_goals and get_envelopes) — pass ' +
+        'week_start to pin it.',
       inputSchema: {
         type: 'object',
         properties: {
           week_start: {
             type: 'string',
-            description: "Monday ISO date. Default: current week's Monday.",
+            description:
+              'Monday ISO date in category local time. Default: the local ' +
+              'Monday of the week now falls in (earliest across categories ' +
+              'when they span timezones).',
           },
         },
       },
       async handler(args) {
-        const weekStart = args?.week_start ?? currentWeekMonday();
+        const weekStart = args?.week_start ?? currentLocalWeekMonday(db);
         return { supply: computeWeekSupply(db, weekStart) };
       },
     },

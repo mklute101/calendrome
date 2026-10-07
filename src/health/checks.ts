@@ -24,6 +24,14 @@
  *   `external_id` and relies on the partial unique index; duplicate
  *   ids (legacy DBs predating the index, hand edits) double-count
  *   meetings and break the upsert.
+ * - `week_bucket_agreement`: weekly accounting follows the category
+ *   timezone (#146). Budgets bucket a CONFIRMED entry by its
+ *   project's category; envelopes bucket a goal entry by the goal's
+ *   project category and a habit entry by the habit's own timezone.
+ *   When those clocks differ, a Sunday-evening entry can land in one
+ *   week for budgets and the next for envelopes. A stored timezone
+ *   `Intl` rejects is reported by this check, not thrown; entries
+ *   with no project are skipped (budgets never count them).
  *
  * The sixth concern from the issue — GUI and MCP serving different
  * database files — cannot be asserted from inside one process, so the
@@ -35,6 +43,7 @@
  * not in prose.
  */
 import { resolve } from 'node:path';
+import { assertValidTimezone, currentWeekMonday } from '../day-range.js';
 import type { DB } from '../db/connection.js';
 
 export interface HealthCheck {
@@ -200,6 +209,106 @@ export function checkCalendarEventIdUnique(db: DB): HealthCheck {
   };
 }
 
+/**
+ * A CONFIRMED entry whose project category timezone is non-UTC must
+ * roll up into the same week for budgets (keyed by `te.project_id`)
+ * and envelopes (keyed by the goal's or habit's project). The SQL
+ * narrows to rows where the two chains resolve to different
+ * timezones; the week comparison itself runs here through the same
+ * helper the rollups use (#146).
+ */
+export function checkWeekBucketAgreement(db: DB): HealthCheck {
+  const name = 'week_bucket_agreement';
+  // Category resolution mirrors `projectTimezone`: a project with no
+  // category falls back to 'work'. Rows with no project are skipped:
+  // budgets never count them, so there is no second bucket to differ.
+  const rows = db
+    .prepare(
+      `SELECT te.id, te.start_at,
+              COALESCE(pc.timezone, 'UTC') AS budget_tz,
+              CASE
+                WHEN te.goal_id IS NOT NULL THEN COALESCE(gc.timezone, 'UTC')
+                WHEN hi.habit_id IS NOT NULL THEN COALESCE(h.timezone, 'UTC')
+                ELSE COALESCE(pc.timezone, 'UTC')
+              END AS envelope_tz
+         FROM time_entry te
+         JOIN projects p ON p.id = te.project_id
+         LEFT JOIN categories pc ON pc.id = COALESCE(p.category_id, 'work')
+         LEFT JOIN goals g ON g.id = te.goal_id
+         LEFT JOIN projects gp ON gp.id = g.project_id
+         LEFT JOIN categories gc ON gc.id = COALESCE(gp.category_id, 'work')
+         LEFT JOIN habit_instances hi
+                ON hi.time_entry_id = te.id AND te.source = 'habit'
+         LEFT JOIN habits h ON h.id = hi.habit_id
+        WHERE te.status = 'CONFIRMED'
+          AND budget_tz != envelope_tz
+        ORDER BY te.id`,
+    )
+    .all() as Array<{
+    id: number;
+    start_at: string;
+    budget_tz: string;
+    envelope_tz: string;
+  }>;
+
+  // Validate each distinct stored timezone once; a bad one is this
+  // check's failure, reported in full rather than thrown.
+  const zones = new Set<string>();
+  for (const r of rows) {
+    zones.add(r.budget_tz);
+    zones.add(r.envelope_tz);
+  }
+  const invalid: string[] = [];
+  for (const zone of zones) {
+    try {
+      assertValidTimezone(zone);
+    } catch {
+      invalid.push(zone);
+    }
+  }
+  if (invalid.length > 0) {
+    return {
+      name,
+      ok: false,
+      detail:
+        `${invalid.length} stored timezone(s) Intl rejects, so affected ` +
+        `entries cannot be bucketed: ${sample(invalid)}`,
+    };
+  }
+
+  // Row-level failures (an unparseable start_at) belong to the
+  // canonical-timestamp check; skip the row here and keep counting.
+  const split: number[] = [];
+  const skipped: number[] = [];
+  for (const r of rows) {
+    const at = new Date(r.start_at);
+    if (Number.isNaN(at.getTime())) {
+      skipped.push(r.id);
+      continue;
+    }
+    if (currentWeekMonday(at, r.budget_tz) !== currentWeekMonday(at, r.envelope_tz)) {
+      split.push(r.id);
+    }
+  }
+  const skippedNote =
+    skipped.length === 0
+      ? ''
+      : ` (${skipped.length} row(s) with unparseable start_at skipped, see ` +
+        `time_entry_canonical_utc: id ${sample(skipped)})`;
+  return {
+    name,
+    ok: split.length === 0,
+    detail:
+      split.length === 0
+        ? 'every confirmed time_entry rolls up into the same category-local week for budgets and envelopes' +
+          skippedNote
+        : `${split.length} confirmed time_entry row(s) counted in different ` +
+          `weeks by budgets vs envelopes (project category and goal/habit ` +
+          `timezone disagree): id ${sample(split)}` +
+          skippedNote,
+  };
+}
+
 /** Resolved path of the file this connection serves, like /api/version. */
 function resolveDbPath(db: DB): string {
   const name = db.name;
@@ -219,6 +328,7 @@ export function runHealthChecks(db: DB): HealthReport {
     checkTaskDueNotPlacementWritten(db),
     checkPlacementBackingCommitment(db),
     checkCalendarEventIdUnique(db),
+    checkWeekBucketAgreement(db),
   ];
   const failing = checks.filter((c) => !c.ok).length;
   return { ok: failing === 0, failing, db: resolveDbPath(db), checks };

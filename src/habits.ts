@@ -1,6 +1,16 @@
 import type { DB } from './db/connection.js';
+import { projectTimezone } from './categories.js';
 import { now } from './clock.js';
-import { toCanonicalUtc } from './day-range.js';
+import {
+  addDays,
+  assertValidTimezone,
+  localDayOf,
+  mondayOfDay,
+  toCanonicalUtc,
+  weekRange,
+  zonedTimeToUtcMs,
+  type WeekRange,
+} from './day-range.js';
 import {
   confirmTimeEntry,
   insertTimeEntry,
@@ -97,65 +107,8 @@ function parseDaysOfWeek(s: string): number[] {
   return days;
 }
 
-function pad(n: number) {
+function pad2(n: number): string {
   return String(n).padStart(2, '0');
-}
-
-/**
- * Convert a wall-clock date+time in a named IANA timezone to its UTC `Date`.
- *
- * Strategy: treat (y, m, d, hh, mm) as a UTC instant ("guess"), format that
- * instant in the target zone to discover the wall clock the zone *would*
- * show for it, and use the difference as the offset. Handles DST correctly
- * because the offset is derived from the actual zone rules at that point in
- * the year. Ambiguous times across DST fall-back resolve to the earlier
- * offset (the formatter returns a single value).
- */
-function zonedWallclockToUtc(
-  y: number,
-  m: number,
-  d: number,
-  hh: number,
-  mm: number,
-  timeZone: string,
-): Date {
-  const guessMs = Date.UTC(y, m - 1, d, hh, mm);
-  const fmt = new Intl.DateTimeFormat('en-US', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false,
-  });
-  const parts: Record<string, string> = {};
-  for (const p of fmt.formatToParts(new Date(guessMs))) {
-    parts[p.type] = p.value;
-  }
-  // en-US with hour12:false emits "24" for midnight on some runtimes — normalize.
-  const hourInZone = parts.hour === '24' ? 0 : Number(parts.hour);
-  const zoneWallMs = Date.UTC(
-    Number(parts.year),
-    Number(parts.month) - 1,
-    Number(parts.day),
-    hourInZone,
-    Number(parts.minute),
-    Number(parts.second),
-  );
-  const offsetMs = zoneWallMs - guessMs;
-  return new Date(guessMs - offsetMs);
-}
-
-function toIsoMinute(dt: Date): string {
-  return `${dt.getUTCFullYear()}-${pad(dt.getUTCMonth() + 1)}-${pad(dt.getUTCDate())}T${pad(dt.getUTCHours())}:${pad(dt.getUTCMinutes())}:00Z`;
-}
-
-function addDaysIsoDate(date: string, days: number): string {
-  const [y, m, d] = date.split('-').map(Number);
-  const t = new Date(Date.UTC(y, m - 1, d) + days * 86_400_000);
-  return `${t.getUTCFullYear()}-${pad(t.getUTCMonth() + 1)}-${pad(t.getUTCDate())}`;
 }
 
 function weekdayOfIsoDate(date: string): number {
@@ -163,27 +116,16 @@ function weekdayOfIsoDate(date: string): number {
   return new Date(Date.UTC(y, m - 1, d)).getUTCDay();
 }
 
-/** Calendar date (YYYY-MM-DD) a UTC instant falls on in `timeZone`. */
-function isoDateInZone(isoUtc: string, timeZone: string): string {
-  // en-CA formats as YYYY-MM-DD directly.
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(new Date(isoUtc));
-}
-
-/** Monday of the ISO week containing `date` (YYYY-MM-DD). */
-function mondayOfIsoDate(date: string): string {
-  const dow = weekdayOfIsoDate(date); // 0=Sun..6=Sat
-  return addDaysIsoDate(date, -((dow + 6) % 7));
-}
-
 export function createHabit(db: DB, input: CreateHabitInput): Habit {
   const daysOfWeek = input.days_of_week ?? null;
   const timesPerWeek = input.times_per_week ?? null;
   validateFrequency(daysOfWeek, timesPerWeek);
+  // The habit's clock is what its instances are materialized in and
+  // what its week scoring follows (#146). Default to the project's
+  // category timezone so a habit created without one is scored on the
+  // same clock its budget is; reject names Intl does not know.
+  const timezone = input.timezone ?? projectTimezone(db, input.project_id);
+  assertValidTimezone(timezone);
   const result = db
     .prepare(
       `INSERT INTO habits
@@ -198,7 +140,7 @@ export function createHabit(db: DB, input: CreateHabitInput): Habit {
       daysOfWeek ?? '',
       timesPerWeek,
       input.start_time,
-      input.timezone ?? 'UTC',
+      timezone,
       now(),
     );
   return getHabit(db, Number(result.lastInsertRowid)) as Habit;
@@ -310,13 +252,13 @@ export function generateHabitInstances(
     for (
       let date = fromDate;
       date <= toDate && dates.length < habit.times_per_week;
-      date = addDaysIsoDate(date, 1)
+      date = addDays(date, 1)
     ) {
       dates.push(date);
     }
   } else {
     const days = new Set(parseDaysOfWeek(habit.days_of_week));
-    for (let date = fromDate; date <= toDate; date = addDaysIsoDate(date, 1)) {
+    for (let date = fromDate; date <= toDate; date = addDays(date, 1)) {
       if (days.has(weekdayOfIsoDate(date))) dates.push(date);
     }
   }
@@ -337,12 +279,17 @@ export function generateHabitInstances(
 
   const generateTx = db.transaction(() => {
     for (const date of dates) {
-      const [y, m, d] = date.split('-').map(Number);
-
-      const startDt = zonedWallclockToUtc(y, m, d, hh, mm, tz);
-      const endDt = new Date(startDt.getTime() + dur * 60_000);
-      const start = toIsoMinute(startDt);
-      const end = toIsoMinute(endDt);
+      // Wall clock -> UTC through the shared helper (src/day-range.ts),
+      // whose two-pass offset lookup is right on both DST nights: the
+      // skipped spring hour shifts back, and the hours after a
+      // fall-back use the new offset (the old single-pass version put
+      // post-fall-back times one hour early).
+      const startMs = zonedTimeToUtcMs(date, `${pad2(hh)}:${pad2(mm)}`, tz);
+      const start = toCanonicalUtc(new Date(startMs).toISOString(), 'scheduled_start');
+      const end = toCanonicalUtc(
+        new Date(startMs + dur * 60_000).toISOString(),
+        'scheduled_end',
+      );
 
       const result = insert.run(habitId, start, end);
       if (result.changes === 0) {
@@ -444,8 +391,8 @@ export function moveHabitInstance(
     const tz = habit.timezone || 'UTC';
     if (habit.times_per_week != null) {
       // Target form: anywhere in the instance's Mon-Sun week.
-      const fromWeek = mondayOfIsoDate(isoDateInZone(inst.scheduled_start, tz));
-      const toWeek = mondayOfIsoDate(isoDateInZone(startCanon, tz));
+      const fromWeek = mondayOfDay(localDayOf(new Date(inst.scheduled_start), tz));
+      const toWeek = mondayOfDay(localDayOf(new Date(startCanon), tz));
       if (fromWeek !== toWeek) {
         throw new Error(
           `cannot move habit_instance ${id} out of its week (${fromWeek}): leaving the frequency range is a skip, not a move`,
@@ -453,8 +400,8 @@ export function moveHabitInstance(
       }
     } else {
       // Fixed-days form: within its own day only.
-      const fromDay = isoDateInZone(inst.scheduled_start, tz);
-      const toDay = isoDateInZone(startCanon, tz);
+      const fromDay = localDayOf(new Date(inst.scheduled_start), tz);
+      const toDay = localDayOf(new Date(startCanon), tz);
       if (fromDay !== toDay) {
         throw new Error(
           `cannot move habit_instance ${id} off its day (${fromDay}): leaving the frequency range is a skip, not a move`,
@@ -487,21 +434,23 @@ export function habitWeekScore(
   db: DB,
   habitId: number,
   weekStart: string,
+  range?: WeekRange,
 ): { done: number; target: number } {
   const habit = getHabit(db, habitId);
   if (!habit) throw new Error(`habit ${habitId} not found`);
-  const start = Date.parse(`${weekStart}T00:00:00Z`);
-  if (Number.isNaN(start)) throw new Error(`invalid week_start: ${weekStart}`);
-  const startIso = new Date(start).toISOString().replace(/\.\d{3}Z$/, 'Z');
-  const endIso = new Date(start + 7 * 86_400_000 - 1)
-    .toISOString()
-    .replace(/\.\d{3}Z$/, 'Z');
+  // The week is local Monday-to-Monday in the habit's *own* timezone
+  // (#146): instances are materialized by `generateHabitInstances` in
+  // `habits.timezone`, so scoring must bucket by the same clock or a
+  // Sunday-evening instance under a differently-zoned category would
+  // score in the wrong week. This deliberately departs from the
+  // project -> category chain the other envelopes use.
+  const { startIso, endIso } = range ?? weekRange(weekStart, habit.timezone || 'UTC');
 
   const row = db
     .prepare(
       `SELECT COUNT(*) AS n FROM habit_instances
         WHERE habit_id = ? AND status = 'COMPLETE'
-          AND scheduled_start >= ? AND scheduled_start <= ?`,
+          AND scheduled_start >= ? AND scheduled_start < ?`,
     )
     .get(habitId, startIso, endIso) as { n: number };
 

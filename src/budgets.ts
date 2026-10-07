@@ -1,4 +1,6 @@
 import type { DB } from './db/connection.js';
+import { projectTimezone } from './categories.js';
+import { weekRange, type WeekRange } from './day-range.js';
 import { listProjects } from './projects.js';
 
 export interface BudgetStatus {
@@ -11,16 +13,13 @@ export interface BudgetStatus {
   overspent: boolean;
 }
 
-function weekRange(weekStart: string): { startIso: string; endIso: string } {
-  const start = Date.parse(`${weekStart}T00:00:00Z`);
-  if (Number.isNaN(start)) {
-    throw new Error(`invalid week_start: ${weekStart}`);
-  }
-  const end = start + 7 * 86_400_000 - 1;
-  return {
-    startIso: new Date(start).toISOString(),
-    endIso: new Date(end).toISOString(),
-  };
+/**
+ * The week `getProjectBudget` rolls up: local Monday-to-Monday in the
+ * project's category timezone (#146). Exported so the parity test can
+ * assert budgets, envelopes and supply bound the same instants.
+ */
+export function budgetWeekRange(db: DB, projectId: string, weekStart: string): WeekRange {
+  return weekRange(weekStart, projectTimezone(db, projectId));
 }
 
 /**
@@ -42,7 +41,7 @@ export function getProjectBudget(
   projectId: string,
   weekStart: string,
 ): BudgetStatus {
-  const { startIso, endIso } = weekRange(weekStart);
+  const { startIso, endIso } = budgetWeekRange(db, projectId, weekStart);
 
   const project = db
     .prepare('SELECT weekly_budget_minutes FROM projects WHERE id = ?')
@@ -62,7 +61,7 @@ export function getProjectBudget(
          FROM time_entry te
         WHERE te.project_id = ?
           AND te.start_at >= ?
-          AND te.start_at <= ?`,
+          AND te.start_at < ?`,
     )
     .get(projectId, startIso, endIso) as { confirmed: number; scheduled: number };
 

@@ -317,6 +317,51 @@ describe('habits', () => {
     expect(instances[1].scheduled_start).toBe('2026-03-09T14:00:00Z'); // CDT
   });
 
+  it('pins the fall-back night (2026-11-01, CDT -> CST) through the shared converter (#146)', () => {
+    // Sat 03:00 CDT is 08:00Z; Sun 03:00 CST is 09:00Z — the hour after
+    // the 02:00 fall-back must use the *new* offset. The previous private
+    // single-pass converter returned 08:00Z for Sunday (one hour early).
+    const db = setup();
+    const h = createHabit(db, {
+      project_id: 'me',
+      title: 'Early run',
+      duration_minutes: 30,
+      days_of_week: '6,0',
+      start_time: '03:00',
+      timezone: 'America/Chicago',
+    });
+    const instances = generateHabitInstances(db, h.id, '2026-10-31', '2026-11-01');
+    expect(instances.map((i) => i.scheduled_start)).toEqual([
+      '2026-10-31T08:00:00Z', // Sat 03:00 CDT
+      '2026-11-01T09:00:00Z', // Sun 03:00 CST
+    ]);
+
+    // The ambiguous 01:30 (occurs twice) resolves to the earlier offset (CDT).
+    const h2 = createHabit(db, {
+      project_id: 'me',
+      title: 'Night owl',
+      duration_minutes: 30,
+      days_of_week: '0',
+      start_time: '01:30',
+      timezone: 'America/Chicago',
+    });
+    const [ambiguous] = generateHabitInstances(db, h2.id, '2026-11-01', '2026-11-01');
+    expect(ambiguous.scheduled_start).toBe('2026-11-01T06:30:00Z');
+
+    // The skipped spring hour (02:30 on 2026-03-08 does not exist) lands
+    // on the instant one hour before the gap, 01:30 CST.
+    const h3 = createHabit(db, {
+      project_id: 'me',
+      title: 'Gap',
+      duration_minutes: 30,
+      days_of_week: '0',
+      start_time: '02:30',
+      timezone: 'America/Chicago',
+    });
+    const [gap] = generateHabitInstances(db, h3.id, '2026-03-08', '2026-03-08');
+    expect(gap.scheduled_start).toBe('2026-03-08T07:30:00Z');
+  });
+
   it('selects weekdays by local date even when UTC time crosses midnight', () => {
     const h_db = setup();
     // 23:00 America/Chicago = 04:00 UTC next calendar day.

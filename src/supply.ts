@@ -60,7 +60,14 @@
 import type { DB } from './db/connection.js';
 import { getEnvelopes } from './assignments.js';
 import { listAvailabilityOverrides } from './availability.js';
-import { listCategories, type CategoryWindow } from './categories.js';
+import { getCategory, listCategories, type CategoryWindow } from './categories.js';
+import {
+  addDays,
+  currentWeekMonday,
+  weekRange,
+  zonedTimeToUtcMs,
+  type WeekRange,
+} from './day-range.js';
 import { assertMonday } from './goals.js';
 
 export interface CategorySupply {
@@ -162,56 +169,9 @@ function totalMinutes(intervals: Interval[]): number {
 }
 
 // ---------------------------------------------------------------------------
-// Timezone-aware window expansion.
+// Timezone-aware window expansion. The wall-clock -> UTC math lives in
+// src/day-range.ts so windows and week bounds share one helper (#146).
 // ---------------------------------------------------------------------------
-
-/** Offset (ms to add to UTC to get wall-clock time) of `timeZone` at `utcMs`. */
-function tzOffsetMs(timeZone: string, utcMs: number): number {
-  const dtf = new Intl.DateTimeFormat('en-US', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hourCycle: 'h23',
-  });
-  const parts = dtf.formatToParts(new Date(utcMs));
-  const get = (type: string): number =>
-    Number(parts.find((p) => p.type === type)?.value ?? 0);
-  const asUtc = Date.UTC(
-    get('year'),
-    get('month') - 1,
-    get('day'),
-    get('hour'),
-    get('minute'),
-    get('second'),
-  );
-  return asUtc - utcMs;
-}
-
-/**
- * UTC instant of local `day` (YYYY-MM-DD) + `hhmm` in `timeZone`.
- * Two offset iterations handle DST-boundary days.
- */
-function zonedTimeToUtcMs(day: string, hhmm: string, timeZone: string): number {
-  const naive = Date.parse(`${day}T${hhmm}:00Z`);
-  if (Number.isNaN(naive)) {
-    throw new Error(`invalid window time: ${day} ${hhmm}`);
-  }
-  if (timeZone === 'UTC') return naive;
-  let offset = tzOffsetMs(timeZone, naive);
-  offset = tzOffsetMs(timeZone, naive - offset);
-  return naive - offset;
-}
-
-/** `weekStart` + n days, as a plain ISO date. */
-function addDays(weekStart: string, n: number): string {
-  return new Date(Date.parse(`${weekStart}T00:00:00Z`) + n * 86_400_000)
-    .toISOString()
-    .slice(0, 10);
-}
 
 /**
  * Expand a category window over the week's 7 civil dates into merged
@@ -242,17 +202,48 @@ function windowIntervals(
 // ---------------------------------------------------------------------------
 
 /**
+ * The week a category's supply covers (#146): local Monday-to-Monday
+ * in the category's timezone — the same helper budgets and envelopes
+ * use, so the three surfaces bound identical instants. Exported for
+ * the parity test.
+ */
+export function supplyWeekRange(db: DB, categoryId: string, weekStart: string): WeekRange {
+  return weekRange(weekStart, getCategory(db, categoryId)?.timezone ?? 'UTC');
+}
+
+/**
  * Compute the week's hour supply for the Monday-anchored week
  * `weekStart` (rejects non-Mondays). See the module header for the
  * formula and every edge decision.
  */
 export function computeWeekSupply(db: DB, weekStart: string): WeekSupply {
   assertMonday(weekStart);
-  const weekStartMs = Date.parse(`${weekStart}T00:00:00Z`);
-  const weekEndMs = weekStartMs + 7 * 86_400_000;
-  const weekStartIso = new Date(weekStartMs).toISOString().replace('.000Z', 'Z');
-  const weekEndIso = new Date(weekEndMs).toISOString().replace('.000Z', 'Z');
-  const week: Interval[] = [{ start: weekStartMs, end: weekEndMs }];
+  // Each category's week is local Monday-to-Monday in its own timezone
+  // (#146). Rows are fetched once over the union of those spans and
+  // clipped per category below.
+  const categories = listCategories(db);
+  if (categories.length === 0) {
+    const assigned = getEnvelopes(db, weekStart).reduce(
+      (sum, row) => sum + (row.assigned ?? 0),
+      0,
+    );
+    return {
+      week_start: weekStart,
+      by_category: [],
+      total_supply_minutes: 0,
+      assigned_minutes: assigned,
+      to_be_assigned_minutes: -assigned,
+    };
+  }
+  const categoryWeeks = new Map<string, WeekRange>(
+    categories.map((c) => [c.id, supplyWeekRange(db, c.id, weekStart)]),
+  );
+  let weekStartIso = '';
+  let weekEndIso = '';
+  for (const r of categoryWeeks.values()) {
+    if (weekStartIso === '' || r.startIso < weekStartIso) weekStartIso = r.startIso;
+    if (r.endIso > weekEndIso) weekEndIso = r.endIso;
+  }
 
   // Synced events overlapping the week, merged so a double-booked hour
   // subtracts once. Both UNCONFIRMED and CONFIRMED occupy time.
@@ -298,8 +289,11 @@ export function computeWeekSupply(db: DB, weekStart: string): WeekSupply {
     end: Date.parse(o.end),
   });
 
-  const categories = listCategories(db);
   const by_category: CategorySupply[] = categories.map((category, index) => {
+    const range = categoryWeeks.get(category.id) as WeekRange;
+    const week: Interval[] = [
+      { start: Date.parse(range.startIso), end: Date.parse(range.endIso) },
+    ];
     const windows = windowIntervals(
       weekStart,
       category.default_window,
@@ -463,9 +457,7 @@ export function placementNote(
 
   // Expand the window over the Monday-anchored week containing the
   // slot's start; a slot straddling weeks is judged by its start week.
-  const startDay = new Date(startMs).toISOString().slice(0, 10);
-  const dow = new Date(`${startDay}T00:00:00Z`).getUTCDay();
-  const monday = addDays(startDay, dow === 0 ? -6 : 1 - dow);
+  const monday = currentWeekMonday(new Date(startMs), category.timezone);
   const windows = windowIntervals(
     monday,
     category.default_window,

@@ -8,6 +8,21 @@ import {
 } from '../src/categories.js';
 
 describe('categories', () => {
+  it('rejects an invalid IANA timezone on create and update (#146)', () => {
+    const db = freshDb();
+    expect(() =>
+      createCategory(db, { id: 'bad', name: 'Bad', timezone: 'America/Chicgo' }),
+    ).toThrow(/not a valid IANA timezone: America\/Chicgo/);
+    expect(getCategory(db, 'bad')).toBeNull();
+    expect(() => updateCategory(db, 'work', { timezone: 'Mars/Olympus' })).toThrow(
+      /not a valid IANA timezone/,
+    );
+    expect(getCategory(db, 'work')!.timezone).toBe('UTC');
+    // Valid names still pass.
+    updateCategory(db, 'work', { timezone: 'America/Chicago' });
+    expect(getCategory(db, 'work')!.timezone).toBe('America/Chicago');
+  });
+
   it('seeds work and personal on a fresh db', () => {
     const db = freshDb();
     const cats = listCategories(db);
