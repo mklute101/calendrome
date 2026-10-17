@@ -79,9 +79,12 @@ export interface TimeLog {
 
 export interface Budget {
   project_id: string;
+  /** NULL = uncapped, or snoozed when `snoozed` is true; 0 = a real 0h cap. */
   assigned_minutes: number | null;
   confirmed_minutes: number;
   scheduled_minutes: number;
+  /** The week was snoozed via assign_hours (minutes null) — #173. */
+  snoozed: boolean;
 }
 
 export interface CalendarEvent {

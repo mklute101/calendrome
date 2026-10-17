@@ -62,6 +62,8 @@ a.nav-btn { text-decoration: none; }
 .budget-mark { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--bg); }
 .budget-label { font-size: 0.75rem; color: var(--text-muted); }
 .over-budget { color: #f85149; }
+/* Snoozed week (#173): unfunded, so the card reads muted, never red. */
+.budget-card.snoozed { opacity: 0.6; }
 
 /* ===== COMPACT VIEW ===== */
 .week-grid {
