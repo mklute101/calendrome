@@ -189,7 +189,7 @@ describe('M5 migration: weekly_budget_minutes -> standing assignments (#173)', (
     }
   });
 
-  it('a snoozed week reads as 0 assigned, not overspent, in get_project_budget', () => {
+  it('a snoozed week reads as null assigned + snoozed, not overspent, in get_project_budget', () => {
     const db = freshDb();
     createProject(db, { id: 'acme', name: 'Acme', prefix: 'ACME', weekly_budget_minutes: 600 });
     assignHours(db, { envelope_type: 'project', envelope_id: 'acme', week_start: CURRENT, minutes: null });
@@ -202,7 +202,7 @@ describe('M5 migration: weekly_budget_minutes -> standing assignments (#173)', (
     });
     const b = getProjectBudget(db, 'acme', CURRENT);
     expect(b).toMatchObject({
-      assigned_minutes: 0,
+      assigned_minutes: null,
       confirmed_minutes: 60,
       available_minutes: -60,
       overspent: false,

@@ -11,6 +11,7 @@ import {
   skipHabitInstance,
 } from '../../src/habits.js';
 import { getProjectBudget } from '../../src/budgets.js';
+import { getEnvelopes } from '../../src/assignments.js';
 import { exportTimesheet } from '../../src/timesheet.js';
 import { insertTimeEntry } from '../../src/time-entry.js';
 
@@ -75,7 +76,7 @@ describe('integration: full lifecycle', () => {
     expect(lines).toContain('2026-04-15,ACME,0.5,Memo,');
   });
 
-  it('habit lifecycle: create, generate, complete, skip, budget reflects scheduled time', () => {
+  it('habit lifecycle: create, generate, complete, skip; the habit envelope carries the time, not the project cap', () => {
     const db = freshDb();
     createProject(db, {
       id: 'me',
@@ -105,10 +106,18 @@ describe('integration: full lifecycle', () => {
     completeHabitInstance(db, instances[1].id);
     skipHabitInstance(db, instances[2].id);
 
+    // Habit entries credit the habit's envelope, never the project
+    // cap (#173, the get_envelopes attribution rule).
     const budget = getProjectBudget(db, 'me', WEEK_START);
-    // All 5 instances live in the week, even after completion/skipping
-    expect(budget.scheduled_minutes).toBeGreaterThanOrEqual(60);
-    expect(budget.overspent).toBe(true);
+    expect(budget.confirmed_minutes + budget.scheduled_minutes).toBe(0);
+    expect(budget.overspent).toBe(false);
+    const habitRow = getEnvelopes(db, WEEK_START).find(
+      (e) => e.envelope_type === 'habit' && e.envelope_id === String(h.id),
+    )!;
+    // 2 completed (confirmed); the skipped one's entry is gone or
+    // unconfirmed-skipped; the other 2 are still scheduled.
+    expect(habitRow.activity.confirmed_minutes).toBe(60);
+    expect(habitRow.activity.scheduled_minutes).toBeGreaterThanOrEqual(60);
   });
 
   it('using the real task lifecycle helpers end-to-end', async () => {

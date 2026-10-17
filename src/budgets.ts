@@ -1,21 +1,31 @@
 import type { DB } from './db/connection.js';
 import { projectTimezone } from './categories.js';
 import { weekRange, type WeekRange } from './day-range.js';
+import { assertMonday } from './goals.js';
 import { listProjects } from './projects.js';
 import { effectiveProjectAssignment } from './standing-assignments.js';
 
 export interface BudgetStatus {
   project_id: string;
   week_start: string;
+  /**
+   * Minutes assigned for the week. NULL is either uncapped (no
+   * standing row, no week row) or snoozed (`snoozed: true`) — the same
+   * NULL `get_envelopes` reports as `assigned`. 0 is a real 0h cap.
+   */
   assigned_minutes: number | null;
   confirmed_minutes: number;
   scheduled_minutes: number;
+  /**
+   * assigned − activity. NULL when uncapped; when snoozed the envelope
+   * is unfunded, so it is −activity (matches `get_envelopes`).
+   */
   available_minutes: number | null;
   overspent: boolean;
   /**
    * The week was snoozed (`assign_hours` with minutes NULL): unfunded,
-   * so assigned is 0 and available goes negative with any activity —
-   * but, like the envelope's 'snoozed' funding, it is not "overspent".
+   * hours consciously perish. Like the envelope's 'snoozed' funding,
+   * a snoozed week is never "overspent".
    */
   snoozed: boolean;
 }
@@ -30,17 +40,24 @@ export function budgetWeekRange(db: DB, projectId: string, weekStart: string): W
 }
 
 /**
- * Per-project weekly envelope rollup. Reads exclusively from `time_entry`:
+ * Per-project weekly envelope rollup — the project-cap row of
+ * `get_envelopes`, read for one project. Reads from `time_entry`:
  *   - CONFIRMED rows in the week range count as `confirmed_minutes`
  *   - UNCONFIRMED rows in the week range count as `scheduled_minutes`
+ *
+ * Activity follows the envelope attribution rule (#173): entries
+ * carrying a `goal_id` count against that goal's envelope, and habit
+ * entries against the habit's, never also against the project cap.
+ * Otherwise pulling hours from a project into one of its own goals
+ * would count the goal block twice (once as goal activity, once as
+ * project activity against the reduced cap).
  *
  * `assigned_minutes` is the assignment in force for the week (#173):
  * the week's explicit `assignments` row if one exists (an
  * `assign_hours` / `pull_hours` write), else the project's standing
- * row, else NULL (uncapped) — the same resolution `get_envelopes`
- * uses, so the two reads can no longer disagree. A snoozed week is 0
- * assigned with `snoozed: true`. `available_minutes` is assigned −
- * activity, matching the envelope nomenclature of `/api/envelopes`.
+ * row, else NULL (uncapped) — resolved by `effectiveProjectAssignment`,
+ * the one resolution envelopes and pulls also use. `week_start` must
+ * be a Monday, as for `get_envelopes`.
  *
  * Minute totals prefer `actual_minutes` when present, falling back to
  * the wall-clock span between `start_at` and `end_at`. This mirrors the
@@ -51,11 +68,12 @@ export function getProjectBudget(
   projectId: string,
   weekStart: string,
 ): BudgetStatus {
+  assertMonday(weekStart);
   const { startIso, endIso } = budgetWeekRange(db, projectId, weekStart);
 
   const effective = effectiveProjectAssignment(db, projectId, weekStart);
   const snoozed = effective.snoozed;
-  const assigned = snoozed ? 0 : effective.minutes;
+  const assigned = effective.minutes;
 
   const minutesExpr = `COALESCE(
     te.actual_minutes,
@@ -69,6 +87,8 @@ export function getProjectBudget(
          COALESCE(SUM(CASE WHEN te.status = 'UNCONFIRMED' THEN ${minutesExpr} ELSE 0 END), 0) AS scheduled
          FROM time_entry te
         WHERE te.project_id = ?
+          AND te.goal_id IS NULL
+          AND te.source != 'habit'
           AND te.start_at >= ?
           AND te.start_at < ?`,
     )
@@ -76,13 +96,14 @@ export function getProjectBudget(
 
   const confirmed_minutes = Math.round(row.confirmed);
   const scheduled_minutes = Math.round(row.scheduled);
+  const activity = confirmed_minutes + scheduled_minutes;
 
-  const available_minutes =
-    assigned === null ? null : assigned - (confirmed_minutes + scheduled_minutes);
-  const overspent =
-    !snoozed &&
-    assigned !== null &&
-    confirmed_minutes + scheduled_minutes > assigned;
+  const available_minutes = snoozed
+    ? -activity
+    : assigned === null
+      ? null
+      : assigned - activity;
+  const overspent = !snoozed && assigned !== null && activity > assigned;
 
   return {
     project_id: projectId,
@@ -97,6 +118,7 @@ export function getProjectBudget(
 }
 
 export function getAllBudgets(db: DB, weekStart: string): BudgetStatus[] {
+  assertMonday(weekStart);
   const projects = listProjects(db, { active: true });
   return projects.map((p) => getProjectBudget(db, p.id, weekStart));
 }

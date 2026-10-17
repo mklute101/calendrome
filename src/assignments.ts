@@ -32,7 +32,10 @@ import { weekRange, type WeekRange } from './day-range.js';
 import { assertMonday, goalProgress, getGoal, listGoals } from './goals.js';
 import { getHabit, habitWeekScore, listHabits } from './habits.js';
 import { listProjects } from './projects.js';
-import { getStandingProjectMinutes } from './standing-assignments.js';
+import {
+  effectiveProjectAssignment,
+  getStandingProjectMinutes,
+} from './standing-assignments.js';
 
 export type EnvelopeType = 'project' | 'goal' | 'habit';
 
@@ -229,7 +232,12 @@ export function pullHours(db: DB, input: PullHoursInput): EnvelopeMove {
   // Current assigned minutes, seeding from the standing default when no
   // explicit row exists. Snoozed (explicit NULL) and uncapped (NULL
   // standing budget) both count as 0 — neither has hours to give.
+  // Project envelopes resolve through effectiveProjectAssignment, the
+  // same lookup budgets and envelopes use (#173).
   const currentAssigned = (ref: EnvelopeRef): number => {
+    if (ref.type === 'project') {
+      return effectiveProjectAssignment(db, ref.id, input.week_start).minutes ?? 0;
+    }
     const row = getRow.get(ref.type, ref.id, input.week_start) as
       | { minutes: number | null }
       | undefined;
@@ -384,12 +392,23 @@ export function getEnvelopes(db: DB, weekStart: string): EnvelopeRow[] {
     weeklyAskNeeded: number | null, // goal/habit "needed" nag; null for projects
     weekScore?: { done: number; target: number },
   ): EnvelopeRow => {
-    const key = `${type}:${id}`;
-    const explicitRow = explicit.get(key);
-    const assigned =
-      explicitRow !== undefined
-        ? explicitRow.minutes
-        : standingDefault(db, type, id, weekStart);
+    // Projects resolve through effectiveProjectAssignment — the one
+    // explicit-else-standing lookup shared with budgets and pulls
+    // (#173). Goals/habits: explicit row, else the derived ask.
+    let assigned: number | null;
+    let snoozed: boolean;
+    if (type === 'project') {
+      const eff = effectiveProjectAssignment(db, id, weekStart);
+      assigned = eff.minutes;
+      snoozed = eff.snoozed;
+    } else {
+      const explicitRow = explicit.get(`${type}:${id}`);
+      assigned =
+        explicitRow !== undefined
+          ? explicitRow.minutes
+          : standingDefault(db, type, id, weekStart);
+      snoozed = explicitRow !== undefined && explicitRow.minutes === null;
+    }
     const confirmed_minutes = Math.round(activityRaw.confirmed);
     const scheduled_minutes = Math.round(activityRaw.scheduled);
     const activityTotal = confirmed_minutes + scheduled_minutes;
@@ -409,7 +428,7 @@ export function getEnvelopes(db: DB, weekStart: string): EnvelopeRow[] {
     const isFloor = weeklyAskNeeded !== null;
     let funding: EnvelopeRow['funding'];
     let status_line: string;
-    if (explicitRow !== undefined && explicitRow.minutes === null) {
+    if (snoozed) {
       funding = 'snoozed';
       status_line = 'Snoozed this week';
     } else if (assigned === null) {

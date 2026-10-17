@@ -143,11 +143,9 @@ export function buildWeekPayload(db: DB, start: string) {
     )
     .all(fetchStart, fetchEnd) as any[];
 
-  const budgets = getAllBudgets(db, start);
-
   // Commitments (M1 — watchable): goals with embedded progress, habit
   // weekly meters, and the week's envelope totals. goalProgress /
-  // getEnvelopes key off a Monday; the GUI always requests Mondays,
+  // getEnvelopes / getAllBudgets key off a Monday; the GUI always requests Mondays,
   // but normalize anyway so a mid-week `start` still answers for its
   // own week instead of throwing.
   const startDow = startDate.getUTCDay(); // 0=Sun..6=Sat
@@ -156,6 +154,9 @@ export function buildWeekPayload(db: DB, start: string) {
   )
     .toISOString()
     .slice(0, 10);
+
+  // Budgets require a Monday too (#173, same contract as envelopes).
+  const budgets = getAllBudgets(db, monday);
 
   const goals = listGoals(db, { active: true }).map((g) => ({
     ...g,

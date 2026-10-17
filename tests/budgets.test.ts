@@ -108,7 +108,9 @@ describe('budgets', () => {
     expect(budget.scheduled_minutes).toBe(90);
   });
 
-  it('counts habit instances within the week as scheduled time', () => {
+  // #173: habit entries credit the habit's own envelope, not the
+  // project cap — the get_envelopes attribution rule.
+  it('does not count habit instances against the project cap', () => {
     const db = freshDb();
     createProject(db, {
       id: 'me',
@@ -129,9 +131,9 @@ describe('budgets', () => {
     generateHabitInstances(db, h.id, '2026-04-13', '2026-04-19');
 
     const budget = getProjectBudget(db, 'me', WEEK_START);
-    expect(budget.scheduled_minutes).toBe(30 * 5); // 150 min
-    expect(budget.overspent).toBe(true);
-    expect(budget.available_minutes).toBe(60 - 150);
+    expect(budget.scheduled_minutes).toBe(0);
+    expect(budget.overspent).toBe(false);
+    expect(budget.available_minutes).toBe(60);
   });
 
   it('counts placement-style UNCONFIRMED time_entry rows as scheduled time', () => {
