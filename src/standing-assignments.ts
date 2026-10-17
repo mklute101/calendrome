@@ -26,6 +26,7 @@
  * name on create/update/list project — it is the standing row, read
  * and written through this module.
  */
+import { existsSync } from 'node:fs';
 import type { DB } from './db/connection.js';
 import { now } from './clock.js';
 
@@ -107,17 +108,62 @@ export function effectiveProjectAssignment(
   };
 }
 
+function hasBudgetColumn(db: DB): boolean {
+  const cols = db.prepare(`PRAGMA table_info('projects')`).all() as { name: string }[];
+  return cols.some((c) => c.name === 'weekly_budget_minutes');
+}
+
+/**
+ * Path of the one-shot pre-migration backup for a file-backed DB, or
+ * null for an in-memory / anonymous one.
+ */
+export function preFoldBackupPath(db: DB): string | null {
+  if (db.memory || !db.name) return null;
+  return `${db.name}.pre-173.bak`;
+}
+
+/**
+ * Copy the DB next to itself before the irreversible column drop
+ * (`VACUUM INTO`, a consistent snapshot even under WAL). Never
+ * overwrites an existing backup: a second boot, or a concurrent one
+ * that lost the race, keeps the first copy. Logged on stderr (stdout
+ * is the MCP protocol channel).
+ */
+function backupBeforeFold(db: DB): void {
+  const path = preFoldBackupPath(db);
+  if (path === null || existsSync(path)) return;
+  try {
+    db.prepare('VACUUM INTO ?').run(path);
+  } catch (err) {
+    // A concurrent boot wrote it between the check and the VACUUM.
+    if (existsSync(path)) return;
+    throw err;
+  }
+  console.error(
+    `calendrome: backed up ${db.name} to ${path} before folding weekly_budget_minutes into assignments (#173)`,
+  );
+}
+
 /**
  * The M5 migration (#173): fold `projects.weekly_budget_minutes` into
- * standing assignment rows, then drop the column. Runs inside one
- * transaction so a failure leaves the column (and every cap) intact.
- * Idempotent: a DB without the column is a no-op. An existing standing
- * row (not possible before this migration, but cheap to respect) wins.
+ * standing assignment rows, then drop the column.
+ *
+ * - A file-backed DB that still has the column is first copied to
+ *   `<db>.pre-173.bak` (see `backupBeforeFold`).
+ * - The fold runs in one IMMEDIATE transaction, so a failure leaves the
+ *   column (and every cap) intact, and two processes booting at once
+ *   serialize on the write lock (the connection's busy timeout makes
+ *   the second wait). The column check is repeated under the lock: if
+ *   the other process already folded, this is a no-op.
+ * - Idempotent: a DB without the column is a no-op. An existing
+ *   standing row (not possible before this migration, but cheap to
+ *   respect) wins.
  */
 export function foldWeeklyBudgetColumn(db: DB): void {
-  const cols = db.prepare(`PRAGMA table_info('projects')`).all() as { name: string }[];
-  if (!cols.some((c) => c.name === 'weekly_budget_minutes')) return;
+  if (!hasBudgetColumn(db)) return;
+  backupBeforeFold(db);
   db.transaction(() => {
+    if (!hasBudgetColumn(db)) return;
     db.prepare(
       `INSERT OR IGNORE INTO assignments
          (envelope_type, envelope_id, week_start, minutes, updated_at)
@@ -126,5 +172,5 @@ export function foldWeeklyBudgetColumn(db: DB): void {
         WHERE weekly_budget_minutes IS NOT NULL`,
     ).run(STANDING_WEEK, now());
     db.exec('ALTER TABLE projects DROP COLUMN weekly_budget_minutes');
-  })();
+  }).immediate();
 }
