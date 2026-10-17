@@ -121,7 +121,8 @@ function assertEnvelopeExists(db: DB, type: EnvelopeType, id: string): void {
 }
 
 /** A retired habit keeps its rows readable as history but takes no new
- *  money: assign_hours and pull_hours refuse it (#131). */
+ *  minutes: assign_hours (non-null) and pull_hours *into* it refuse
+ *  (#131). Releasing what it already holds still works. */
 function assertNotRetiredHabit(db: DB, type: EnvelopeType, id: string): void {
   if (type !== 'habit') return;
   if (!getHabit(db, Number(id))?.active) {
@@ -205,7 +206,10 @@ export interface AssignHoursInput {
 export function assignHours(db: DB, input: AssignHoursInput): Assignment {
   assertMonday(input.week_start);
   assertEnvelopeExists(db, input.envelope_type, input.envelope_id);
-  assertNotRetiredHabit(db, input.envelope_type, input.envelope_id);
+  // Clearing (null) is allowed: it releases a retired habit's week.
+  if (input.minutes !== null) {
+    assertNotRetiredHabit(db, input.envelope_type, input.envelope_id);
+  }
   if (
     input.minutes !== null &&
     (!Number.isInteger(input.minutes) || input.minutes < 0)
@@ -269,7 +273,8 @@ export function pullHours(db: DB, input: PullHoursInput): EnvelopeMove {
   }
   if (from) assertEnvelopeExists(db, from.type, from.id);
   if (to) assertEnvelopeExists(db, to.type, to.id);
-  if (from) assertNotRetiredHabit(db, from.type, from.id);
+  // Only inflows are refused: pulling minutes *out* of a retired habit
+  // is how its already-assigned week gets released.
   if (to) assertNotRetiredHabit(db, to.type, to.id);
 
   const setMinutes = db.prepare(

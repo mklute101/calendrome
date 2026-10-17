@@ -122,6 +122,9 @@ export const placeHabitInstance = (args: { habit_id: number; start: string }) =>
     args,
   );
 
+export const unplaceHabitInstance = (id: number) =>
+  post<{ deleted: HabitInstance }>(`/api/habit-instances/${id}/unplace`);
+
 export const moveHabitInstance = (id: number, args: { start: string; end?: string }) =>
   post<{ instance: HabitInstance; entry: unknown }>(
     `/api/habit-instances/${id}/move`,

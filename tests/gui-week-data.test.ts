@@ -202,7 +202,6 @@ describe('buildWeekPayload habit instances (#118)', () => {
     expect(moved.scheduled_start).toBe('2026-06-15T09:00:00Z'); // slot identity
     expect(moved.start_at).toBe('2026-06-20T10:00:00Z'); // display truth
     expect(moved.end_at).toBe('2026-06-20T10:45:00Z');
-    expect(moved.times_per_week).toBe(2);
 
     // buildDays buckets by start_at: the block lands on Saturday.
     const days = buildDays(payload as any, WEEK);

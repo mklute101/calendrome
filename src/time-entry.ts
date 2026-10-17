@@ -106,6 +106,25 @@ export function skipTimeEntry(db: DB, id: number): void {
   recordEntityWrite({ entity_type: 'time_entry', entity_id: id });
 }
 
+/**
+ * Re-attribute an UNCONFIRMED entry's project and notes — the habit
+ * edit path (#131) uses it to carry a renamed or re-homed habit into
+ * its future entries. Confirmed history is never relabelled.
+ */
+export function relabelTimeEntry(
+  db: DB,
+  id: number,
+  attrs: { project_id: string; notes: string | null },
+): void {
+  const result = db
+    .prepare(
+      `UPDATE time_entry SET project_id = ?, notes = ?, updated_at = ?
+        WHERE id = ? AND status = 'UNCONFIRMED'`,
+    )
+    .run(attrs.project_id, attrs.notes, now(), id);
+  if (result.changes > 0) recordEntityWrite({ entity_type: 'time_entry', entity_id: id });
+}
+
 export interface DeleteTimeEntryOptions {
   force?: boolean;
 }

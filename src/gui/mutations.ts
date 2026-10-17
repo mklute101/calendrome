@@ -40,6 +40,7 @@ import {
   moveHabitInstance,
   moveEntryRespectingHabit,
   placeHabitInstance,
+  unplaceHabitInstance,
   skipHabitInstance,
   type HabitInstance,
 } from '../habits.js';
@@ -210,6 +211,12 @@ export function guiPlaceHabit(
   const result = placeHabitInstance(db, args.habit_id, args.start);
   const note = notePlacedEntry(db, result.entry.id);
   return note ? { ...result, note } : result;
+}
+
+/** Undo a habit placement (#138): deletes the placed instance and its
+ *  entry, same core as `unplace_habit_instance`. */
+export function guiUnplaceHabit(db: DB, id: number): { deleted: HabitInstance } {
+  return unplaceHabitInstance(db, id);
 }
 
 /**

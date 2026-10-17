@@ -45,6 +45,7 @@ describe('MCP tools layer', () => {
       'update_habit',
       'retire_habit',
       'delete_habit',
+      'unplace_habit_instance',
       'create_goal',
       'list_goals',
       'update_goal',

@@ -182,7 +182,7 @@ export function WeekView({
           kind: 'info',
           message: `Placed “${habit.title}” on ${fmtDate(dayDate)} ${fmtTime(startIso)}`,
           undo: async () => {
-            await api.skipHabitInstance(res.instance.id);
+            await api.unplaceHabitInstance(res.instance.id);
             await refetchAll();
           },
         });

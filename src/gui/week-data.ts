@@ -76,12 +76,10 @@ export function buildWeekPayload(db: DB, start: string) {
   // the placements query. SKIPPED instances have no entry (COALESCE
   // falls back to the scheduled slot); they stay in the payload for
   // the weekly meter and are filtered out client-side in buildDays.
-  // `times_per_week` rides along so the client can constrain drags to
-  // the frequency range (fixed-days: own day; target form: own week).
   const existingInstances = db
     .prepare(
       `SELECT hi.*, h.title as habit_title, h.project_id,
-              h.duration_minutes as habit_duration, h.times_per_week,
+              h.duration_minutes as habit_duration,
               COALESCE(te.start_at, hi.scheduled_start) AS start_at,
               COALESCE(te.end_at, hi.scheduled_end)     AS end_at
        FROM habit_instances hi

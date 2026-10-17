@@ -9,6 +9,7 @@ import {
   habitWeekScore,
   placeHabitInstance,
   editHabit,
+  unplaceHabitInstance,
   retireHabit,
   deleteHabit,
   listHabits,
@@ -313,5 +314,140 @@ describe('habit lifecycle MCP tools', () => {
     const retired = await tool(db, 'retire_habit').handler({ habit_id: h.id });
     expect(retired.habit.active).toBe(0);
     await expect(tool(db, 'delete_habit').handler({ habit_id: 999 })).rejects.toThrow(/not found/);
+  });
+});
+
+describe('review regressions', () => {
+  function entryOf(db: ReturnType<typeof setup>, instanceId: number) {
+    return db
+      .prepare(
+        `SELECT hi.scheduled_start, hi.scheduled_end, te.start_at, te.end_at FROM habit_instances hi
+           JOIN time_entry te ON te.id = hi.time_entry_id WHERE hi.id = ?`,
+      )
+      .get(instanceId) as { scheduled_start: string; scheduled_end: string; start_at: string; end_at: string };
+  }
+
+  it('a time edit never moves a generated session onto a placed one', () => {
+    const db = setup();
+    const h = createHabit(db, {
+      project_id: 'me', title: 'Outreach', duration_minutes: 30,
+      days_of_week: '1,4,5', start_time: '11:00', timezone: 'UTC',
+    });
+    const gen = generateHabitInstances(db, h.id, '2026-07-20', '2026-07-26');
+    skipHabitInstance(db, gen[0].id); // Mon
+    // Placed Thursday 07:00, same day as the generated Thursday 11:00.
+    const { instance: placed } = placeHabitInstance(db, h.id, '2026-07-23T07:00:00Z');
+    expect(placed.origin).toBe('placed');
+
+    // Generated Thu would move onto the placed 07:00 slot: it keeps
+    // 11:00 instead, and the edit still succeeds for Fri.
+    editHabit(db, h.id, { start_time: '07:00' });
+    const thu = gen.find((i) => i.scheduled_start.startsWith('2026-07-23'))!;
+    const fri = gen.find((i) => i.scheduled_start.startsWith('2026-07-24'))!;
+    expect(entryOf(db, placed.id).start_at).toBe('2026-07-23T07:00:00Z');
+    expect(entryOf(db, thu.id).start_at).toBe('2026-07-23T11:00:00Z');
+    expect(entryOf(db, fri.id).start_at).toBe('2026-07-24T07:00:00Z');
+  });
+
+  it('a placed session keeps its time and survives a frequency change', () => {
+    const db = setup();
+    const h = createHabit(db, {
+      project_id: 'me', title: 'Outreach', duration_minutes: 30,
+      days_of_week: '1,3,5', start_time: '11:00', timezone: 'UTC',
+    });
+    const gen = generateHabitInstances(db, h.id, '2026-07-20', '2026-07-26');
+    skipHabitInstance(db, gen[0].id);
+    const { instance: placed } = placeHabitInstance(db, h.id, '2026-07-22T07:00:00Z');
+    editHabit(db, h.id, { start_time: '09:00' });
+    expect(entryOf(db, placed.id).start_at).toBe('2026-07-22T07:00:00Z');
+    editHabit(db, h.id, { days_of_week: '2,4' });
+    expect(entryOf(db, placed.id).start_at).toBe('2026-07-22T07:00:00Z');
+  });
+
+  it('unplace deletes a placed instance and frees the slot; generated ones refuse', () => {
+    const db = setup();
+    const h = createHabit(db, {
+      project_id: 'me', title: 'Run', duration_minutes: 45,
+      times_per_week: 1, start_time: '07:00', timezone: 'UTC',
+    });
+    const [gen] = generateHabitInstances(db, h.id, '2026-07-20', '2026-07-26');
+    expect(() => unplaceHabitInstance(db, gen.id)).toThrow(/skip it instead/);
+    skipHabitInstance(db, gen.id);
+    const a = placeHabitInstance(db, h.id, '2026-07-25T10:00:00Z');
+    unplaceHabitInstance(db, a.instance.id);
+    expect(count(db, 'SELECT COUNT(*) AS n FROM time_entry WHERE id = ?', a.entry.id)).toBe(0);
+    // Same slot again: no 409.
+    placeHabitInstance(db, h.id, '2026-07-25T10:00:00Z');
+  });
+
+  it('a target-form habit can be placed into a week not yet filled', () => {
+    const db = setup();
+    const h = createHabit(db, {
+      project_id: 'me', title: 'Run', duration_minutes: 45,
+      times_per_week: 3, start_time: '07:00', timezone: 'UTC',
+    });
+    placeHabitInstance(db, h.id, '2026-07-25T10:00:00Z'); // Saturday
+    // Generation then fills only what is left: 2 more, not 3.
+    generateHabitInstances(db, h.id, '2026-07-20', '2026-07-26');
+    expect(count(db, 'SELECT COUNT(*) AS n FROM habit_instances WHERE habit_id = ?', h.id)).toBe(3);
+  });
+
+  it('edits never create or move a session into the past', () => {
+    const db = setup(); // now = Wed 2026-07-15 12:00Z
+    const h = createHabit(db, {
+      project_id: 'me', title: 'Stretch', duration_minutes: 30,
+      days_of_week: '2,4', start_time: '07:00', timezone: 'UTC',
+    });
+    generateHabitInstances(db, h.id, '2026-07-13', '2026-07-19');
+    editHabit(db, h.id, { days_of_week: '1,3,5' });
+    const starts = (db
+      .prepare(
+        `SELECT te.start_at FROM habit_instances hi JOIN time_entry te ON te.id = hi.time_entry_id
+          WHERE hi.habit_id = ? AND hi.scheduled_start >= ?`,
+      )
+      .all(h.id, '2026-07-15T00:00:00Z') as Array<{ start_at: string }>).map((r) => r.start_at);
+    // Wed 07:00 already passed: not created. Fri 07:00 is future.
+    expect(starts).toEqual(['2026-07-17T07:00:00Z']);
+
+    const h2 = createHabit(db, {
+      project_id: 'me', title: 'Evening', duration_minutes: 30,
+      days_of_week: '3', start_time: '18:00', timezone: 'UTC',
+    });
+    const [wed] = generateHabitInstances(db, h2.id, '2026-07-15', '2026-07-15');
+    editHabit(db, h2.id, { start_time: '07:00' });
+    expect(entryOf(db, wed.id).start_at).toBe('2026-07-15T18:00:00Z');
+  });
+
+  it('duration edits keep instance and entry in agreement; a custom end survives a title edit', () => {
+    const db = setup();
+    const h = createHabit(db, {
+      project_id: 'me', title: 'Stretch', duration_minutes: 30,
+      days_of_week: '4,5', start_time: '09:00', timezone: 'UTC',
+    });
+    const [thu, fri] = generateHabitInstances(db, h.id, '2026-07-16', '2026-07-17');
+    moveEntryRespectingHabit(db, thu.time_entry_id!, '2026-07-18T10:00:00Z');
+    moveEntryRespectingHabit(db, fri.time_entry_id!, fri.scheduled_start, {
+      newEnd: '2026-07-17T10:30:00Z',
+    });
+    editHabit(db, h.id, { title: 'Stretch more' });
+    expect(entryOf(db, fri.id).end_at).toBe('2026-07-17T10:30:00Z');
+
+    editHabit(db, h.id, { duration_minutes: 60 });
+    const t = entryOf(db, thu.id);
+    expect(t.end_at).toBe('2026-07-18T11:00:00Z');
+    expect(t.scheduled_end).toBe('2026-07-16T10:00:00Z');
+  });
+
+  it('a retired habit can still release its minutes', () => {
+    const db = setup();
+    const h = createHabit(db, {
+      project_id: 'me', title: 'Stretch', duration_minutes: 30,
+      times_per_week: 2, start_time: '09:00', timezone: 'UTC',
+    });
+    const id = String(h.id);
+    assignHours(db, { envelope_type: 'habit', envelope_id: id, week_start: '2026-07-13', minutes: 120 });
+    retireHabit(db, h.id);
+    pullHours(db, { week_start: '2026-07-13', from: { type: 'habit', id }, minutes: 60 });
+    assignHours(db, { envelope_type: 'habit', envelope_id: id, week_start: '2026-07-13', minutes: null });
   });
 });

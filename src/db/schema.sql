@@ -72,6 +72,7 @@ CREATE TABLE IF NOT EXISTS habit_instances (
   calendar_event_id TEXT,
   completed_at      TEXT,
   time_entry_id     INTEGER REFERENCES time_entry(id), -- indexed in migrate() (#173)
+  origin            TEXT NOT NULL DEFAULT 'generated', -- 'generated' | 'placed' (#138)
   UNIQUE(habit_id, scheduled_start)
 );
 

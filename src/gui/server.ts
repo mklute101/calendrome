@@ -58,6 +58,7 @@ import {
   guiHabitSkip,
   guiHabitMove,
   guiPlaceHabit,
+  guiUnplaceHabit,
   reopenHabitInstance,
 } from './mutations.js';
 import type { EnvelopeRef, EnvelopeType } from '../assignments.js';
@@ -420,6 +421,15 @@ export function createApp(
     }
     const db = getDb();
     mutate(res, () => guiPlaceHabit(db, { habit_id, start })).finally(() => db.close());
+  });
+
+  /**
+   * Undo a habit placement (#138): deletes a PLANNED, hand-placed
+   * instance and its entry. 409 for a generated or non-PLANNED one.
+   */
+  app.post('/api/habit-instances/:id/unplace', (req, res) => {
+    const db = getDb();
+    mutate(res, () => guiUnplaceHabit(db, idParam(req))).finally(() => db.close());
   });
 
   /**

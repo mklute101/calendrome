@@ -51,6 +51,7 @@ import {
   listHabits,
   generateHabitInstances,
   placeHabitInstance,
+  unplaceHabitInstance,
   editHabit,
   retireHabit,
   deleteHabit,
@@ -582,9 +583,9 @@ export function buildTools(
      * Put one habit instance on the calendar at a specific time (#138).
      *
      * For the off-schedule case: a skipped Monday made up on Tuesday,
-     * or a 3x/week session dropped onto Saturday. The habit's local
-     * week is materialized first, and placement is allowed only while
-     * that week is under target (PLANNED + COMPLETE instances below
+     * or a 3x/week session dropped onto Saturday of a week not yet
+     * filled. Placement is allowed only while the habit's local week
+     * is under target (PLANNED + COMPLETE instances below
      * the weekly target; a skip frees a slot). Duration is the habit's
      * instance duration. Any time is valid — out-of-window placements
      * return an informational note, never a refusal.
@@ -600,7 +601,9 @@ export function buildTools(
         'Place one habit instance at a specific time, off its generated ' +
         "schedule. Allowed only while the habit's local week is under " +
         'target (PLANNED + COMPLETE < target; skipping frees a slot). ' +
-        'Out-of-window placements just work and return a note.',
+        'An N-per-week habit can be placed into a week not yet filled; ' +
+        'a fixed-days week counts its listed days. Out-of-window ' +
+        'placements just work and return a note.',
       inputSchema: {
         type: 'object',
         required: ['habit_id', 'start'],
@@ -620,14 +623,40 @@ export function buildTools(
       },
     },
     /**
+     * Undo a habit placement (#138): delete a PLANNED instance that
+     * was placed by hand (place_habit_instance), with its unconfirmed
+     * entry. Generated instances are skipped (skip_habit_instance),
+     * not unplaced.
+     *
+     * @example
+     * unplace_habit_instance({ id: 57 })
+     *
+     * @see place_habit_instance, skip_habit_instance
+     */
+    {
+      name: 'unplace_habit_instance',
+      description:
+        'Delete a hand-placed PLANNED habit instance and its entry (undo of ' +
+        'place_habit_instance). Generated instances must be skipped instead.',
+      inputSchema: {
+        type: 'object',
+        required: ['id'],
+        properties: { id: { type: 'integer' } },
+      },
+      async handler(args) {
+        return unplaceHabitInstance(db, requireNumber(args, 'id'));
+      },
+    },
+    /**
      * Edit a habit and carry the change into its future (#131).
      *
      * Future PLANNED instances with an unconfirmed entry follow the
      * edit: new title/project/duration apply to them; a new start_time
      * or timezone moves the ones still on their generated slot (ones
-     * the user moved or placed keep their time); a frequency change
-     * (days_of_week / times_per_week; setting one clears the other)
-     * removes the unmoved future ones and re-materializes from today.
+     * the user moved, resized or placed keep their time; none is moved
+     * into the past); a frequency change (days_of_week /
+     * times_per_week; setting one clears the other) removes the
+     * following ones and re-materializes future slots only.
      * Past, confirmed, completed and skipped rows are never touched.
      *
      * @example
@@ -640,8 +669,10 @@ export function buildTools(
       description:
         'Edit a habit (title, notes, duration_minutes, start_time, ' +
         'days_of_week | times_per_week, timezone, project_id). Future ' +
-        'unconfirmed instances follow; past/confirmed/completed rows are ' +
-        'untouched. Retired habits cannot be edited.',
+        'unconfirmed generated instances follow the new schedule (never ' +
+        'into the past); placed or moved ones keep their time. Past, ' +
+        'confirmed and completed rows are untouched. Retired habits ' +
+        'cannot be edited.',
       inputSchema: {
         type: 'object',
         required: ['habit_id'],
@@ -677,7 +708,8 @@ export function buildTools(
      * PLANNED instances with unconfirmed entries are removed. Completed
      * and skipped instances, past ones awaiting review, and every
      * confirmed entry stay as history; its assignment rows stay
-     * readable, but new assign_hours / pull_hours to it error.
+     * readable and can still be released (pull_hours out of it,
+     * assign_hours null), but new minutes into it error.
      *
      * @example
      * retire_habit({ habit_id: 4 })
