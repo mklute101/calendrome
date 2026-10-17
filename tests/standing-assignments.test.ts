@@ -19,10 +19,10 @@ import {
 } from '../src/projects.js';
 import {
   STANDING_WEEK,
-  effectiveProjectAssignment,
-  foldWeeklyBudgetColumn,
+  effectiveAssignment,
   getStandingProjectMinutes,
 } from '../src/standing-assignments.js';
+import { foldWeeklyBudgetColumn } from '../src/db/migrate.js';
 import { insertTimeEntry } from '../src/time-entry.js';
 
 // The pre-#173 projects DDL, verbatim from origin/main before the cutover.
@@ -181,7 +181,7 @@ describe('M5 migration: weekly_budget_minutes -> standing assignments (#173)', (
     expect(env.assigned).toBe(900);
     for (const week of [PAST, CURRENT, FUTURE]) {
       expect(getProjectBudget(db, 'acme', week).assigned_minutes).toBe(600);
-      expect(effectiveProjectAssignment(db, 'acme', week)).toEqual({
+      expect(effectiveAssignment(db, 'project', 'acme', week)).toEqual({
         minutes: 600,
         source: 'standing',
         snoozed: false,

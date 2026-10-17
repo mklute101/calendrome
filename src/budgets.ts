@@ -3,7 +3,12 @@ import { projectTimezone } from './categories.js';
 import { weekRange, type WeekRange } from './day-range.js';
 import { assertMonday } from './goals.js';
 import { listProjects } from './projects.js';
-import { effectiveProjectAssignment } from './standing-assignments.js';
+import { CREDITED_ELSEWHERE_SQL } from './assignments.js';
+import {
+  loadAssignments,
+  resolveAssignment,
+  type AssignmentMap,
+} from './standing-assignments.js';
 
 export interface BudgetStatus {
   project_id: string;
@@ -45,18 +50,19 @@ export function budgetWeekRange(db: DB, projectId: string, weekStart: string): W
  *   - CONFIRMED rows in the week range count as `confirmed_minutes`
  *   - UNCONFIRMED rows in the week range count as `scheduled_minutes`
  *
- * Activity follows the envelope attribution rule (#173): entries
- * carrying a `goal_id` count against that goal's envelope, and habit
- * entries against the habit's, never also against the project cap.
- * Otherwise pulling hours from a project into one of its own goals
- * would count the goal block twice (once as goal activity, once as
- * project activity against the reduced cap).
+ * Activity follows the envelope attribution rule (#173): goal blocks
+ * and habit time count against their own goal / habit envelope, NOT
+ * against the project's budget — otherwise pulling hours from a
+ * project into one of its own goals would count the goal block twice.
+ * Exactly the entries an active goal or habit credits are excluded
+ * (`CREDITED_ELSEWHERE_SQL`); time on a deactivated goal, a retired
+ * habit, or an unlinked habit entry counts against the project again.
  *
  * `assigned_minutes` is the assignment in force for the week (#173):
  * the week's explicit `assignments` row if one exists (an
  * `assign_hours` / `pull_hours` write), else the project's standing
- * row, else NULL (uncapped) — resolved by `effectiveProjectAssignment`,
- * the one resolution envelopes and pulls also use. `week_start` must
+ * row, else NULL (uncapped) — resolved by `resolveAssignment`, the one
+ * resolution envelopes and pulls also use. `week_start` must
  * be a Monday, as for `get_envelopes`.
  *
  * Minute totals prefer `actual_minutes` when present, falling back to
@@ -69,9 +75,18 @@ export function getProjectBudget(
   weekStart: string,
 ): BudgetStatus {
   assertMonday(weekStart);
+  return projectBudget(db, projectId, weekStart, loadAssignments(db, weekStart));
+}
+
+function projectBudget(
+  db: DB,
+  projectId: string,
+  weekStart: string,
+  assignments: AssignmentMap,
+): BudgetStatus {
   const { startIso, endIso } = budgetWeekRange(db, projectId, weekStart);
 
-  const effective = effectiveProjectAssignment(db, projectId, weekStart);
+  const effective = resolveAssignment(assignments, 'project', projectId);
   const snoozed = effective.snoozed;
   const assigned = effective.minutes;
 
@@ -87,8 +102,7 @@ export function getProjectBudget(
          COALESCE(SUM(CASE WHEN te.status = 'UNCONFIRMED' THEN ${minutesExpr} ELSE 0 END), 0) AS scheduled
          FROM time_entry te
         WHERE te.project_id = ?
-          AND te.goal_id IS NULL
-          AND te.source != 'habit'
+          AND NOT ${CREDITED_ELSEWHERE_SQL}
           AND te.start_at >= ?
           AND te.start_at < ?`,
     )
@@ -119,6 +133,7 @@ export function getProjectBudget(
 
 export function getAllBudgets(db: DB, weekStart: string): BudgetStatus[] {
   assertMonday(weekStart);
+  const assignments = loadAssignments(db, weekStart); // once per call
   const projects = listProjects(db, { active: true });
-  return projects.map((p) => getProjectBudget(db, p.id, weekStart));
+  return projects.map((p) => projectBudget(db, p.id, weekStart, assignments));
 }

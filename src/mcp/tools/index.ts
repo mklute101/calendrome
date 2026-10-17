@@ -581,7 +581,8 @@ export function buildTools(
         'For a project + week, return assigned/confirmed/scheduled/available/overspent/snoozed. ' +
         "assigned is the week's assign_hours/pull_hours row if any, else the project's standing " +
         'weekly_budget_minutes (same resolution as get_envelopes); null = uncapped, or snoozed when snoozed is true. ' +
-        "Activity excludes goal blocks and habit time, which credit their own envelopes. week_start must be a Monday. " +
+        "Goal blocks and habit time do NOT count toward the project's budget: they count toward their own goal/habit " +
+        '(see get_envelopes), unless that goal or habit has been deactivated. week_start must be a Monday. ' +
         "week_start is the Monday in the project's category local time (#146).",
       inputSchema: {
         type: 'object',
@@ -605,7 +606,7 @@ export function buildTools(
       name: 'get_all_budgets',
       description:
         'Get the assigned/confirmed/scheduled/available rollup for every active project for a given week ' +
-        '(each row as get_project_budget). ' +
+        '(each row as get_project_budget: goal blocks and habit time count toward their goal/habit, not the project). ' +
         "week_start must be the Monday in each project's category local time (#146).",
       inputSchema: {
         type: 'object',

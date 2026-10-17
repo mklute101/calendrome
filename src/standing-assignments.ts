@@ -11,12 +11,14 @@
  *   (envelope_type = 'project', envelope_id = <project id>,
  *    week_start = 'standing', minutes = <cap>)
  *
- * Resolution for any week W, every reader:
- *   1. an explicit `(project, id, W)` row wins — `minutes` NULL there is
+ * Resolution for any envelope (project, goal or habit) and week W,
+ * every reader (`resolveAssignment`):
+ *   1. an explicit `(type, id, W)` row wins — `minutes` NULL there is
  *      a snooze (unfunded for W);
- *   2. else the standing row's minutes;
- *   3. else no cap (uncapped project, #150) — absence of a standing row,
- *      never a NULL standing row.
+ *   2. else the envelope's standing row (only projects have one);
+ *   3. else 'none': an uncapped project (#150), or for a goal/habit
+ *      its derived ask (weekly ask, frequency ask), which the caller
+ *      computes (`standingDefault` in src/assignments.ts).
  *
  * Standing rows exist only for project envelopes: goal and habit
  * defaults are derived (weekly ask, frequency ask), not stored.
@@ -26,7 +28,6 @@
  * name on create/update/list project — it is the standing row, read
  * and written through this module.
  */
-import { existsSync } from 'node:fs';
 import type { DB } from './db/connection.js';
 import { now } from './clock.js';
 
@@ -73,104 +74,84 @@ export function setStandingProjectMinutes(
   ).run(projectId, STANDING_WEEK, minutes, now());
 }
 
-export interface EffectiveProjectAssignment {
-  /** Minutes in force for the week; NULL = uncapped or snoozed. */
+export type AssignmentSource = 'week' | 'standing' | 'none';
+
+export interface EffectiveAssignment {
+  /** Minutes in force for the week; NULL = snoozed, or 'none'. */
   minutes: number | null;
-  /** Where the number came from. */
-  source: 'week' | 'standing' | 'none';
+  /** Where the number came from; 'none' = no row applies. */
+  source: AssignmentSource;
   /** An explicit NULL row for this week (unfunded, hours perish). */
   snoozed: boolean;
 }
 
-/**
- * The assignment in force for a project in a given week — the single
- * resolution every budget reader goes through (see module header).
- */
-export function effectiveProjectAssignment(
-  db: DB,
-  projectId: string,
-  weekStart: string,
-): EffectiveProjectAssignment {
-  const row = db
-    .prepare(
-      `SELECT minutes FROM assignments
-        WHERE envelope_type = 'project' AND envelope_id = ? AND week_start = ?`,
-    )
-    .get(projectId, weekStart) as { minutes: number | null } | undefined;
-  if (row !== undefined) {
-    return { minutes: row.minutes, source: 'week', snoozed: row.minutes === null };
+/** Every assignment row that can apply to one week: its rows + standing rows. */
+export type AssignmentMap = Map<string, { week: number | null | undefined; standing: number | undefined }>;
+
+const key = (type: string, id: string) => `${type}:${id}`;
+
+type Row = { envelope_type: string; envelope_id: string; week_start: string; minutes: number | null };
+
+function toMap(rows: Row[]): AssignmentMap {
+  const map: AssignmentMap = new Map();
+  for (const r of rows) {
+    const k = key(r.envelope_type, r.envelope_id);
+    const entry = map.get(k) ?? { week: undefined, standing: undefined };
+    if (r.week_start === STANDING_WEEK) {
+      if (r.minutes !== null) entry.standing = r.minutes;
+    } else {
+      entry.week = r.minutes;
+    }
+    map.set(k, entry);
   }
-  const standing = getStandingProjectMinutes(db, projectId);
-  return {
-    minutes: standing,
-    source: standing === null ? 'none' : 'standing',
-    snoozed: false,
-  };
-}
-
-function hasBudgetColumn(db: DB): boolean {
-  const cols = db.prepare(`PRAGMA table_info('projects')`).all() as { name: string }[];
-  return cols.some((c) => c.name === 'weekly_budget_minutes');
+  return map;
 }
 
 /**
- * Path of the one-shot pre-migration backup for a file-backed DB, or
- * null for an in-memory / anonymous one.
+ * Load the week's explicit rows and all standing rows in one query
+ * (`week_start IN (?, 'standing')`), keyed by envelope. Readers that
+ * resolve many envelopes for one week (getEnvelopes, getAllBudgets)
+ * load once and resolve from the map.
  */
-export function preFoldBackupPath(db: DB): string | null {
-  if (db.memory || !db.name) return null;
-  return `${db.name}.pre-173.bak`;
-}
-
-/**
- * Copy the DB next to itself before the irreversible column drop
- * (`VACUUM INTO`, a consistent snapshot even under WAL). Never
- * overwrites an existing backup: a second boot, or a concurrent one
- * that lost the race, keeps the first copy. Logged on stderr (stdout
- * is the MCP protocol channel).
- */
-function backupBeforeFold(db: DB): void {
-  const path = preFoldBackupPath(db);
-  if (path === null || existsSync(path)) return;
-  try {
-    db.prepare('VACUUM INTO ?').run(path);
-  } catch (err) {
-    // A concurrent boot wrote it between the check and the VACUUM.
-    if (existsSync(path)) return;
-    throw err;
-  }
-  console.error(
-    `calendrome: backed up ${db.name} to ${path} before folding weekly_budget_minutes into assignments (#173)`,
+export function loadAssignments(db: DB, weekStart: string): AssignmentMap {
+  return toMap(
+    db
+      .prepare(
+        `SELECT envelope_type, envelope_id, week_start, minutes FROM assignments
+          WHERE week_start IN (?, ?)`,
+      )
+      .all(weekStart, STANDING_WEEK) as Row[],
   );
 }
 
-/**
- * The M5 migration (#173): fold `projects.weekly_budget_minutes` into
- * standing assignment rows, then drop the column.
- *
- * - A file-backed DB that still has the column is first copied to
- *   `<db>.pre-173.bak` (see `backupBeforeFold`).
- * - The fold runs in one IMMEDIATE transaction, so a failure leaves the
- *   column (and every cap) intact, and two processes booting at once
- *   serialize on the write lock (the connection's busy timeout makes
- *   the second wait). The column check is repeated under the lock: if
- *   the other process already folded, this is a no-op.
- * - Idempotent: a DB without the column is a no-op. An existing
- *   standing row (not possible before this migration, but cheap to
- *   respect) wins.
- */
-export function foldWeeklyBudgetColumn(db: DB): void {
-  if (!hasBudgetColumn(db)) return;
-  backupBeforeFold(db);
-  db.transaction(() => {
-    if (!hasBudgetColumn(db)) return;
-    db.prepare(
-      `INSERT OR IGNORE INTO assignments
-         (envelope_type, envelope_id, week_start, minutes, updated_at)
-       SELECT 'project', id, ?, weekly_budget_minutes, ?
-         FROM projects
-        WHERE weekly_budget_minutes IS NOT NULL`,
-    ).run(STANDING_WEEK, now());
-    db.exec('ALTER TABLE projects DROP COLUMN weekly_budget_minutes');
-  }).immediate();
+/** The one resolution (see module header), from a loaded map. */
+export function resolveAssignment(
+  map: AssignmentMap,
+  type: string,
+  id: string,
+): EffectiveAssignment {
+  const entry = map.get(key(type, id));
+  if (entry !== undefined && entry.week !== undefined) {
+    return { minutes: entry.week, source: 'week', snoozed: entry.week === null };
+  }
+  if (entry !== undefined && entry.standing !== undefined) {
+    return { minutes: entry.standing, source: 'standing', snoozed: false };
+  }
+  return { minutes: null, source: 'none', snoozed: false };
+}
+
+/** `resolveAssignment` for one envelope, without a preloaded map. */
+export function effectiveAssignment(
+  db: DB,
+  type: string,
+  id: string,
+  weekStart: string,
+): EffectiveAssignment {
+  const rows = db
+    .prepare(
+      `SELECT envelope_type, envelope_id, week_start, minutes FROM assignments
+        WHERE envelope_type = ? AND envelope_id = ? AND week_start IN (?, ?)`,
+    )
+    .all(type, id, weekStart, STANDING_WEEK) as Row[];
+  return resolveAssignment(toMap(rows), type, id);
 }

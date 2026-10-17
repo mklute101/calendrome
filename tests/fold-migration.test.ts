@@ -2,9 +2,10 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { existsSync, mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { openDatabase, type DB } from '../src/db/connection.js';
-import { migrate } from '../src/db/migrate.js';
-import { preFoldBackupPath } from '../src/standing-assignments.js';
+import { migrate, preFoldBackupPath } from '../src/db/migrate.js';
 
 /** A file DB with the pre-#173 projects table (cap in the column). */
 function legacyFile(dir: string): string {
@@ -69,6 +70,30 @@ describe('M5 fold: backup before the irreversible drop (#173 review)', () => {
     migrate(db);
     db.close();
     expect(existsSync(`${path}.pre-173.bak`)).toBe(false);
+  });
+});
+
+describe('M5 fold: the backup never lands in the public repo (#173 review round 2)', () => {
+  const repoRoot = fileURLToPath(new URL('..', import.meta.url));
+  const inGit = (() => {
+    try {
+      execFileSync('git', ['rev-parse', '--git-dir'], { cwd: repoRoot, stdio: 'ignore' });
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+
+  it.skipIf(!inGit)('git ignores the backup of the default repo-root DB and of the demo DB', () => {
+    for (const db of ['calendrome.db', 'demo/calendrome-demo.db']) {
+      const backup = `${db}.pre-173.bak`;
+      // Same naming rule the migration uses.
+      expect(preFoldBackupPath({ memory: false, name: db } as unknown as DB)).toBe(backup);
+      // Exits non-zero (throws) when the path is not ignored.
+      expect(() =>
+        execFileSync('git', ['check-ignore', '-q', backup], { cwd: repoRoot, stdio: 'ignore' }),
+      ).not.toThrow();
+    }
   });
 });
 

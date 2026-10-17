@@ -2,8 +2,8 @@ import { describe, it, expect } from 'vitest';
 import { freshDb } from './helpers/db.js';
 import type { DB } from '../src/db/connection.js';
 import { createProject } from '../src/projects.js';
-import { createGoal } from '../src/goals.js';
-import { createHabit, generateHabitInstances, completeHabitInstance } from '../src/habits.js';
+import { createGoal, deactivateGoal } from '../src/goals.js';
+import { createHabit, deactivateHabit, generateHabitInstances, completeHabitInstance } from '../src/habits.js';
 import { insertTimeEntry } from '../src/time-entry.js';
 import { getProjectBudget, getAllBudgets } from '../src/budgets.js';
 import { assignHours, getEnvelopes, pullHours } from '../src/assignments.js';
@@ -109,7 +109,7 @@ describe('one resolution: budgets, envelopes and pulls agree on every assignment
     it(c.name, async () => {
       const db = freshDb();
       createProject(db, { id: 'acme', name: 'Acme', prefix: 'ACME', weekly_budget_minutes: c.standing });
-      createProject(db, { id: 'sink', name: 'Sink', prefix: 'SINK' });
+      createProject(db, { id: 'sink', name: 'Sink', prefix: 'SINK', weekly_budget_minutes: 60 });
       if (c.week !== undefined) {
         assignHours(db, { envelope_type: 'project', envelope_id: 'acme', week_start: WEEK, minutes: c.week });
       }
@@ -153,5 +153,140 @@ describe('budget reads require a Monday, like get_envelopes (#173 review)', () =
     expect(() => getEnvelopes(db, '2026-07-14')).toThrow(/Monday/);
     const tool = buildTools(db).find((t) => t.name === 'get_all_budgets')!;
     await expect(tool.handler({ week_start: '2026-07-14' })).rejects.toThrow(/Monday/);
+  });
+
+  // Round 2 (F): the error names the Monday to retry with.
+  it('names the Monday of the given week in the error', () => {
+    const db = freshDb();
+    createProject(db, { id: 'acme', name: 'Acme', prefix: 'ACME', weekly_budget_minutes: 600 });
+    expect(() => getProjectBudget(db, 'acme', '2026-07-16')).toThrow(
+      'week_start must be a Monday, got 2026-07-16 (a Thursday); use 2026-07-13, the Monday of that week',
+    );
+    // Sunday belongs to the week that started six days earlier.
+    expect(() => getAllBudgets(db, '2026-07-19')).toThrow(/a Sunday\); use 2026-07-13,/);
+  });
+});
+
+describe('goal and habit envelopes resolve the same way (#173 review round 2)', () => {
+  type Case = { name: string; week?: number | null; assigned: number | null; snoozed: boolean; pullable: number };
+  const derived = 180;
+  const cases: Case[] = [
+    { name: 'explicit row', week: 120, assigned: 120, snoozed: false, pullable: 120 },
+    { name: 'explicit snooze', week: null, assigned: null, snoozed: true, pullable: 0 },
+    { name: 'explicit 0', week: 0, assigned: 0, snoozed: false, pullable: 0 },
+    { name: 'no row: derived ask', assigned: derived, snoozed: false, pullable: derived },
+  ];
+
+  function setup() {
+    const db = freshDb();
+    createProject(db, { id: 'acme', name: 'Acme', prefix: 'ACME', weekly_budget_minutes: 600 });
+    const goal = createGoal(db, { project_id: 'acme', title: 'Spanish', target_minutes: derived, refill_period: 'week' });
+    const habit = createHabit(db, {
+      project_id: 'acme',
+      title: 'Run',
+      duration_minutes: 60,
+      times_per_week: 3, // frequency ask = 180
+      start_time: '07:00',
+      timezone: 'UTC',
+    });
+    return { db, ids: { goal: String(goal.id), habit: String(habit.id) } };
+  }
+
+  for (const type of ['goal', 'habit'] as const) {
+    for (const c of cases) {
+      it(`${type}: ${c.name}`, () => {
+        const { db, ids } = setup();
+        const id = ids[type];
+        if (c.week !== undefined) {
+          assignHours(db, { envelope_type: type, envelope_id: id, week_start: WEEK, minutes: c.week });
+        }
+        const env = getEnvelopes(db, WEEK).find((e) => e.envelope_type === type && e.envelope_id === id)!;
+        expect(env.assigned).toBe(c.assigned);
+        expect(env.funding === 'snoozed').toBe(c.snoozed);
+        expect(() =>
+          pullHours(db, { week_start: WEEK, from: { type, id }, to: { type: 'project', id: 'acme' }, minutes: c.pullable + 1 }),
+        ).toThrow(new RegExp(`only ${c.pullable}m assigned`));
+        if (c.pullable > 0) {
+          pullHours(db, { week_start: WEEK, from: { type, id }, to: { type: 'project', id: 'acme' }, minutes: c.pullable });
+          expect(getEnvelopes(db, WEEK).find((e) => e.envelope_type === type && e.envelope_id === id)!.assigned).toBe(0);
+        }
+      });
+    }
+  }
+});
+
+describe('pull_hours into an uncapped project is rejected (#173 review round 2)', () => {
+  it('throws with the fix, writes nothing; a capped or snoozed project still receives', async () => {
+    const db = freshDb();
+    createProject(db, { id: 'acme', name: 'Acme', prefix: 'ACME', weekly_budget_minutes: 600 });
+    createProject(db, { id: 'open', name: 'Open', prefix: 'OPEN' });
+    const pull = () =>
+      pullHours(db, { week_start: WEEK, from: { type: 'project', id: 'acme' }, to: { type: 'project', id: 'open' }, minutes: 60 });
+    expect(pull).toThrow(/project open: it is uncapped.*update_project.*assign_hours for week 2026-07-13/);
+    const tool = buildTools(db).find((t) => t.name === 'pull_hours')!;
+    await expect(
+      tool.handler({ week_start: WEEK, from: { type: 'project', id: 'acme' }, to: { type: 'project', id: 'open' }, minutes: 60 }),
+    ).rejects.toThrow(/uncapped/);
+    // Nothing written: acme still rides its standing cap, no moves logged.
+    expect(getProjectBudget(db, 'acme', WEEK).assigned_minutes).toBe(600);
+    expect(db.prepare('SELECT COUNT(*) AS n FROM envelope_moves').get()).toEqual({ n: 0 });
+    expect(getProjectBudget(db, 'open', WEEK).assigned_minutes).toBeNull();
+
+    // Assigning this week first makes it a capped envelope: the pull works.
+    assignHours(db, { envelope_type: 'project', envelope_id: 'open', week_start: WEEK, minutes: 0 });
+    pull();
+    expect(getProjectBudget(db, 'open', WEEK).assigned_minutes).toBe(60);
+    // A snoozed project is re-funded from 0, as before.
+    assignHours(db, { envelope_type: 'project', envelope_id: 'open', week_start: WEEK, minutes: null });
+    pull();
+    expect(getProjectBudget(db, 'open', WEEK).assigned_minutes).toBe(60);
+  });
+});
+
+describe('time no envelope credits falls back to the project budget (#173 review round 2)', () => {
+  it('6h of goal blocks: excluded while the goal is active, counted again once it is deactivated', () => {
+    const db = freshDb();
+    createProject(db, { id: 'acme', name: 'Acme', prefix: 'ACME', weekly_budget_minutes: 600 });
+    const goal = createGoal(db, { project_id: 'acme', title: 'Prospecting', target_minutes: 600, due: '2026-08-10' });
+    for (const day of ['13', '14', '15']) {
+      entry(db, `2026-07-${day}T09:00:00Z`, 120, { project_id: 'acme', goal_id: goal.id });
+    }
+    expect(getProjectBudget(db, 'acme', WEEK).confirmed_minutes).toBe(0);
+    expect(projectEnvelope(db, 'acme').activity.confirmed_minutes).toBe(0);
+    deactivateGoal(db, goal.id);
+    expect(getProjectBudget(db, 'acme', WEEK).confirmed_minutes).toBe(360);
+    expect(projectEnvelope(db, 'acme').activity.confirmed_minutes).toBe(360);
+  });
+
+  it('a retired habit, and a habit entry with no instance link, count against the project', () => {
+    const db = freshDb();
+    createProject(db, { id: 'acme', name: 'Acme', prefix: 'ACME', weekly_budget_minutes: 600 });
+    const h = createHabit(db, {
+      project_id: 'acme',
+      title: 'Standup',
+      duration_minutes: 60,
+      days_of_week: '1,2',
+      start_time: '09:00',
+      timezone: 'UTC',
+    });
+    for (const inst of generateHabitInstances(db, h.id, '2026-07-13', '2026-07-14')) {
+      completeHabitInstance(db, inst.id);
+    }
+    expect(getProjectBudget(db, 'acme', WEEK).confirmed_minutes).toBe(0);
+    // Retire it (soft delete keeps the history): the 2h comes back.
+    deactivateHabit(db, h.id);
+    expect(getProjectBudget(db, 'acme', WEEK).confirmed_minutes).toBe(120);
+    expect(projectEnvelope(db, 'acme').activity.confirmed_minutes).toBe(120);
+
+    // An unlinked source='habit' entry is credited nowhere else either.
+    insertTimeEntry(db, {
+      project_id: 'acme',
+      start_at: '2026-07-16T09:00:00Z',
+      end_at: '2026-07-16T09:30:00Z',
+      status: 'CONFIRMED',
+      source: 'habit',
+    });
+    expect(getProjectBudget(db, 'acme', WEEK).confirmed_minutes).toBe(150);
+    expect(projectEnvelope(db, 'acme').activity.confirmed_minutes).toBe(150);
   });
 });

@@ -61,6 +61,7 @@ describe('buildMovesPayload', () => {
     const db = setup();
     createProject(db, { id: 'hobby', name: 'Hobby', prefix: 'HOBBY' });
     updateProject(db, 'hobby', { weekly_budget_minutes: 300 });
+    updateProject(db, 'acme', { weekly_budget_minutes: 600 }); // an uncapped project cannot receive a pull
     pullHours(db, {
       week_start: WEEK,
       from: { type: 'project', id: 'hobby' },
