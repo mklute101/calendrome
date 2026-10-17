@@ -216,7 +216,7 @@ describe('goal and habit envelopes resolve the same way (#173 review round 2)', 
 });
 
 describe('pull_hours into an uncapped project is rejected (#173 review round 2)', () => {
-  it('throws with the fix, writes nothing; a capped or snoozed project still receives', async () => {
+  it('throws with the fix, writes nothing; a week assignment makes it receivable', async () => {
     const db = freshDb();
     createProject(db, { id: 'acme', name: 'Acme', prefix: 'ACME', weekly_budget_minutes: 600 });
     createProject(db, { id: 'open', name: 'Open', prefix: 'OPEN' });
@@ -236,10 +236,34 @@ describe('pull_hours into an uncapped project is rejected (#173 review round 2)'
     assignHours(db, { envelope_type: 'project', envelope_id: 'open', week_start: WEEK, minutes: 0 });
     pull();
     expect(getProjectBudget(db, 'open', WEEK).assigned_minutes).toBe(60);
-    // A snoozed project is re-funded from 0, as before.
+    // Snoozing it again makes it uncapped-and-snoozed: still no cap to
+    // pull into (round 3; a snoozed *capped* project re-funds instead).
     assignHours(db, { envelope_type: 'project', envelope_id: 'open', week_start: WEEK, minutes: null });
-    pull();
-    expect(getProjectBudget(db, 'open', WEEK).assigned_minutes).toBe(60);
+    expect(pull).toThrow(/uncapped/);
+  });
+});
+
+describe('pull_hours: snoozed-uncapped is uncapped, snoozed-capped re-funds (#173 review round 3)', () => {
+  it('rejects a pull into an uncapped project whose week is snoozed', () => {
+    const db = freshDb();
+    createProject(db, { id: 'acme', name: 'Acme', prefix: 'ACME', weekly_budget_minutes: 600 });
+    createProject(db, { id: 'open', name: 'Open', prefix: 'OPEN' });
+    assignHours(db, { envelope_type: 'project', envelope_id: 'open', week_start: WEEK, minutes: null });
+    expect(() =>
+      pullHours(db, { week_start: WEEK, from: { type: 'project', id: 'acme' }, to: { type: 'project', id: 'open' }, minutes: 60 }),
+    ).toThrow(/project open: it is uncapped/);
+    expect(getProjectBudget(db, 'open', WEEK)).toMatchObject({ assigned_minutes: null, snoozed: true });
+    expect(getProjectBudget(db, 'acme', WEEK).assigned_minutes).toBe(600);
+    expect(db.prepare('SELECT COUNT(*) AS n FROM envelope_moves').get()).toEqual({ n: 0 });
+  });
+
+  it('a snoozed capped project re-funds from 0', () => {
+    const db = freshDb();
+    createProject(db, { id: 'acme', name: 'Acme', prefix: 'ACME', weekly_budget_minutes: 600 });
+    createProject(db, { id: 'hobby', name: 'Hobby', prefix: 'HOBBY', weekly_budget_minutes: 300 });
+    assignHours(db, { envelope_type: 'project', envelope_id: 'hobby', week_start: WEEK, minutes: null });
+    pullHours(db, { week_start: WEEK, from: { type: 'project', id: 'acme' }, to: { type: 'project', id: 'hobby' }, minutes: 60 });
+    expect(getProjectBudget(db, 'hobby', WEEK)).toMatchObject({ assigned_minutes: 60, snoozed: false });
   });
 });
 

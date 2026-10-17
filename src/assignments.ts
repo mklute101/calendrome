@@ -291,8 +291,14 @@ export function pullHours(db: DB, input: PullHoursInput): EnvelopeMove {
     if (to) {
       const { eff, have } = resolve(to);
       // Pulling into an uncapped project would silently turn "no cap"
-      // into a cap of exactly the pulled minutes for the week.
-      if (to.type === 'project' && eff.source === 'none') {
+      // into a cap of exactly the pulled minutes for the week. A project
+      // with no standing row and no non-null week row is uncapped, even
+      // if the week is snoozed; a snoozed *capped* project re-funds.
+      if (
+        to.type === 'project' &&
+        (eff.source === 'none' || eff.minutes === null) &&
+        getStandingProjectMinutes(db, to.id) === null
+      ) {
         throw new Error(
           `cannot pull into project ${to.id}: it is uncapped (no weekly budget). ` +
             `Set a cap first with update_project (weekly_budget_minutes), ` +
