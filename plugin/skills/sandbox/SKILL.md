@@ -142,3 +142,5 @@ Real lifecycle management for two background node processes from inside a Claude
 - `scripts/seed-demo.mjs` — demo data seeder used by `/calendrome:sandbox demo`
 - `scripts/seed-commitments.mjs` — commitments seeder (the
   design doc's worked examples); prints an envelope-call cheat-sheet
+- `scripts/seed-helpers.mjs` — clock-convention timestamps and envelope
+  wipes shared by both seeders

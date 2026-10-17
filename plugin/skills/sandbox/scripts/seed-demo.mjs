@@ -9,6 +9,7 @@
 // refuses to run if CALENDROME_DB is empty or matches calendrome.db.
 
 import Database from 'better-sqlite3';
+import { stampNow, wipeEnvelopes } from './seed-helpers.mjs';
 import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -27,28 +28,6 @@ if (resolve(dbPath).endsWith('/calendrome.db')) {
       `Point CALENDROME_DB at a sandbox file (e.g. ./sandbox.db).`,
   );
   process.exit(1);
-}
-
-// Bookkeeping stamps follow the server clock convention (src/clock.ts,
-// #149): canonical UTC ISO, shifted by CALENDROME_NOW (a fixed ISO
-// timestamp or a -3d/+2h/-90m offset) — never SQL-side datetime('now').
-function stampNow() {
-  const override = process.env.CALENDROME_NOW;
-  let ms = Date.now();
-  if (override) {
-    const offset = /^([+-])(\d+)([mhd])$/.exec(override);
-    if (offset) {
-      const unit = { m: 60_000, h: 3_600_000, d: 86_400_000 }[offset[3]];
-      ms += (offset[1] === '-' ? -1 : 1) * Number(offset[2]) * unit;
-    } else {
-      ms = Date.parse(override);
-      if (Number.isNaN(ms)) {
-        console.error(`CALENDROME_NOW is not an ISO timestamp or offset: ${override}`);
-        process.exit(1);
-      }
-    }
-  }
-  return new Date(ms).toISOString().replace(/\.\d{3}Z$/, 'Z');
 }
 
 const db = new Database(dbPath);
@@ -96,21 +75,9 @@ const seedGoalIds = db
   .prepare(`SELECT id FROM goals WHERE project_id IN (${placeholders})`)
   .all(...seedProjectIds)
   .map((r) => String(r.id));
-const wipeEnvelope = (type, ids) => {
-  if (ids.length === 0) return;
-  const idPh = ids.map(() => '?').join(',');
-  db.prepare(
-    `DELETE FROM assignments WHERE envelope_type = ? AND envelope_id IN (${idPh})`,
-  ).run(type, ...ids);
-  db.prepare(
-    `DELETE FROM envelope_moves
-      WHERE (from_type = ? AND from_id IN (${idPh}))
-         OR (to_type = ? AND to_id IN (${idPh}))`,
-  ).run(type, ...ids, type, ...ids);
-};
-wipeEnvelope('project', seedProjectIds);
-wipeEnvelope('habit', seedHabitIds);
-wipeEnvelope('goal', seedGoalIds);
+wipeEnvelopes(db, 'project', seedProjectIds);
+wipeEnvelopes(db, 'habit', seedHabitIds);
+wipeEnvelopes(db, 'goal', seedGoalIds);
 db.prepare(`DELETE FROM time_log WHERE task_id IN (SELECT id FROM tasks WHERE project_id IN (${placeholders}))`).run(...seedProjectIds);
 db.prepare(`DELETE FROM habit_instances WHERE habit_id IN (SELECT id FROM habits WHERE project_id IN (${placeholders}))`).run(...seedProjectIds);
 db.prepare(`DELETE FROM habits WHERE project_id IN (${placeholders})`).run(...seedProjectIds);
