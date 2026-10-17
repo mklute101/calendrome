@@ -1,12 +1,13 @@
 /**
- * Envelope assignments + pulls (#106 prototype) — YNAB for time.
+ * Envelope assignments + pulls (#106) — YNAB for time.
  *
  * An *envelope* is anything that claims weekly hours: a project (its
  * standing assignment), a goal (its weekly ask), or a habit (its
  * frequency ask). The standing config is the default; an
  * `assignments` row is "this week's word" — same standing-vs-this-week
  * split as availability overrides. `minutes NULL` = snoozed (unfunded
- * envelope).
+ * envelope). A project's standing cap is itself an `assignments` row
+ * (`week_start = 'standing'`, #173) — see `src/standing-assignments.ts`.
  *
  * The *pull* is the mechanic that matters: moving minutes between two
  * envelopes in the same week is zero-sum and logged to
@@ -31,6 +32,7 @@ import { weekRange, type WeekRange } from './day-range.js';
 import { assertMonday, goalProgress, getGoal, listGoals } from './goals.js';
 import { getHabit, habitWeekScore, listHabits } from './habits.js';
 import { listProjects } from './projects.js';
+import { getStandingProjectMinutes } from './standing-assignments.js';
 
 export type EnvelopeType = 'project' | 'goal' | 'habit';
 
@@ -112,10 +114,11 @@ function assertEnvelopeExists(db: DB, type: EnvelopeType, id: string): void {
 
 /**
  * The standing weekly default for an envelope, used when no
- * assignments row exists: project → its standing default assignment
- * (`weekly_budget_minutes`, the cap side of the envelope; NULL when
- * unset — a deliberately uncapped project has *no* cap, not a 0h one,
- * #150), goal → its weekly ask, habit → instances-per-week × duration.
+ * assignments row exists: project → its standing assignment row
+ * (`week_start = 'standing'`, the cap side of the envelope, #173; NULL
+ * when absent — a deliberately uncapped project has *no* cap, not a 0h
+ * one, #150), goal → its weekly ask, habit → instances-per-week ×
+ * duration.
  */
 export function standingDefault(
   db: DB,
@@ -124,10 +127,7 @@ export function standingDefault(
   weekStart: string,
 ): number | null {
   if (type === 'project') {
-    const row = db
-      .prepare('SELECT weekly_budget_minutes FROM projects WHERE id = ?')
-      .get(id) as { weekly_budget_minutes: number | null } | undefined;
-    return row?.weekly_budget_minutes ?? null;
+    return getStandingProjectMinutes(db, id);
   }
   if (type === 'goal') {
     return goalProgress(db, Number(id), weekStart).weekly_ask;

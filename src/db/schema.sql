@@ -4,9 +4,8 @@ CREATE TABLE IF NOT EXISTS projects (
   prefix      TEXT NOT NULL UNIQUE,
   calendar_id TEXT,
   color       TEXT,
-  -- Standing default assignment for the project's envelope (the cap
-  -- side). Column name kept for history (#121).
-  weekly_budget_minutes INTEGER,
+  -- No budget column: a project's weekly cap is its standing row in
+  -- `assignments` (week_start = 'standing'), see below (#173).
   harvest_project_id INTEGER,
   harvest_task_id INTEGER,
   category_id TEXT REFERENCES categories(id),
@@ -145,7 +144,7 @@ FROM time_entry
 WHERE status = 'CONFIRMED' AND task_id IS NOT NULL
 GROUP BY task_id;
 
--- Commitments prototype (#106): Goals are the bucket-of-hours
+-- Commitments (#106): Goals are the bucket-of-hours
 -- commitment type — by-date ("10h before Sept 12", due set) or
 -- recurring refill ("3h/week forever", refill_period set). Exactly
 -- one of due/refill_period must be set; enforced in src/goals.ts,
@@ -165,12 +164,16 @@ CREATE TABLE IF NOT EXISTS goals (
 
 -- Envelope assignments (#106): "this week's word" on how many minutes
 -- an envelope (project cap / goal / habit) gets, YNAB-style. Absence
--- of a row means the standing default applies (project budget, goal
--- weekly ask, habit frequency ask). minutes NULL = snoozed (unfunded).
+-- of a row means the standing default applies (project standing row,
+-- goal weekly ask, habit frequency ask). minutes NULL = snoozed
+-- (unfunded). A project's weekly cap is its *standing* row:
+-- week_start = 'standing', one per capped project, never NULL minutes
+-- (an uncapped project has no standing row). It applies to every week
+-- without an explicit row (#173; see src/standing-assignments.ts).
 CREATE TABLE IF NOT EXISTS assignments (
   envelope_type  TEXT NOT NULL,            -- 'project' | 'goal' | 'habit'
   envelope_id    TEXT NOT NULL,
-  week_start     TEXT NOT NULL,            -- Monday ISO date
+  week_start     TEXT NOT NULL,            -- Monday ISO date, or 'standing'
   minutes        INTEGER,                  -- NULL = snoozed (unfunded)
   note           TEXT,
   updated_at     TEXT NOT NULL DEFAULT (datetime('now')),

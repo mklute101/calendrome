@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Seed a calendrome sandbox DB with the commitments-prototype worked
+// Seed a calendrome sandbox DB with the commitments worked
 // examples from the 2026-07-17 commitment-taxonomy design (#106):
 //
 //   - ACME retainer (project cap, 20h/week) + PERSONAL project
@@ -116,13 +116,19 @@ db.prepare(`DELETE FROM goals WHERE project_id IN (${ph})`).run(...seedProjectId
 db.prepare(`DELETE FROM tasks WHERE project_id IN (${ph})`).run(...seedProjectIds);
 db.prepare(`DELETE FROM projects WHERE id IN (${ph})`).run(...seedProjectIds);
 
-// 4. Projects.
+// 4. Projects. A project's weekly cap is its standing assignments row
+//    (week_start = 'standing', #173); an uncapped project has none.
 const insertProject = db.prepare(
-  `INSERT INTO projects (id, name, prefix, weekly_budget_minutes, color, category_id)
-   VALUES (?, ?, ?, ?, ?, ?)`,
+  `INSERT INTO projects (id, name, prefix, color, category_id)
+   VALUES (?, ?, ?, ?, ?)`,
 );
-insertProject.run('acme', 'ACME retainer', 'ACME', 1200, '#2563eb', 'work'); // 20h cap
-insertProject.run('personal', 'Personal', 'PERSONAL', null, '#a855f7', 'personal');
+const insertStanding = db.prepare(
+  `INSERT INTO assignments (envelope_type, envelope_id, week_start, minutes)
+   VALUES ('project', ?, 'standing', ?)`,
+);
+insertProject.run('acme', 'ACME retainer', 'ACME', '#2563eb', 'work');
+insertStanding.run('acme', 1200); // 20h cap
+insertProject.run('personal', 'Personal', 'PERSONAL', '#a855f7', 'personal');
 
 // 5. Week math — canonical UTC timestamps (YYYY-MM-DDTHH:MM:SSZ).
 function canonical(d) {

@@ -22,6 +22,7 @@ import {
 } from '../src/gui/mutations.js';
 import { createHabit, generateHabitInstances } from '../src/habits.js';
 import { createGoal } from '../src/goals.js';
+import { createProject } from '../src/projects.js';
 import { createAvailabilityOverride } from '../src/availability.js';
 
 function setup() {
@@ -330,10 +331,8 @@ describe('GUI habit-instance mutations (#118)', () => {
 describe('GUI budget mutations (#106 M2)', () => {
   function budgetSetup() {
     const db = freshDb();
-    db.prepare(
-      `INSERT INTO projects (id, name, prefix, weekly_budget_minutes)
-       VALUES ('acme', 'Acme', 'ACME', 1200), ('hobby', 'Hobby', 'HOBBY', 300)`,
-    ).run();
+    createProject(db, { id: 'acme', name: 'Acme', prefix: 'ACME', weekly_budget_minutes: 1200 });
+    createProject(db, { id: 'hobby', name: 'Hobby', prefix: 'HOBBY', weekly_budget_minutes: 300 });
     return { db };
   }
   const WEEK = '2026-07-13'; // Monday

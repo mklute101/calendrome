@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { DB } from './connection.js';
+import { foldWeeklyBudgetColumn } from '../standing-assignments.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -39,7 +40,7 @@ export function migrate(db: DB): void {
     );
   }
 
-  // Commitments prototype (#106): goal-linked time entries and the
+  // Commitments (#106): goal-linked time entries and the
   // N-per-week habit form.
   if (!hasColumn(db, 'time_entry', 'goal_id')) {
     db.exec(
@@ -49,6 +50,10 @@ export function migrate(db: DB): void {
   if (!hasColumn(db, 'habits', 'times_per_week')) {
     db.exec('ALTER TABLE habits ADD COLUMN times_per_week INTEGER');
   }
+
+  // M5 cutover (#173): project caps move from
+  // projects.weekly_budget_minutes into standing assignment rows.
+  foldWeeklyBudgetColumn(db);
 
   const count = (
     db.prepare('SELECT COUNT(*) AS n FROM categories').get() as { n: number }

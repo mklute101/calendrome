@@ -142,7 +142,8 @@ export function buildTools(
     {
       name: 'create_project',
       description:
-        'Create a project with calendar mapping and a standing weekly assignment (weekly_budget_minutes). ' +
+        'Create a project with calendar mapping and a standing weekly assignment (weekly_budget_minutes, ' +
+        "stored as the project's standing assignments row; null/omitted = uncapped). " +
         "category_id defaults to 'work'.",
       inputSchema: {
         type: 'object',
@@ -202,7 +203,9 @@ export function buildTools(
     },
     {
       name: 'update_project',
-      description: 'Update project settings',
+      description:
+        'Update project settings. weekly_budget_minutes sets the standing weekly assignment ' +
+        '(every week without an assign_hours row); null removes the cap.',
       inputSchema: {
         type: 'object',
         required: ['id'],
@@ -575,7 +578,9 @@ export function buildTools(
     {
       name: 'get_project_budget',
       description:
-        'For a project + week, return assigned/confirmed/scheduled/available/overspent. ' +
+        'For a project + week, return assigned/confirmed/scheduled/available/overspent/snoozed. ' +
+        "assigned is the week's assign_hours/pull_hours row if any, else the project's standing " +
+        'weekly_budget_minutes (same resolution as get_envelopes). ' +
         "week_start is the Monday in the project's category local time (#146).",
       inputSchema: {
         type: 'object',
@@ -1804,10 +1809,14 @@ export function buildTools(
       },
     },
 
-    // -------- commitments (prototype) --------
+    // -------- commitments --------
     // #106: goals (bucket-of-hours commitments) + YNAB-style envelope
-    // assignments and pulls. Prototype surface — play with it in a
-    // sandbox DB via plugin/skills/sandbox/scripts/seed-commitments.mjs.
+    // assignments and pulls. These run against whatever DB
+    // CALENDROME_DB points at, like every other tool. Since the M5
+    // cutover (#173) a project's weekly cap is its standing
+    // `assignments` row, so budgets and envelopes share one source of
+    // truth. plugin/skills/sandbox/scripts/seed-commitments.mjs seeds
+    // the design doc's worked examples into a throwaway DB.
     /**
      * Create a goal — a bucket of hours poured into a project (#106).
      *

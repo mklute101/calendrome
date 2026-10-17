@@ -6,6 +6,7 @@ import type { Server } from 'node:http';
 import { openDatabase } from '../src/db/connection.js';
 import { migrate } from '../src/db/migrate.js';
 import { createTask } from '../src/tasks.js';
+import { createProject } from '../src/projects.js';
 import { createGoal } from '../src/goals.js';
 import { createHabit, generateHabitInstances } from '../src/habits.js';
 import { FakeCalendarClient } from '../src/calendar/index.js';
@@ -303,10 +304,8 @@ describe('GUI budget API over HTTP', () => {
     const dbPath = join(dir, 'calendrome.db');
     const db = openDatabase(dbPath);
     migrate(db);
-    db.prepare(
-      `INSERT INTO projects (id, name, prefix, weekly_budget_minutes)
-       VALUES ('acme', 'Acme', 'ACME', 1200), ('hobby', 'Hobby', 'HOBBY', 300)`,
-    ).run();
+    createProject(db, { id: 'acme', name: 'Acme', prefix: 'ACME', weekly_budget_minutes: 1200 });
+    createProject(db, { id: 'hobby', name: 'Hobby', prefix: 'HOBBY', weekly_budget_minutes: 300 });
     goalId = Number(
       db
         .prepare(

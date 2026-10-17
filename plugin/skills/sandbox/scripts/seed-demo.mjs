@@ -70,13 +70,21 @@ db.prepare(`DELETE FROM tasks WHERE project_id IN (${placeholders})`).run(...see
 db.prepare(`DELETE FROM projects WHERE id IN (${placeholders})`).run(...seedProjectIds);
 
 // 4. Seed projects.
+// A project's weekly cap is its standing assignments row (#173).
 const insertProject = db.prepare(
-  `INSERT INTO projects (id, name, prefix, weekly_budget_minutes, color, category_id)
-   VALUES (?, ?, ?, ?, ?, 'work')`,
+  `INSERT INTO projects (id, name, prefix, color, category_id)
+   VALUES (?, ?, ?, ?, 'work')`,
 );
-insertProject.run('acme', 'Acme Corp', 'ACME', 1200, '#2563eb'); // 20h
-insertProject.run('globex', 'Globex Industries', 'GLBX', 600, '#16a34a'); // 10h
-insertProject.run('hobby', 'Hobby Project', 'HOBBY', 300, '#a855f7'); // 5h
+const insertStanding = db.prepare(
+  `INSERT OR REPLACE INTO assignments (envelope_type, envelope_id, week_start, minutes)
+   VALUES ('project', ?, 'standing', ?)`,
+);
+insertProject.run('acme', 'Acme Corp', 'ACME', '#2563eb');
+insertStanding.run('acme', 1200); // 20h
+insertProject.run('globex', 'Globex Industries', 'GLBX', '#16a34a');
+insertStanding.run('globex', 600); // 10h
+insertProject.run('hobby', 'Hobby Project', 'HOBBY', '#a855f7');
+insertStanding.run('hobby', 300); // 5h
 
 // 5. Compute this week's Monday in local time → ISO with offset.
 function mondayOfThisWeek() {

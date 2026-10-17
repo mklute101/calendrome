@@ -1,5 +1,5 @@
 /**
- * Goals — the bucket-of-hours commitment type (#106 prototype).
+ * Goals — the bucket-of-hours commitment type (#106).
  *
  * A goal is a target of minutes poured into a project, in one of two
  * flavors (exactly one must be set):
