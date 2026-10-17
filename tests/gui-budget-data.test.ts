@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { freshDb } from './helpers/db.js';
-import { createProject } from '../src/projects.js';
+import { createProject, updateProject } from '../src/projects.js';
 import { createGoal } from '../src/goals.js';
 import { createHabit } from '../src/habits.js';
 import { pullHours } from '../src/assignments.js';
@@ -60,9 +60,8 @@ describe('buildMovesPayload', () => {
   it('returns the week echo and moves newest-first', () => {
     const db = setup();
     createProject(db, { id: 'hobby', name: 'Hobby', prefix: 'HOBBY' });
-    db.prepare('UPDATE projects SET weekly_budget_minutes = 300 WHERE id = ?').run(
-      'hobby',
-    );
+    updateProject(db, 'hobby', { weekly_budget_minutes: 300 });
+    updateProject(db, 'acme', { weekly_budget_minutes: 600 }); // an uncapped project cannot receive a pull
     pullHours(db, {
       week_start: WEEK,
       from: { type: 'project', id: 'hobby' },

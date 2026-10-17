@@ -1,5 +1,5 @@
 /**
- * Goals — the bucket-of-hours commitment type (#106 prototype).
+ * Goals — the bucket-of-hours commitment type (#106).
  *
  * A goal is a target of minutes poured into a project, in one of two
  * flavors (exactly one must be set):
@@ -19,7 +19,7 @@
 import type { DB } from './db/connection.js';
 import { projectTimezone } from './categories.js';
 import { now as clockNow } from './clock.js';
-import { weekRange, type WeekRange } from './day-range.js';
+import { mondayOfDay, weekRange, type WeekRange } from './day-range.js';
 
 export interface Goal {
   id: number;
@@ -71,7 +71,13 @@ export interface GoalProgress {
   remaining_minutes: number | null;
   /** by-date only: whole weeks from week_start to due, min 1. */
   weeks_left: number | null;
-  /** This week's ask: refill = target; by-date = ceil(remaining / weeks_left). */
+  /**
+   * This week's ask: refill = target; by-date = ceil(remaining at the
+   * week's start / weeks_left). The by-date ask is fixed by what was
+   * banked *before* the week (#173): hours confirmed during the week
+   * or later lower `needed_this_week`, never the week's own ask, so
+   * past weeks keep the ask they were planned with.
+   */
   weekly_ask: number;
   /** max(0, weekly_ask − week_confirmed − week_scheduled). */
   needed_this_week: number;
@@ -90,7 +96,15 @@ export function assertMonday(weekStart: string, label = 'week_start'): void {
     throw new Error(`${label} is not a valid date: ${weekStart}`);
   }
   if (dow !== 1) {
-    throw new Error(`${label} must be a Monday, got ${weekStart} (day ${dow})`);
+    // Name the Monday to retry with: the Monday of the week containing
+    // the given date (a plain date has no timezone, so the local Monday
+    // of its week is plain calendar math).
+    const monday = mondayOfDay(weekStart);
+    const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    throw new Error(
+      `${label} must be a Monday, got ${weekStart} (a ${DAYS[dow]}); ` +
+        `use ${monday}, the Monday of that week`,
+    );
   }
 }
 
@@ -200,7 +214,7 @@ export function deactivateGoal(db: DB, id: number): void {
 /**
  * Progress + weekly ask for a goal relative to a week.
  *
- * Status derivation (kept deliberately simple for the prototype):
+ * Status derivation (kept deliberately simple):
  *   - complete: the bucket is full — by-date: all-time confirmed ≥
  *     target; refill: this week's confirmed ≥ the weekly ask.
  *   - behind:   by-date only — the due date is before week_start and
@@ -229,10 +243,12 @@ export function goalProgress(
     .prepare(
       `SELECT
          COALESCE(SUM(CASE WHEN te.status = 'CONFIRMED'   THEN ${DURATION_SQL} ELSE 0 END), 0) AS confirmed,
-         COALESCE(SUM(CASE WHEN te.status = 'UNCONFIRMED' THEN ${DURATION_SQL} ELSE 0 END), 0) AS scheduled
+         COALESCE(SUM(CASE WHEN te.status = 'UNCONFIRMED' THEN ${DURATION_SQL} ELSE 0 END), 0) AS scheduled,
+         COALESCE(SUM(CASE WHEN te.status = 'CONFIRMED' AND te.start_at < ?
+                           THEN ${DURATION_SQL} ELSE 0 END), 0) AS confirmed_before
        FROM time_entry te WHERE te.goal_id = ?`,
     )
-    .get(goalId) as { confirmed: number; scheduled: number };
+    .get(startIso, goalId) as { confirmed: number; scheduled: number; confirmed_before: number };
   const week = db
     .prepare(
       `SELECT
@@ -255,11 +271,15 @@ export function goalProgress(
   let weekly_ask: number;
   if (flavor === 'by_date') {
     remaining_minutes = Math.max(0, goal.target_minutes - confirmed_minutes);
+    const remainingAtWeekStart = Math.max(
+      0,
+      goal.target_minutes - Math.round(allTime.confirmed_before),
+    );
     const days =
       (Date.parse(`${goal.due}T00:00:00Z`) - Date.parse(`${weekStart}T00:00:00Z`)) /
       86_400_000;
     weeks_left = Math.max(1, Math.ceil(days / 7));
-    weekly_ask = Math.ceil(remaining_minutes / weeks_left);
+    weekly_ask = Math.ceil(remainingAtWeekStart / weeks_left);
   } else {
     weekly_ask = goal.target_minutes;
   }

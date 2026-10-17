@@ -78,7 +78,6 @@ describe('database migrations', () => {
         'prefix',
         'calendar_id',
         'color',
-        'weekly_budget_minutes',
         'active',
         'created_at',
         'updated_at',

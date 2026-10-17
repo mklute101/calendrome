@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Seed a calendrome sandbox DB with the commitments-prototype worked
+// Seed a calendrome sandbox DB with the commitments worked
 // examples from the 2026-07-17 commitment-taxonomy design (#106):
 //
 //   - ACME retainer (project cap, 20h/week) + PERSONAL project
@@ -18,6 +18,7 @@
 // that looks like the real calendrome.db.
 
 import Database from 'better-sqlite3';
+import { stampNow, wipeEnvelopes } from './seed-helpers.mjs';
 import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -94,21 +95,9 @@ const habitIds = db
   .prepare(`SELECT id FROM habits WHERE project_id IN (${ph})`)
   .all(...seedProjectIds)
   .map((r) => String(r.id));
-const wipeEnvelope = (type, ids) => {
-  if (ids.length === 0) return;
-  const idPh = ids.map(() => '?').join(',');
-  db.prepare(
-    `DELETE FROM assignments WHERE envelope_type = ? AND envelope_id IN (${idPh})`,
-  ).run(type, ...ids);
-  db.prepare(
-    `DELETE FROM envelope_moves
-      WHERE (from_type = ? AND from_id IN (${idPh}))
-         OR (to_type = ? AND to_id IN (${idPh}))`,
-  ).run(type, ...ids, type, ...ids);
-};
-wipeEnvelope('project', seedProjectIds);
-wipeEnvelope('goal', goalIds);
-wipeEnvelope('habit', habitIds);
+wipeEnvelopes(db, 'project', seedProjectIds);
+wipeEnvelopes(db, 'goal', goalIds);
+wipeEnvelopes(db, 'habit', habitIds);
 db.prepare(`DELETE FROM time_entry WHERE project_id IN (${ph})`).run(...seedProjectIds);
 db.prepare(`DELETE FROM habit_instances WHERE habit_id IN (SELECT id FROM habits WHERE project_id IN (${ph}))`).run(...seedProjectIds);
 db.prepare(`DELETE FROM habits WHERE project_id IN (${ph})`).run(...seedProjectIds);
@@ -116,13 +105,19 @@ db.prepare(`DELETE FROM goals WHERE project_id IN (${ph})`).run(...seedProjectId
 db.prepare(`DELETE FROM tasks WHERE project_id IN (${ph})`).run(...seedProjectIds);
 db.prepare(`DELETE FROM projects WHERE id IN (${ph})`).run(...seedProjectIds);
 
-// 4. Projects.
+// 4. Projects. A project's weekly cap is its standing assignments row
+//    (week_start = 'standing', #173); an uncapped project has none.
 const insertProject = db.prepare(
-  `INSERT INTO projects (id, name, prefix, weekly_budget_minutes, color, category_id)
-   VALUES (?, ?, ?, ?, ?, ?)`,
+  `INSERT INTO projects (id, name, prefix, color, category_id)
+   VALUES (?, ?, ?, ?, ?)`,
 );
-insertProject.run('acme', 'ACME retainer', 'ACME', 1200, '#2563eb', 'work'); // 20h cap
-insertProject.run('personal', 'Personal', 'PERSONAL', null, '#a855f7', 'personal');
+const insertStanding = db.prepare(
+  `INSERT INTO assignments (envelope_type, envelope_id, week_start, minutes, updated_at)
+   VALUES ('project', ?, 'standing', ?, ?)`,
+);
+insertProject.run('acme', 'ACME retainer', 'ACME', '#2563eb', 'work');
+insertStanding.run('acme', 1200, stampNow()); // 20h cap
+insertProject.run('personal', 'Personal', 'PERSONAL', '#a855f7', 'personal');
 
 // 5. Week math — canonical UTC timestamps (YYYY-MM-DDTHH:MM:SSZ).
 function canonical(d) {

@@ -9,6 +9,7 @@
 // refuses to run if CALENDROME_DB is empty or matches calendrome.db.
 
 import Database from 'better-sqlite3';
+import { stampNow, wipeEnvelopes } from './seed-helpers.mjs';
 import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -63,6 +64,20 @@ if (haveCategories.n === 0) {
 //    in the [acme, globex, hobby] set so we never touch user data).
 const seedProjectIds = ['acme', 'globex', 'hobby'];
 const placeholders = seedProjectIds.map(() => '?').join(',');
+// Envelope rows hanging off the seed projects and their habits/goals:
+// standing and per-week assignments plus Recent Moves, so a reseed
+// never inherits a stale week's override or pull.
+const seedHabitIds = db
+  .prepare(`SELECT id FROM habits WHERE project_id IN (${placeholders})`)
+  .all(...seedProjectIds)
+  .map((r) => String(r.id));
+const seedGoalIds = db
+  .prepare(`SELECT id FROM goals WHERE project_id IN (${placeholders})`)
+  .all(...seedProjectIds)
+  .map((r) => String(r.id));
+wipeEnvelopes(db, 'project', seedProjectIds);
+wipeEnvelopes(db, 'habit', seedHabitIds);
+wipeEnvelopes(db, 'goal', seedGoalIds);
 db.prepare(`DELETE FROM time_log WHERE task_id IN (SELECT id FROM tasks WHERE project_id IN (${placeholders}))`).run(...seedProjectIds);
 db.prepare(`DELETE FROM habit_instances WHERE habit_id IN (SELECT id FROM habits WHERE project_id IN (${placeholders}))`).run(...seedProjectIds);
 db.prepare(`DELETE FROM habits WHERE project_id IN (${placeholders})`).run(...seedProjectIds);
@@ -70,13 +85,22 @@ db.prepare(`DELETE FROM tasks WHERE project_id IN (${placeholders})`).run(...see
 db.prepare(`DELETE FROM projects WHERE id IN (${placeholders})`).run(...seedProjectIds);
 
 // 4. Seed projects.
+// A project's weekly cap is its standing assignments row (#173).
 const insertProject = db.prepare(
-  `INSERT INTO projects (id, name, prefix, weekly_budget_minutes, color, category_id)
-   VALUES (?, ?, ?, ?, ?, 'work')`,
+  `INSERT INTO projects (id, name, prefix, color, category_id)
+   VALUES (?, ?, ?, ?, 'work')`,
 );
-insertProject.run('acme', 'Acme Corp', 'ACME', 1200, '#2563eb'); // 20h
-insertProject.run('globex', 'Globex Industries', 'GLBX', 600, '#16a34a'); // 10h
-insertProject.run('hobby', 'Hobby Project', 'HOBBY', 300, '#a855f7'); // 5h
+const insertStanding = db.prepare(
+  `INSERT OR REPLACE INTO assignments (envelope_type, envelope_id, week_start, minutes, updated_at)
+   VALUES ('project', ?, 'standing', ?, ?)`,
+);
+const stamp = stampNow();
+insertProject.run('acme', 'Acme Corp', 'ACME', '#2563eb');
+insertStanding.run('acme', 1200, stamp); // 20h
+insertProject.run('globex', 'Globex Industries', 'GLBX', '#16a34a');
+insertStanding.run('globex', 600, stamp); // 10h
+insertProject.run('hobby', 'Hobby Project', 'HOBBY', '#a855f7');
+insertStanding.run('hobby', 300, stamp); // 5h
 
 // 5. Compute this week's Monday in local time → ISO with offset.
 function mondayOfThisWeek() {

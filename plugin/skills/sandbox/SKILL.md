@@ -68,7 +68,7 @@ The seed script populates:
 
 ### Step 4b: Commitments seed (on request)
 
-If the user wants to try the commitments prototype (#106 — goals,
+If the user wants to try the commitments model (#106 — goals,
 assignments, envelope pulls), there is a second seeder:
 
 ```bash
@@ -140,5 +140,7 @@ Real lifecycle management for two background node processes from inside a Claude
 ## Additional resources
 
 - `scripts/seed-demo.mjs` — demo data seeder used by `/calendrome:sandbox demo`
-- `scripts/seed-commitments.mjs` — commitments-prototype seeder (the
+- `scripts/seed-commitments.mjs` — commitments seeder (the
   design doc's worked examples); prints an envelope-call cheat-sheet
+- `scripts/seed-helpers.mjs` — clock-convention timestamps and envelope
+  wipes shared by both seeders

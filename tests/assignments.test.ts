@@ -57,7 +57,7 @@ describe('assignHours', () => {
     });
     expect(b.minutes).toBe(960);
     const count = db
-      .prepare('SELECT COUNT(*) AS n FROM assignments')
+      .prepare("SELECT COUNT(*) AS n FROM assignments WHERE week_start != 'standing'")
       .get() as { n: number };
     expect(count.n).toBe(1);
   });
@@ -175,7 +175,7 @@ describe('pullHours', () => {
     expect(move.to_id).toBe('acme');
 
     const rows = db
-      .prepare('SELECT envelope_id, minutes FROM assignments ORDER BY envelope_id')
+      .prepare("SELECT envelope_id, minutes FROM assignments WHERE week_start != 'standing' ORDER BY envelope_id")
       .all() as { envelope_id: string; minutes: number }[];
     // hobby seeded at 300 then −120; acme seeded at 1200 then +120.
     expect(rows).toEqual([
@@ -226,7 +226,7 @@ describe('pullHours', () => {
       .get() as { n: number };
     expect(count.n).toBe(0);
     const assignments = db
-      .prepare('SELECT COUNT(*) AS n FROM assignments')
+      .prepare("SELECT COUNT(*) AS n FROM assignments WHERE week_start != 'standing'")
       .get() as { n: number };
     expect(assignments.n).toBe(0);
   });
@@ -252,7 +252,7 @@ describe('pullHours', () => {
       minutes: 45,
     });
     const hobby = db
-      .prepare("SELECT minutes FROM assignments WHERE envelope_id = 'hobby'")
+      .prepare("SELECT minutes FROM assignments WHERE envelope_id = 'hobby' AND week_start != 'standing'")
       .get() as { minutes: number };
     expect(hobby.minutes).toBe(45);
   });

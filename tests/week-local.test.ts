@@ -386,9 +386,15 @@ describe('acceptance 4: supply, envelopes and budgets bound the same instants', 
     expect(inst.scheduled_start).toBe('2026-07-27T00:00:00Z');
     completeHabitInstance(db, inst.id);
     expect(habitWeekScore(db, habit.id, WEEK2)).toEqual({ done: 1, target: 1 });
-    expect(getProjectBudget(db, 'acme', WEEK2).confirmed_minutes).toBe(30);
+    // Habit time credits the habit's envelope, not the project cap (#173).
+    const habitRow = (week: string) =>
+      getEnvelopes(db, week).find(
+        (e) => e.envelope_type === 'habit' && e.envelope_id === String(habit.id),
+      )!;
+    expect(habitRow(WEEK2).activity.confirmed_minutes).toBe(30);
+    expect(getProjectBudget(db, 'acme', WEEK2).confirmed_minutes).toBe(0);
     expect(habitWeekScore(db, habit.id, WEEK3)).toEqual({ done: 0, target: 1 });
-    expect(getProjectBudget(db, 'acme', WEEK3).confirmed_minutes).toBe(0);
+    expect(habitRow(WEEK3).activity.confirmed_minutes).toBe(0);
   });
 
   it('supply with no categories is an empty by_category, not a throw', () => {

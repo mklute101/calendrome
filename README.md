@@ -137,10 +137,13 @@ call from a single sentence to Claude.
 - `get_project_budget` — allocated/spent/scheduled/remaining for one project
 - `get_all_budgets` — same, for every active project
 
-### Commitments (prototype)
-Goals (buckets of hours) plus YNAB-style envelope budgeting (#106). Prototype
-surface — try it in a sandbox DB first
-(`plugin/skills/sandbox/scripts/seed-commitments.mjs`).
+### Commitments
+Goals (buckets of hours) plus YNAB-style envelope budgeting (#106). A project's
+weekly budget is its standing envelope assignment, so `get_project_budget`
+and `get_envelopes` read the same number (#173). To explore without touching
+real data, seed a sandbox DB
+(`plugin/skills/sandbox/scripts/seed-commitments.mjs`) or open the demo DB
+(`demo/`).
 
 - `create_goal` — bucket of hours toward a project: by-date or weekly refill, optional minimum chunk
 - `list_goals` — goals with weekly-ask progress for a week

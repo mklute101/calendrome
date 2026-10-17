@@ -486,20 +486,51 @@ export function placementNote(
 }
 
 /**
- * `placementNote` looked up by time_entry id — for an entry that was
- * just placed or moved. Never throws (a broken note must not fail
- * the write that already happened). Shared by the MCP tools and the
- * GUI write API.
+ * A goal block shorter than its goal's `min_chunk_minutes` (#173).
+ * The minimum chunk is a planning guideline, like a window: the block
+ * stands, the note just says so, so a sliver never lands silently.
+ * Null when the entry has no goal, the goal has no minimum, or the
+ * block meets it.
+ */
+export function minChunkNote(
+  db: DB,
+  args: { start_at: string; end_at: string; goal_id: number | null },
+): string | null {
+  if (args.goal_id === null) return null;
+  const goal = db
+    .prepare('SELECT title, min_chunk_minutes FROM goals WHERE id = ?')
+    .get(args.goal_id) as { title: string; min_chunk_minutes: number | null } | undefined;
+  if (!goal || goal.min_chunk_minutes == null) return null;
+  const minutes = Math.round((Date.parse(args.end_at) - Date.parse(args.start_at)) / 60_000);
+  if (!(minutes > 0) || minutes >= goal.min_chunk_minutes) return null;
+  return (
+    `note: this ${minutes}m block is under the ${goal.min_chunk_minutes}m ` +
+    `minimum chunk of "${goal.title}" — placed anyway; ` +
+    `the goal asks for blocks at least that long`
+  );
+}
+
+/**
+ * `placementNote` (plus `minChunkNote` for goal blocks) looked up by
+ * time_entry id — for an entry that was just placed or moved. Never
+ * throws (a broken note must not fail the write that already
+ * happened). Shared by the MCP tools and the GUI write API. Several
+ * notes join with '; '.
  */
 export function notePlacedEntry(db: DB, timeEntryId: number): string | null {
   try {
     const row = db
-      .prepare(`SELECT start_at, end_at, project_id FROM time_entry WHERE id = ?`)
+      .prepare(
+        `SELECT start_at, end_at, project_id, goal_id FROM time_entry WHERE id = ?`,
+      )
       .get(timeEntryId) as
-      | { start_at: string; end_at: string; project_id: string | null }
+      | { start_at: string; end_at: string; project_id: string | null; goal_id: number | null }
       | undefined;
     if (!row) return null;
-    return placementNote(db, row);
+    const notes = [placementNote(db, row), minChunkNote(db, row)].filter(
+      (n): n is string => n !== null,
+    );
+    return notes.length > 0 ? notes.join('; ') : null;
   } catch {
     return null;
   }
