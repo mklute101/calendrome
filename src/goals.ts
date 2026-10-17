@@ -19,7 +19,7 @@
 import type { DB } from './db/connection.js';
 import { projectTimezone } from './categories.js';
 import { now as clockNow } from './clock.js';
-import { weekRange, type WeekRange } from './day-range.js';
+import { mondayOfDay, weekRange, type WeekRange } from './day-range.js';
 
 export interface Goal {
   id: number;
@@ -99,9 +99,7 @@ export function assertMonday(weekStart: string, label = 'week_start'): void {
     // Name the Monday to retry with: the Monday of the week containing
     // the given date (a plain date has no timezone, so the local Monday
     // of its week is plain calendar math).
-    const monday = new Date(Date.parse(`${weekStart}T00:00:00Z`) - ((dow + 6) % 7) * 86_400_000)
-      .toISOString()
-      .slice(0, 10);
+    const monday = mondayOfDay(weekStart);
     const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
     throw new Error(
       `${label} must be a Monday, got ${weekStart} (a ${DAYS[dow]}); ` +
