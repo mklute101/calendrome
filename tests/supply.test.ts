@@ -4,6 +4,8 @@ import { computeWeekSupply, placementNote } from '../src/supply.js';
 import { createAvailabilityOverride } from '../src/availability.js';
 import { createProject } from '../src/projects.js';
 import { assignHours } from '../src/assignments.js';
+import { createGoal } from '../src/goals.js';
+import { buildTools } from '../src/mcp/tools/index.js';
 
 /**
  * Week supply computation (#106, M4).
@@ -415,5 +417,62 @@ describe('placementNote', () => {
       category_id: 'personal',
     });
     expect(noteFor(db, '2026-07-14T10:00:00Z', '2026-07-14T11:00:00Z')).toBeNull();
+  });
+});
+
+// Found by the #173 demo play-through: nothing on the placement path
+// mentioned a goal's min_chunk_minutes, so a sliver landed silently.
+describe('min_chunk note on goal blocks (#173)', () => {
+  function setup() {
+    const db = freshDb();
+    createProject(db, { id: 'acme', name: 'Acme', prefix: 'ACME' });
+    const goal = createGoal(db, {
+      project_id: 'acme',
+      title: 'Prospecting',
+      target_minutes: 600,
+      due: '2026-08-10',
+      min_chunk_minutes: 120,
+    });
+    const tools = buildTools(db);
+    const call = (name: string, args: Record<string, unknown>) =>
+      tools.find((t) => t.name === name)!.handler(args);
+    return { db, goal, call };
+  }
+
+  it('a block under the minimum chunk is placed, with a note', async () => {
+    const { goal, call } = setup();
+    const res = await call('place_goal_block', {
+      goal_id: goal.id,
+      start: '2026-07-14T10:00:00Z',
+      duration_minutes: 45,
+    });
+    expect(res.entry.status).toBe('UNCONFIRMED');
+    expect(res.note).toMatch(/45m block is under the 120m minimum chunk/);
+  });
+
+  it('a block at the minimum gets no chunk note; shrinking it via move_placement does', async () => {
+    const { goal, call } = setup();
+    const res = await call('place_goal_block', {
+      goal_id: goal.id,
+      start: '2026-07-14T10:00:00Z',
+      duration_minutes: 120,
+    });
+    expect(res.note).toBeUndefined();
+    const moved = await call('move_placement', {
+      time_entry_id: res.entry.id,
+      new_start_at: '2026-07-14T10:00:00Z',
+      new_end_at: '2026-07-14T11:00:00Z',
+    });
+    expect(moved.note).toMatch(/60m block is under the 120m minimum chunk/);
+  });
+
+  it('joins with the out-of-window note when both apply', async () => {
+    const { goal, call } = setup();
+    const res = await call('place_goal_block', {
+      goal_id: goal.id,
+      start: '2026-07-14T19:00:00Z',
+      duration_minutes: 30,
+    });
+    expect(res.note).toMatch(/outside the usual Work hours.*; note: this 30m block/);
   });
 });

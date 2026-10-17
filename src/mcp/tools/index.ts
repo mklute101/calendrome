@@ -1993,7 +1993,8 @@ export function buildTools(
      * goal bucket. Confirm it with `confirm_placement` when the work
      * happened and the minutes pour into the bucket; `skip_placement`
      * if it didn't. Goals are combinable: any chunk size works
-     * (respect `min_chunk_minutes` when set).
+     * (respect `min_chunk_minutes` when set; a block under it is
+     * still placed, with a `note` saying so).
      *
      * @example
      * place_goal_block({ goal_id: 2, start: '2026-07-14T18:00:00Z', duration_minutes: 60 })
