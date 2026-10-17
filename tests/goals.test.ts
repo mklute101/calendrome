@@ -230,6 +230,50 @@ describe('goals: goalProgress', () => {
     expect(p.status).toBe('on_track');
   });
 
+  // Found by the #173 demo play-through: the ask was computed from
+  // all-time confirmed minutes, so banking hours mid-week lowered that
+  // same week's ask (double-counting against needed_this_week), and a
+  // past week's ask was rewritten by every later confirmation.
+  it("by-date: a week's ask is fixed by hours banked before it starts", () => {
+    const db = setup();
+    const g = createGoal(db, {
+      project_id: 'acme',
+      title: 'Pumpkin patch season',
+      target_minutes: 720,
+      due: '2026-08-17', // 5 weeks after WEEK
+      min_chunk_minutes: 180,
+    });
+    const confirmedAt = (start: string, minutes: number) =>
+      insertTimeEntry(db, {
+        project_id: 'acme',
+        goal_id: g.id,
+        start_at: start,
+        end_at: new Date(Date.parse(start) + minutes * 60_000).toISOString(),
+        status: 'CONFIRMED',
+        source: 'manual',
+      });
+
+    expect(goalProgress(db, g.id, WEEK).weekly_ask).toBe(144); // 720 / 5
+
+    // One 2h trip this week: the ask stays 144, needed drops to 24.
+    confirmedAt('2026-07-18T14:00:00Z', 120);
+    let p = goalProgress(db, g.id, WEEK);
+    expect(p.weekly_ask).toBe(144);
+    expect(p.needed_this_week).toBe(24);
+    expect(p.status).toBe('on_track');
+    expect(p.remaining_minutes).toBe(600); // the bucket itself is all-time
+
+    // Next week re-paces from what was banked: (720 - 120) / 4 = 150.
+    expect(goalProgress(db, g.id, '2026-07-20').weekly_ask).toBe(150);
+
+    // A later trip never rewrites the earlier week's ask.
+    confirmedAt('2026-07-25T14:00:00Z', 240);
+    p = goalProgress(db, g.id, WEEK);
+    expect(p.weekly_ask).toBe(144);
+    expect(p.needed_this_week).toBe(24);
+    expect(goalProgress(db, g.id, '2026-07-27').weekly_ask).toBe(120); // 360 / 3
+  });
+
   it('by-date: behind after the due date, complete when the bucket fills', () => {
     const db = setup();
     const g = createGoal(db, {

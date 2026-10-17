@@ -71,7 +71,13 @@ export interface GoalProgress {
   remaining_minutes: number | null;
   /** by-date only: whole weeks from week_start to due, min 1. */
   weeks_left: number | null;
-  /** This week's ask: refill = target; by-date = ceil(remaining / weeks_left). */
+  /**
+   * This week's ask: refill = target; by-date = ceil(remaining at the
+   * week's start / weeks_left). The by-date ask is fixed by what was
+   * banked *before* the week (#173): hours confirmed during the week
+   * or later lower `needed_this_week`, never the week's own ask, so
+   * past weeks keep the ask they were planned with.
+   */
   weekly_ask: number;
   /** max(0, weekly_ask − week_confirmed − week_scheduled). */
   needed_this_week: number;
@@ -200,7 +206,7 @@ export function deactivateGoal(db: DB, id: number): void {
 /**
  * Progress + weekly ask for a goal relative to a week.
  *
- * Status derivation (kept deliberately simple for the prototype):
+ * Status derivation (kept deliberately simple):
  *   - complete: the bucket is full — by-date: all-time confirmed ≥
  *     target; refill: this week's confirmed ≥ the weekly ask.
  *   - behind:   by-date only — the due date is before week_start and
@@ -233,6 +239,13 @@ export function goalProgress(
        FROM time_entry te WHERE te.goal_id = ?`,
     )
     .get(goalId) as { confirmed: number; scheduled: number };
+  const before = db
+    .prepare(
+      `SELECT COALESCE(SUM(${DURATION_SQL}), 0) AS confirmed
+       FROM time_entry te
+       WHERE te.goal_id = ? AND te.status = 'CONFIRMED' AND te.start_at < ?`,
+    )
+    .get(goalId, startIso) as { confirmed: number };
   const week = db
     .prepare(
       `SELECT
@@ -255,11 +268,15 @@ export function goalProgress(
   let weekly_ask: number;
   if (flavor === 'by_date') {
     remaining_minutes = Math.max(0, goal.target_minutes - confirmed_minutes);
+    const remainingAtWeekStart = Math.max(
+      0,
+      goal.target_minutes - Math.round(before.confirmed),
+    );
     const days =
       (Date.parse(`${goal.due}T00:00:00Z`) - Date.parse(`${weekStart}T00:00:00Z`)) /
       86_400_000;
     weeks_left = Math.max(1, Math.ceil(days / 7));
-    weekly_ask = Math.ceil(remaining_minutes / weeks_left);
+    weekly_ask = Math.ceil(remainingAtWeekStart / weeks_left);
   } else {
     weekly_ask = goal.target_minutes;
   }
