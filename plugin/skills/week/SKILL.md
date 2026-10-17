@@ -151,9 +151,15 @@ parallel fan-out with the calendar fetch.
 
 If `jira_project_keys` is set, scope the JQL: `... AND project IN (<keys>)`.
 
-**Calendrome** — budgets + tasks:
+**Calendrome** — budgets + tasks + goals:
 - `mcp__calendrome__get_all_budgets { week_start: "<Monday ISO date>" }`
 - `mcp__calendrome__list_tasks {}` (filter to NEW and SCHEDULED client-side)
+- `mcp__calendrome__list_goals { active: true, week_start: "<Monday ISO date>" }`
+
+Goals are not habits: nothing auto-generates for them, and goal blocks
+are hidden from `get_week_layout` placements. `list_goals` is the only
+read that shows whether a goal has any time this week, so it is a
+required fetch, not an optional one.
 
 ### Step 2 — Present unified view
 
@@ -185,7 +191,16 @@ Output:
 
 ### Gaps: Unplanned JIRA Tickets
 - [TICKET-XX] Summary (Priority)
+
+### Goals (from list_goals)
+| Goal | Weekly ask | Scheduled | Confirmed | Status |
+|---------|-----------:|----------:|----------:|--------|
+| Spanish | 3h         | 0h        | 0h        | nothing placed |
 ```
+
+Render every active goal from `list_goals` using its `progress`
+(`weekly_ask`, `week_scheduled`, `week_confirmed`, `status`). A goal
+with zero scheduled minutes is a gap exactly like an unplanned ticket.
 
 ### Step 2.5 — Budget meeting (envelopes)
 
@@ -272,6 +287,15 @@ After the view:
 > - Adjust or move existing blocks (and keep calendrome in sync)
 > - Flag tickets to defer or delegate
 > - Dig deeper into any task that needs more context"
+
+#### Goals must be settled before the session ends
+
+Do not close the planning session while any active goal still has
+zero scheduled minutes for the week. Ask once, with a concrete
+proposal sized to the goal's `min_chunk_minutes` ("Spanish has
+nothing placed — 30 min Tue/Thu at 8am?"), and either place it with
+`mcp__calendrome__place_goal_block` or record that the user snoozed it
+for the week. Silence on a goal is a planning bug, not a user choice.
 
 #### When the user blocks time, place through calendrome
 

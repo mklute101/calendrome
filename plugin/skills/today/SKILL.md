@@ -140,6 +140,51 @@ If no keys are found, fall back to:
 assignee = "<atlassian_account_id>" AND status = "In Progress" ORDER BY priority DESC
 ```
 
+### Step 2.5 — Reconcile the board against Jira
+
+Closing a ticket in Jira does not close its calendrome task. Without a
+sweep, finished work stays SCHEDULED for weeks, keeps drawing
+placements, and crowds out real work — one ticket can leave several
+stale rows behind, since a multi-session ticket is usually split into
+chunk tasks (`(cont)`, `(wrap-up)`).
+
+Run this every morning brief, before presenting the day.
+
+**1. Collect the keys.** Call `mcp__calendrome__list_tasks({ status: 'SCHEDULED' })` and scan each task's **title and notes** for Jira keys matching `[A-Z][A-Z0-9]+-[0-9]+`. Read the returned rows directly — do **not** use `search_tasks` for this. It is a text search, so a title written `session_length` will not match a query of `session length`, and the stale row stays invisible.
+
+A task may carry several keys (a deploy batch, a combined chunk). Record every key per task; the classification below depends on all of them.
+
+**2. Query each key once.** Group the distinct keys by project prefix and issue one JQL per Jira site:
+
+```
+mcp__plugin_atlassian_atlassian__searchJiraIssuesUsingJql({
+  cloudId: <atlassian_cloud_id>,
+  jql: 'key in (ACME-30, ACME-41, GLBX-18)',
+  fields: ['summary', 'status', 'resolution'],
+  maxResults: 100
+})
+```
+
+Treat an issue as done when `status.statusCategory.key === 'done'` — not by matching the status **name**, which is workflow-specific (`Done`, `Closed`, `Shipped`, `Approved to Deploy`). If a prefix belongs to a Jira site that is not configured in settings, skip those keys and say so in one line rather than guessing at their state.
+
+**3. Classify and act.**
+
+- **Every key done** → the task is stale. Call `mcp__calendrome__complete_task(id)`. That also clears any still-upcoming UNCONFIRMED placement, freeing the block.
+- **Some keys done, some open** (e.g. a task titled `[ACME-30/ACME-41]` where only ACME-30 shipped) → **never** auto-close, and never auto-edit the title. Report it and let the user decide — the open key is usually still real work that needs the task retitled, not deleted.
+- **No key at all** → out of scope. Leave it. A task whose notes only *describe* shipped work cannot be verified this way.
+
+Never delete a task row; completing preserves history and any logged time.
+
+**4. Report in one line**, then continue to Step 3:
+
+```
+Reconciled: closed 3 stale tasks (ACME-30 x2, ACME-41). 1 needs a look: #213 spans ACME-41 (done) and GLBX-18 (open).
+```
+
+If nothing was stale, say nothing — this step is silent on a clean board.
+
+**One caveat worth surfacing.** When a task's notes describe a follow-up to file before closing ("open a follow-up ticket for X"), check that the follow-up actually exists before completing the row — search Jira for it. A ticket closed with its follow-up unfiled is how work disappears entirely: the parent is done, the task is gone, and nothing tracks the remainder. If it is missing, flag it in the report instead of closing silently.
+
 ### Step 3 — Present today's view
 
 Categorize events into **meetings** (standups, syncs, reviews, multi-attendee Zoom), **task blocks** (prefix-tagged solo work, focus time), and **personal** (workout, lunch, stretching). Format as a chronological table:
