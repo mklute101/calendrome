@@ -13,7 +13,12 @@
  */
 import type { DB } from '../db/connection.js';
 import { listTasks } from '../tasks.js';
-import { listHabits, generateHabitInstances, habitWeekScore } from '../habits.js';
+import {
+  listHabits,
+  generateHabitInstances,
+  habitWeekScore,
+  habitWeekRemaining,
+} from '../habits.js';
 import { getAllBudgets } from '../budgets.js';
 import { mondayOfDay } from '../day-range.js';
 import { listCalendarEvents, getLastSync } from '../calendar-sync.js';
@@ -55,7 +60,9 @@ export function buildWeekPayload(db: DB, start: string) {
     return true;
   });
 
-  const habits = listHabits(db);
+  // Retired habits generate nothing (#131); their past instances still
+  // render below as history.
+  const habits = listHabits(db, { active: true });
   for (const h of habits) {
     try {
       generateHabitInstances(db, h.id, start, end);
@@ -163,7 +170,11 @@ export function buildWeekPayload(db: DB, start: string) {
     habit_id: h.id,
     title: h.title,
     project_id: h.project_id,
+    duration_minutes: h.duration_minutes,
     ...habitWeekScore(db, h.id, monday),
+    // Placement headroom (#138): the picker and panel drag offer a
+    // habit only while this is > 0 for the rendered week.
+    remaining: habitWeekRemaining(db, h, monday).remaining,
   }));
 
   const envelopeSummary = getEnvelopes(db, monday).reduce(

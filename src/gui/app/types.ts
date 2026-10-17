@@ -142,8 +142,11 @@ export interface HabitScore {
   habit_id: number;
   title: string;
   project_id: string;
+  duration_minutes: number;
   done: number;
   target: number;
+  /** Instances still placeable this week: target - (PLANNED + COMPLETE). */
+  remaining: number;
 }
 
 /** Week-level envelope totals — the first ambient budget signal. */

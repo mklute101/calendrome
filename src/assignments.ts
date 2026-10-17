@@ -120,6 +120,15 @@ function assertEnvelopeExists(db: DB, type: EnvelopeType, id: string): void {
   if (!found) throw new Error(`${type} ${id} not found`);
 }
 
+/** A retired habit keeps its rows readable as history but takes no new
+ *  money: assign_hours and pull_hours refuse it (#131). */
+function assertNotRetiredHabit(db: DB, type: EnvelopeType, id: string): void {
+  if (type !== 'habit') return;
+  if (!getHabit(db, Number(id))?.active) {
+    throw new Error(`habit ${id} is retired; it cannot be assigned hours`);
+  }
+}
+
 /**
  * The standing weekly default for an envelope, used when no
  * assignments row exists: project → its standing assignment row
@@ -196,6 +205,7 @@ export interface AssignHoursInput {
 export function assignHours(db: DB, input: AssignHoursInput): Assignment {
   assertMonday(input.week_start);
   assertEnvelopeExists(db, input.envelope_type, input.envelope_id);
+  assertNotRetiredHabit(db, input.envelope_type, input.envelope_id);
   if (
     input.minutes !== null &&
     (!Number.isInteger(input.minutes) || input.minutes < 0)
@@ -259,6 +269,8 @@ export function pullHours(db: DB, input: PullHoursInput): EnvelopeMove {
   }
   if (from) assertEnvelopeExists(db, from.type, from.id);
   if (to) assertEnvelopeExists(db, to.type, to.id);
+  if (from) assertNotRetiredHabit(db, from.type, from.id);
+  if (to) assertNotRetiredHabit(db, to.type, to.id);
 
   const setMinutes = db.prepare(
     `INSERT INTO assignments (envelope_type, envelope_id, week_start, minutes, updated_at)

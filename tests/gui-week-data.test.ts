@@ -290,8 +290,11 @@ describe('buildWeekPayload commitments (M1 — watchable)', () => {
         habit_id: habit.id,
         title: 'Stretch',
         project_id: 'acme',
+        duration_minutes: 15,
         done: 0,
         target: 3,
+        // The rendered week is materialized at target, so none left.
+        remaining: 0,
       },
     ]);
   });

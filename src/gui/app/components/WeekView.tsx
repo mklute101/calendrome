@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from 'react';
 import * as api from '../api';
-import type { Goal, HabitInstance, Placement, Task } from '../types';
+import type { Goal, HabitInstance, HabitScore, Placement, Task } from '../types';
 import { useWeekData } from '../hooks/useWeekData';
 import { useTasksData } from '../hooks/useTasksData';
 import { usePolling } from '../hooks/usePolling';
@@ -170,6 +170,28 @@ export function WeekView({
     [days, warnOverlap, runMutation, show, refetchAll],
   );
 
+  const placeHabitAt = useCallback(
+    (habit: HabitScore, target: DropTarget) => {
+      if (!days) return;
+      const dayDate = days[target.dayIndex].date;
+      const startIso = localDateTimeIso(dayDate, target.startMinutes);
+      warnOverlap(target);
+      void runMutation(async () => {
+        const res = await api.placeHabitInstance({ habit_id: habit.habit_id, start: startIso });
+        show({
+          kind: 'info',
+          message: `Placed “${habit.title}” on ${fmtDate(dayDate)} ${fmtTime(startIso)}`,
+          undo: async () => {
+            await api.skipHabitInstance(res.instance.id);
+            await refetchAll();
+          },
+        });
+        if (res.note) show({ kind: 'info', message: res.note });
+      });
+    },
+    [days, warnOverlap, runMutation, show, refetchAll],
+  );
+
   const onDrop = useCallback(
     (source: DragSource, target: DropTarget) => {
       if (!days) return;
@@ -265,11 +287,13 @@ export function WeekView({
         });
       } else if (source.kind === 'place-goal') {
         placeGoalAt(source.goal, target);
+      } else if (source.kind === 'place-habit') {
+        placeHabitAt(source.habit, target);
       } else {
         placeTaskAt(source.task, target);
       }
     },
-    [days, applyLocal, runMutation, warnOverlap, show, refetchAll, placeTaskAt, placeGoalAt],
+    [days, applyLocal, runMutation, warnOverlap, show, refetchAll, placeTaskAt, placeGoalAt, placeHabitAt],
   );
 
   const { ghost, gridRef, startDrag, dragging } = useTimelineDrag({
@@ -362,6 +386,18 @@ export function WeekView({
         kind: 'place-goal',
         goal,
         color: meta[goal.project_id]?.color ?? '#58a6ff',
+      });
+    },
+    [viewMode, startDrag, meta],
+  );
+
+  const startPlaceHabitDrag = useCallback(
+    (e: React.PointerEvent, habit: HabitScore) => {
+      if (viewMode !== 'timeline') return;
+      startDrag(e, {
+        kind: 'place-habit',
+        habit,
+        color: meta[habit.project_id]?.color ?? '#58a6ff',
       });
     },
     [viewMode, startDrag, meta],
@@ -487,6 +523,7 @@ export function WeekView({
         <PlacePicker
           tasks={panelTasks.tasks}
           goals={filtered?.goals ?? []}
+          habits={filtered?.habit_scores ?? []}
           meta={panelTasks.meta}
           categoryView={categoryView}
           anchor={{
@@ -513,6 +550,14 @@ export function WeekView({
             });
             setPicker(null);
           }}
+          onPickHabit={(h) => {
+            placeHabitAt(h, {
+              dayIndex: picker.dayIndex,
+              startMinutes: picker.startMinutes,
+              durationMinutes: h.duration_minutes,
+            });
+            setPicker(null);
+          }}
           onClose={() => setPicker(null)}
         />
       )}
@@ -525,6 +570,7 @@ export function WeekView({
           actions={taskActions}
           onDragStart={viewMode === 'timeline' ? startPlaceDrag : undefined}
           onGoalDragStart={viewMode === 'timeline' ? startPlaceGoalDrag : undefined}
+          onHabitDragStart={viewMode === 'timeline' ? startPlaceHabitDrag : undefined}
           goals={filtered?.goals ?? []}
           habitScores={filtered?.habit_scores ?? []}
         />

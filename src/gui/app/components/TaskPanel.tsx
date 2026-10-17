@@ -33,6 +33,7 @@ export function TaskPanel({
   actions,
   onDragStart,
   onGoalDragStart,
+  onHabitDragStart,
   goals = [],
   habitScores = [],
 }: {
@@ -43,6 +44,7 @@ export function TaskPanel({
   actions?: TaskActions;
   onDragStart?: (e: React.PointerEvent, task: Task) => void;
   onGoalDragStart?: (e: React.PointerEvent, goal: Goal) => void;
+  onHabitDragStart?: (e: React.PointerEvent, habit: HabitScore) => void;
   /** Already filtered to the active category view (filterWeekData). */
   goals?: Goal[];
   habitScores?: HabitScore[];
@@ -104,6 +106,7 @@ export function TaskPanel({
           habitScores={habitScores}
           meta={meta}
           onGoalDragStart={onGoalDragStart}
+          onHabitDragStart={onHabitDragStart}
         />
         {tab === 'priorities' ? (
           <PriorityGroups tasks={visible} meta={meta} actions={actions} onDragStart={onDragStart} />

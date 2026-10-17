@@ -32,8 +32,8 @@ function hourLabel(h: number): string {
  * Timeline view: absolute-positioned blocks on a 7-day × hourly grid.
  * Placement blocks are interactive (#24): drag the body to move, the
  * bottom edge to resize, hover for confirm/skip. PLANNED habit
- * instances are interactive too (#118): drag to slide within the
- * frequency range, hover for ✓/✕ — but no resize handle, a habit's
+ * instances are interactive too (#118): drag to slide anywhere in the
+ * week (#129), hover for ✓/✕ — but no resize handle, a habit's
  * chunk size is its instance duration. Logs and gcal events render
  * without handles — the server guards are the backstop, the missing
  * affordance is the UX.

@@ -116,6 +116,12 @@ export const completeHabitInstance = (id: number) =>
 export const skipHabitInstance = (id: number) =>
   post<{ instance: HabitInstance }>(`/api/habit-instances/${id}/skip`);
 
+export const placeHabitInstance = (args: { habit_id: number; start: string }) =>
+  post<{ instance: HabitInstance; entry: { id: number }; note?: string }>(
+    '/api/habit-instances',
+    args,
+  );
+
 export const moveHabitInstance = (id: number, args: { start: string; end?: string }) =>
   post<{ instance: HabitInstance; entry: unknown }>(
     `/api/habit-instances/${id}/move`,

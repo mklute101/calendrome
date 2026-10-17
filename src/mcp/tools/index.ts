@@ -37,7 +37,6 @@ import {
   confirmTimeEntry,
   skipTimeEntry,
   listPendingReview,
-  moveTimeEntry,
   insertTimeEntry,
   deleteTimeEntry,
 } from '../../time-entry.js';
@@ -51,6 +50,11 @@ import {
   createHabit,
   listHabits,
   generateHabitInstances,
+  placeHabitInstance,
+  editHabit,
+  retireHabit,
+  deleteHabit,
+  moveEntryRespectingHabit,
   completeHabitInstance,
   skipHabitInstance,
 } from '../../habits.js';
@@ -574,6 +578,153 @@ export function buildTools(
       },
     },
 
+    /**
+     * Put one habit instance on the calendar at a specific time (#138).
+     *
+     * For the off-schedule case: a skipped Monday made up on Tuesday,
+     * or a 3x/week session dropped onto Saturday. The habit's local
+     * week is materialized first, and placement is allowed only while
+     * that week is under target (PLANNED + COMPLETE instances below
+     * the weekly target; a skip frees a slot). Duration is the habit's
+     * instance duration. Any time is valid — out-of-window placements
+     * return an informational note, never a refusal.
+     *
+     * @example
+     * place_habit_instance({ habit_id: 4, start: '2026-07-21T18:00:00-05:00' })
+     *
+     * @see skip_habit_instance, move_placement, list_habits
+     */
+    {
+      name: 'place_habit_instance',
+      description:
+        'Place one habit instance at a specific time, off its generated ' +
+        "schedule. Allowed only while the habit's local week is under " +
+        'target (PLANNED + COMPLETE < target; skipping frees a slot). ' +
+        'Out-of-window placements just work and return a note.',
+      inputSchema: {
+        type: 'object',
+        required: ['habit_id', 'start'],
+        properties: {
+          habit_id: { type: 'integer' },
+          start: { type: 'string' },
+        },
+      },
+      async handler(args) {
+        const result = placeHabitInstance(
+          db,
+          requireNumber(args, 'habit_id'),
+          requireString(args, 'start'),
+        );
+        const note = notePlacedEntry(db, result.entry.id);
+        return note ? { ...result, note } : result;
+      },
+    },
+    /**
+     * Edit a habit and carry the change into its future (#131).
+     *
+     * Future PLANNED instances with an unconfirmed entry follow the
+     * edit: new title/project/duration apply to them; a new start_time
+     * or timezone moves the ones still on their generated slot (ones
+     * the user moved or placed keep their time); a frequency change
+     * (days_of_week / times_per_week; setting one clears the other)
+     * removes the unmoved future ones and re-materializes from today.
+     * Past, confirmed, completed and skipped rows are never touched.
+     *
+     * @example
+     * update_habit({ habit_id: 4, start_time: '18:00' })
+     *
+     * @see create_habit, retire_habit, delete_habit
+     */
+    {
+      name: 'update_habit',
+      description:
+        'Edit a habit (title, notes, duration_minutes, start_time, ' +
+        'days_of_week | times_per_week, timezone, project_id). Future ' +
+        'unconfirmed instances follow; past/confirmed/completed rows are ' +
+        'untouched. Retired habits cannot be edited.',
+      inputSchema: {
+        type: 'object',
+        required: ['habit_id'],
+        properties: {
+          habit_id: { type: 'integer' },
+          title: { type: 'string' },
+          notes: { type: ['string', 'null'] },
+          duration_minutes: { type: 'integer' },
+          start_time: { type: 'string' },
+          days_of_week: { type: 'string' },
+          times_per_week: { type: 'integer' },
+          timezone: { type: 'string' },
+          project_id: { type: 'string' },
+        },
+      },
+      async handler(args) {
+        return {
+          habit: editHabit(db, requireNumber(args, 'habit_id'), {
+            title: args.title,
+            notes: args.notes,
+            duration_minutes: args.duration_minutes,
+            start_time: args.start_time,
+            days_of_week: args.days_of_week,
+            times_per_week: args.times_per_week,
+            timezone: args.timezone,
+            project_id: args.project_id,
+          }),
+        };
+      },
+    },
+    /**
+     * Retire a habit (#131): it stops generating, and its future
+     * PLANNED instances with unconfirmed entries are removed. Completed
+     * and skipped instances, past ones awaiting review, and every
+     * confirmed entry stay as history; its assignment rows stay
+     * readable, but new assign_hours / pull_hours to it error.
+     *
+     * @example
+     * retire_habit({ habit_id: 4 })
+     *
+     * @see delete_habit, update_habit, list_habits
+     */
+    {
+      name: 'retire_habit',
+      description:
+        'Retire a habit: active=0, future planned instances (and their ' +
+        'unconfirmed entries) removed; completed/skipped/confirmed history kept.',
+      inputSchema: {
+        type: 'object',
+        required: ['habit_id'],
+        properties: { habit_id: { type: 'integer' } },
+      },
+      async handler(args) {
+        return retireHabit(db, requireNumber(args, 'habit_id'));
+      },
+    },
+    /**
+     * Hard-delete a habit that has no history (#131) — the duplicate
+     * case. Removes the template, all instances, their unconfirmed
+     * entries and assignment rows. Refuses, writing nothing, when the
+     * habit has any completed instance, confirmed entry or envelope
+     * pull; retire those instead.
+     *
+     * @example
+     * delete_habit({ habit_id: 9 })
+     *
+     * @see retire_habit
+     */
+    {
+      name: 'delete_habit',
+      description:
+        'Delete a habit with no history (no completed instance, confirmed ' +
+        'entry or envelope pull). Otherwise errors and points at retire_habit.',
+      inputSchema: {
+        type: 'object',
+        required: ['habit_id'],
+        properties: { habit_id: { type: 'integer' } },
+      },
+      async handler(args) {
+        return deleteHabit(db, requireNumber(args, 'habit_id'));
+      },
+    },
+
     // -------- budgets --------
     {
       name: 'get_project_budget',
@@ -1026,7 +1177,10 @@ export function buildTools(
       description:
         'Reschedule an UNCONFIRMED placement or habit entry. Preserves ' +
         'duration by default. Any time is valid — out-of-window moves ' +
-        'just work and return an informational note.',
+        'just work and return an informational note. A habit entry ' +
+        "moves anywhere within its local Mon-Sun week; leaving the week " +
+        'is a skip, not a move (skip it, then place_habit_instance in ' +
+        'the other week).',
       inputSchema: {
         type: 'object',
         required: ['time_entry_id', 'new_start_at'],
@@ -1038,8 +1192,8 @@ export function buildTools(
       },
       async handler(args) {
         const id = requireNumber(args, 'time_entry_id');
-        moveTimeEntry(db, id, requireString(args, 'new_start_at'), {
-          new_end_at: args?.new_end_at,
+        moveEntryRespectingHabit(db, id, requireString(args, 'new_start_at'), {
+          newEnd: args?.new_end_at,
         });
         const note = notePlacedEntry(db, id);
         return note

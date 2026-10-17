@@ -437,7 +437,8 @@ body.dragging * { cursor: grabbing !important; }
 
 /* Whole-row drag (#138): the grip is the cue, the row is the handle. */
 .task-row.draggable,
-.goal-item.draggable {
+.goal-item.draggable,
+.habit-item.draggable {
   cursor: grab;
   touch-action: none;
   user-select: none;
@@ -633,6 +634,8 @@ body.dragging * { cursor: grabbing !important; }
   margin-bottom: 7px;
   background: var(--bg);
 }
+.habit-item .task-title { flex: 1; min-width: 0; }
+.habit-item .task-dur { white-space: nowrap; }
 .habit-meter { display: inline-flex; align-items: baseline; gap: 6px; white-space: nowrap; }
 .habit-dots { font-size: 0.6rem; letter-spacing: 2px; color: var(--c, var(--accent)); }
 .habit-frac { font-size: 0.68rem; color: var(--text-muted); }
