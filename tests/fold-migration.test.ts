@@ -97,6 +97,22 @@ describe('M5 fold: the backup never lands in the public repo (#173 review round 
   });
 });
 
+describe('habit_instances.time_entry_id index (#173 review round 3)', () => {
+  it('migrate() creates it idempotently and the credited-elsewhere EXISTS uses it', () => {
+    const db = openDatabase(':memory:');
+    migrate(db);
+    migrate(db);
+    const idx = db
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'habit_instances'")
+      .all() as { name: string }[];
+    expect(idx.map((r) => r.name)).toContain('idx_habit_instances_time_entry');
+    const plan = db
+      .prepare('EXPLAIN QUERY PLAN SELECT 1 FROM habit_instances hi WHERE hi.time_entry_id = ?')
+      .all(1) as { detail: string }[];
+    expect(plan.map((p) => p.detail).join(' ')).toMatch(/idx_habit_instances_time_entry/);
+  });
+});
+
 describe('M5 fold: concurrent boots (#173 review)', () => {
   it('two connections migrating the same file back to back both succeed, one fold', () => {
     const path = legacyFile(tmp());

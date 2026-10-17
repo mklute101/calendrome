@@ -40,6 +40,14 @@ export function migrate(db: DB): void {
       'ALTER TABLE habit_instances ADD COLUMN time_entry_id INTEGER REFERENCES time_entry(id)',
     );
   }
+  // CREDITED_ELSEWHERE_SQL (src/assignments.ts) runs a correlated
+  // EXISTS on habit_instances.time_entry_id for every project entry
+  // (#173). Created here, after the column add, rather than in
+  // schema.sql, which runs first and would fail on a DB that predates
+  // the column.
+  db.exec(
+    'CREATE INDEX IF NOT EXISTS idx_habit_instances_time_entry ON habit_instances(time_entry_id)',
+  );
 
   // Commitments (#106): goal-linked time entries and the
   // N-per-week habit form.
