@@ -451,3 +451,46 @@ describe('review regressions', () => {
     assignHours(db, { envelope_type: 'habit', envelope_id: id, week_start: '2026-07-13', minutes: null });
   });
 });
+
+describe('second review regressions', () => {
+  it('a retired habit cannot be drained for weeks it never held minutes', () => {
+    const db = setup();
+    const h = createHabit(db, {
+      project_id: 'me', title: 'Lift', duration_minutes: 60,
+      times_per_week: 3, start_time: '09:00', timezone: 'UTC',
+    });
+    retireHabit(db, h.id);
+    expect(() =>
+      pullHours(db, { week_start: '2027-03-01', from: { type: 'habit', id: String(h.id) }, minutes: 180 }),
+    ).toThrow();
+  });
+
+  it('unplace refuses a placed instance whose entry is already confirmed, clearly', () => {
+    const db = setup();
+    const h = createHabit(db, {
+      project_id: 'me', title: 'Run', duration_minutes: 45,
+      times_per_week: 1, start_time: '07:00', timezone: 'UTC',
+    });
+    const { instance, entry } = placeHabitInstance(db, h.id, '2026-07-25T10:00:00Z');
+    confirmTimeEntry(db, entry.id, {});
+    expect(() => unplaceHabitInstance(db, instance.id)).toThrow(/already logged/);
+  });
+
+  it('switching to fixed-days never pushes a week past its target', () => {
+    const db = setup();
+    const h = createHabit(db, {
+      project_id: 'me', title: 'Run', duration_minutes: 45,
+      times_per_week: 3, start_time: '07:00', timezone: 'UTC',
+    });
+    placeHabitInstance(db, h.id, '2026-07-25T10:00:00Z'); // Sat, next week
+    editHabit(db, h.id, { days_of_week: '1,3,5' });
+    generateHabitInstances(db, h.id, '2026-07-20', '2026-07-26');
+    expect(
+      count(
+        db,
+        "SELECT COUNT(*) AS n FROM habit_instances WHERE habit_id = ? AND status = 'PLANNED' AND scheduled_start >= '2026-07-20'",
+        h.id,
+      ),
+    ).toBe(3);
+  });
+});

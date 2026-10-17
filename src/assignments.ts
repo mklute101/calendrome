@@ -136,7 +136,7 @@ function assertNotRetiredHabit(db: DB, type: EnvelopeType, id: string): void {
  * (`week_start = 'standing'`, the cap side of the envelope, #173; NULL
  * when absent — a deliberately uncapped project has *no* cap, not a 0h
  * one, #150), goal → its weekly ask, habit → instances-per-week ×
- * duration.
+ * duration (0 once retired).
  */
 export function standingDefault(
   db: DB,
@@ -152,6 +152,9 @@ export function standingDefault(
   }
   const habit = getHabit(db, Number(id));
   if (!habit) throw new Error(`habit ${id} not found`);
+  // A retired habit asks for nothing (#131): only minutes an explicit
+  // row still holds can be released from it.
+  if (!habit.active) return 0;
   const perWeek =
     habit.times_per_week != null
       ? habit.times_per_week

@@ -261,53 +261,71 @@ export function generateHabitInstances(
     throw new Error(`invalid date range: ${fromDate}..${toDate}`);
   }
 
-  // Existing occupancy over the range widened to whole weeks (the
-  // target form counts its full week).
-  const existing = instancesInLocalDays(db, habit, mondayOfDay(fromDate), addDays(mondayOfDay(toDate), 6));
-  const occupied = new Map<string, number>();
-  for (const r of existing) {
-    const day = localDayOf(new Date(r.scheduled_start), tz);
-    occupied.set(day, (occupied.get(day) ?? 0) + 1);
-  }
-
-  const dates: string[] = [];
-  if (habit.times_per_week != null) {
-    const perWeek = new Map<string, number>();
-    for (const [day, n] of occupied) {
-      const wk = mondayOfDay(day);
-      perWeek.set(wk, (perWeek.get(wk) ?? 0) + n);
-    }
-    for (let date = fromDate; date <= toDate; date = addDays(date, 1)) {
-      const wk = mondayOfDay(date);
-      const have = perWeek.get(wk) ?? 0;
-      if (have >= habit.times_per_week || occupied.has(date)) continue;
-      if (opts.notBefore && slotStart(habit, date) < opts.notBefore) continue;
-      dates.push(date);
-      perWeek.set(wk, have + 1);
-    }
-  } else {
-    const days = new Set(parseDaysOfWeek(habit.days_of_week));
-    for (let date = fromDate; date <= toDate; date = addDays(date, 1)) {
-      if (!days.has(weekdayOfIsoDate(date)) || occupied.has(date)) continue;
-      if (opts.notBefore && slotStart(habit, date) < opts.notBefore) continue;
-      dates.push(date);
-    }
-  }
-
   const inRange = (r: HabitInstance) => {
     const day = localDayOf(new Date(r.scheduled_start), tz);
     return day >= fromDate && day <= toDate;
   };
-  // The common case on a GUI poll: the range is already materialized.
-  if (dates.length === 0) return existing.filter(inRange);
+  // Fast path, read-only: the common GUI poll finds the range already
+  // materialized. Otherwise plan again under an IMMEDIATE transaction
+  // so the occupancy read and the inserts are atomic against the other
+  // process sharing the file (GUI server vs MCP server).
+  const first = planGeneration(db, habit, fromDate, toDate, opts.notBefore);
+  if (first.dates.length === 0) return first.existing.filter(inRange);
 
   const stmts = instanceStatements(db);
   db.transaction(() => {
+    const { dates } = planGeneration(db, habit, fromDate, toDate, opts.notBefore);
     for (const date of dates) {
       insertInstance(db, habit, slotStart(habit, date), 'generated', stmts);
     }
-  })();
+  }).immediate();
   return instancesInLocalDays(db, habit, fromDate, toDate);
+}
+
+/**
+ * Which local dates in range get a new generated instance (see
+ * `generateHabitInstances`). Both forms respect the weekly target:
+ * PLANNED + COMPLETE instances already in a week (placed ones
+ * included) use up its headroom, so a placed make-up plus the
+ * schedule never exceeds the target. Any instance on a date occupies
+ * it, so a skip is never refilled.
+ */
+function planGeneration(
+  db: DB,
+  habit: Habit,
+  fromDate: string,
+  toDate: string,
+  notBefore: string | undefined,
+): { existing: HabitInstance[]; dates: string[] } {
+  const tz = habit.timezone || 'UTC';
+  const existing = instancesInLocalDays(db, habit, mondayOfDay(fromDate), addDays(mondayOfDay(toDate), 6));
+  const occupied = new Set<string>();
+  const perWeek = new Map<string, number>();
+  for (const r of existing) {
+    const day = localDayOf(new Date(r.scheduled_start), tz);
+    occupied.add(day);
+    // The target form counts every status (a skipped candidate is not
+    // re-offered); fixed-days counts only live ones, since a skipped
+    // listed day already occupies its own date.
+    if (habit.times_per_week != null || r.status !== 'SKIPPED') {
+      const wk = mondayOfDay(day);
+      perWeek.set(wk, (perWeek.get(wk) ?? 0) + 1);
+    }
+  }
+  const target = weeklyTarget(habit);
+  const listed = habit.times_per_week == null ? new Set(parseDaysOfWeek(habit.days_of_week)) : null;
+  const dates: string[] = [];
+  for (let date = fromDate; date <= toDate; date = addDays(date, 1)) {
+    if (listed && !listed.has(weekdayOfIsoDate(date))) continue;
+    if (occupied.has(date)) continue;
+    const wk = mondayOfDay(date);
+    const have = perWeek.get(wk) ?? 0;
+    if (have >= target) continue;
+    if (notBefore && slotStart(habit, date) < notBefore) continue;
+    dates.push(date);
+    perWeek.set(wk, have + 1);
+  }
+  return { existing, dates };
 }
 
 /** The habit's generated slot on a local date: wall clock → canonical
@@ -372,7 +390,7 @@ function insertInstance(
   habit: Habit,
   start: string,
   origin: HabitInstance['origin'],
-  stmts: InstanceStatements = instanceStatements(db),
+  stmts: InstanceStatements,
 ): number {
   const startCanon = toCanonicalUtc(start, 'scheduled_start');
   const end = plusMinutes(startCanon, habit.duration_minutes, 'scheduled_end');
@@ -440,9 +458,11 @@ export function placeHabitInstance(
           'skip an instance to free a slot, or move one instead',
       );
     }
-    return insertInstance(db, habit, startCanon, 'placed');
+    return insertInstance(db, habit, startCanon, 'placed', instanceStatements(db));
   });
-  const id = placeTx();
+  // IMMEDIATE: the headroom check and the insert are atomic against a
+  // concurrent generation in the other process.
+  const id = placeTx.immediate();
   return instanceWithEntry(db, id);
 }
 
@@ -463,6 +483,14 @@ export function unplaceHabitInstance(db: DB, id: number): { deleted: HabitInstan
     }
     if (inst.status !== 'PLANNED') {
       throw new Error(`habit_instance ${id} is ${inst.status}, not PLANNED`);
+    }
+    const te = inst.time_entry_id == null
+      ? undefined
+      : (db.prepare('SELECT status FROM time_entry WHERE id = ?').get(inst.time_entry_id) as
+          | { status: string }
+          | undefined);
+    if (te?.status === 'CONFIRMED') {
+      throw new Error(`habit_instance ${id} is already logged (its entry is confirmed); it cannot be unplaced`);
     }
     deleteInstances(db, [inst]);
     return { deleted: inst };
@@ -749,11 +777,14 @@ export function editHabit(db: DB, id: number, patch: UpdateHabitInput): Habit {
     const following = future.filter(follows);
     const adjusted = future.filter((r) => !follows(r));
 
-    for (const r of future) {
-      relabelTimeEntry(db, r.time_entry_id as number, {
-        project_id: after.project_id,
-        notes: after.title,
-      });
+    if (before.title !== after.title || before.project_id !== after.project_id) {
+      const survivors = freqChanged ? adjusted : future;
+      for (const r of survivors) {
+        relabelTimeEntry(db, r.time_entry_id as number, {
+          project_id: after.project_id,
+          notes: after.title,
+        });
+      }
     }
 
     let regenTo: string | null = null;
