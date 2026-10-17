@@ -35,15 +35,15 @@ sentence — never a click path.
   weekly-refill ("3h of Spanish per week, forever"), done-ness is
   cumulative hours, and `min_chunk_minutes` keeps the planner from
   confetti-ing the bucket across tiny gaps.
-- **Commitment taxonomy** (prototype): Task / Habit / Goal / Event
+- **Commitment taxonomy** (ratified 2026-10-06, #106): Task / Habit / Goal / Event
   are the four commitment types over the unified `time_entry`
   substrate, plus YNAB-for-time envelope budgeting — weekly
   assignments per envelope (`assign_hours`; NULL = snoozed) and
   zero-sum pulls (`pull_hours`, logged in `envelope_moves`). Spec:
   `docs/superpowers/specs/2026-07-17-commitment-taxonomy-design.md`
-  (#106). Posture is parallel-run: the real DB keeps today's
-  behavior until the new tools are used, the sandbox is the proving
-  ground, and branch `pre-commitments` is the way back.
+  (#106). Cut over 2026-10-16 (#173): assignments are the single
+  source of budget truth; goal and habit time credits the goal or
+  habit, not the project cap.
 - The `/week` planner skill is the primary UX — collaborative weekly
   planning that pulls from Jira, Google Calendar, and calendrome.
 - The GUI is an interactive weekly planner (React SPA + optional
@@ -72,13 +72,41 @@ sentence — never a click path.
   game") so suggestions and supply see it — an announcement, never
   permission. Both exist because Reclaim makes this a chore and we
   don't want to.
+- **Weeks follow the user's clock, not UTC** (#146, decided
+  2026-10-06). Weekly accounting (budgets, goals, envelopes, supply)
+  bounds the week in the envelope's category timezone. Range *reads*
+  keep the UTC day-bucket convention (#92); only "which week does
+  this hour credit" is local.
+- **Corrections are one call, never a review gate** (#175, decided
+  2026-10-06). A confirmed entry is editable in place
+  (`update_time_entry`: minutes, start, task), audit-trailed, no
+  unconfirm-then-edit ceremony. Same friction floor as `block_time`.
+- **Tasks close themselves when the evidence is in** (#174, #183).
+  Confirming a task's last placement completes it; a time-bound task
+  (`completion_mode: on_block_end`) completes when its block ends.
+  The morning brief lists what auto-closed so nothing vanishes.
+- **Personal planner rules live in calendrome** (#182), not in
+  dotfiles or agent memory: an instructions store the agent proposes
+  to and the GUI approves, read by every planner skill at session
+  start.
+- **Spontaneity is one sentence, and the consequence is named**
+  (#127, decided 2026-10-16). Taking work time for something
+  personal is one pool of hours, not two buckets: `take_time`
+  previews the tradeoff (make it up later, or the project runs
+  short this week), the user picks, one more call commits. The tool
+  never picks for you and never lets the cost happen silently.
+- **Habits are full lifecycle citizens** (#138, #129, #131, decided
+  2026-10-16): placeable, movable anywhere in their week, editable,
+  retirable. Delete is only for habits with no history; anything
+  with completed or confirmed time is retired, never erased.
 - Integrations (Harvest, Google Calendar sync) are separate from core.
 
 ## What we're still figuring out
 
-- **Auto-scheduling:** Not sure yet. The current model is fully
-  manual (Claude suggests, you approve). But some level of "just
-  place this for me" might be valuable. TBD.
+- **Auto-scheduling:** Narrowed (#127). Claude computes tradeoffs
+  and proposes concrete slots; the user still makes every choice.
+  Whether "just place this for me" with no confirmation step is
+  ever wanted remains open.
 - ~~**How much GUI?**~~ Resolved (#86, #24): MCP-only hit its
   ceiling at fast rescheduling — round-tripping every block move
   through a conversation was real friction. The GUI is now
@@ -126,6 +154,15 @@ sentence — never a click path.
   supply bound a `week_start` Monday as `[Mon 00:00, next Mon 00:00)`
   in the envelope's category timezone via `weekRange(weekStart, tz)`
   in `src/day-range.ts`; a `UTC` category is the old UTC week (#146)
+- A project's weekly cap is a standing `assignments` row
+  (`envelope_type 'project'`, `week_start 'standing'`);
+  `projects.weekly_budget_minutes` is gone from the schema (the
+  project tools still accept/return it, backed by that row). Every
+  envelope resolves through `resolveAssignment`: the week's row
+  (NULL = snoozed), else standing, else none. Project activity
+  excludes time an active goal/habit credits (`CREDITED_ELSEWHERE_SQL`).
+  An old build fails against a migrated DB: restart every MCP server
+  and the GUI after pulling (#173)
 - Bookkeeping stamps (`created_at`, `updated_at`, `confirmed_at`,
   `synced_at`, `completed_at`) come from `now()` in `src/clock.ts` —
   never SQL-side `datetime('now')` — so simulated time is one env var:
@@ -142,6 +179,18 @@ sentence — never a click path.
   schema.sql + docs.html, regenerates docs.json
 - `npm start` launches the MCP server, `npm run gui` the web app;
   `npm run dev` is Vite HMR against a running GUI server
+- **Working on the GUI: run both, and use :5173.** `npm run gui`
+  serves the API and the *built* bundle on :3737; `npm run dev`
+  serves the SPA with HMR on :5173 and proxies `/api` to :3737.
+  Edit against :5173 and changes are live with no rebuild step.
+  Only server-side TS (`src/gui/server.ts`, `mutations.ts`) falls
+  outside the watch — that still needs `npm run build`.
+- **`dist/` is gitignored, so a branch switch never reverts a
+  build.** `npm run gui` will happily serve another branch's CSS
+  and JS long after `git checkout` reverted the source — the app
+  looks wrong and `git status` looks clean, which reads as a bug
+  in the code rather than a stale artifact. After any checkout
+  that touches GUI source, either rebuild or work at :5173.
 - `npm run tauri:build` produces the native desktop app (needs the
   Rust toolchain; run on the target machine)
 - GUI write posture: binds 127.0.0.1, no CORS, non-local Origin
