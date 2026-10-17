@@ -523,11 +523,12 @@ for (const week of ['2026-09-28', '2026-10-05', '2026-10-12']) {
   const { budgets } = await call('get_all_budgets', { week_start: week });
   console.log(`\nBudgets, week of ${week}:`);
   for (const b of budgets) {
-    if (b.assigned_minutes === null) continue;
+    if (b.assigned_minutes === null && !b.snoozed) continue; // uncapped
     const used = b.confirmed_minutes + b.scheduled_minutes;
+    const of = b.snoozed ? 'snoozed' : `of ${(b.assigned_minutes / 60).toFixed(1)}h`;
     console.log(
-      `  ${b.project_id.padEnd(8)} ${(used / 60).toFixed(1).padStart(5)}h of ${(b.assigned_minutes / 60).toFixed(1)}h` +
-        (b.overspent ? '  OVERSPENT' : '') + (b.snoozed ? '  snoozed' : ''),
+      `  ${b.project_id.padEnd(8)} ${(used / 60).toFixed(1).padStart(5)}h ${of}` +
+        (b.overspent ? '  OVERSPENT' : ''),
     );
   }
 }

@@ -75,7 +75,11 @@ to the day they actually happen.
 Budgets are standing envelope assignments (#173), so
 `get_project_budget`, `get_all_budgets` and `get_envelopes` all read
 the week's assignment the same way: an explicit week row when one was
-assigned or pulled, else the project's standing cap.
+assigned or pulled, else the project's standing cap. They also count
+the same activity: goal blocks and habit time credit their own goal or
+habit envelope, never the project cap too, so the Maple Hollow and
+Wellness project rows read 0h while their goals and habits carry the
+weekend.
 
 ## Using it
 
