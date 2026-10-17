@@ -8,19 +8,21 @@ import { fmtHours } from '../lib/dates';
  * from `goalProgress`; a goal that blew its date glows warn — and
  * with `onGoalDragStart` (timeline view) a goal row drags onto the
  * grid to place a block (#138). Habits show the weekly frequency
- * meter (●●●○ done/target) and stay read-only: instances are
- * auto-generated; rescheduling is #129's territory.
+ * meter (●●●○ done/target); with `onHabitDragStart` a habit still
+ * under target drags onto the grid to place one more instance (#138).
  */
 export function CommitmentSections({
   goals,
   habitScores,
   meta,
   onGoalDragStart,
+  onHabitDragStart,
 }: {
   goals: Goal[];
   habitScores: HabitScore[];
   meta: ProjectMeta;
   onGoalDragStart?: (e: React.PointerEvent, goal: Goal) => void;
+  onHabitDragStart?: (e: React.PointerEvent, habit: HabitScore) => void;
 }) {
   if (!goals.length && !habitScores.length) return null;
   return (
@@ -41,7 +43,12 @@ export function CommitmentSections({
             Habits <span className="count-badge">{habitScores.length}</span>
           </h3>
           {habitScores.map((h) => (
-            <HabitItem key={h.habit_id} score={h} meta={meta} />
+            <HabitItem
+              key={h.habit_id}
+              score={h}
+              meta={meta}
+              onDragStart={h.remaining > 0 ? onHabitDragStart : undefined}
+            />
           ))}
         </section>
       )}
@@ -106,14 +113,37 @@ function GoalItem({
   );
 }
 
-function HabitItem({ score, meta }: { score: HabitScore; meta: ProjectMeta }) {
+function HabitItem({
+  score,
+  meta,
+  onDragStart,
+}: {
+  score: HabitScore;
+  meta: ProjectMeta;
+  onDragStart?: (e: React.PointerEvent, habit: HabitScore) => void;
+}) {
   const color = colorOf(meta, score.project_id);
   // Dot meter caps at 10 dots; the numeric fraction stays exact.
   const dots = Math.min(score.target, 10);
   const filled = Math.min(score.done, dots);
+  const startRowDrag = (e: React.PointerEvent) => {
+    if (!onDragStart) return;
+    if ((e.target as HTMLElement).closest('button, a, input')) return;
+    onDragStart(e, score);
+  };
   return (
-    <div className="habit-item" style={{ '--c': color } as React.CSSProperties}>
+    <div
+      className={`habit-item${onDragStart ? ' draggable' : ''}`}
+      style={{ '--c': color } as React.CSSProperties}
+      onPointerDown={startRowDrag}
+    >
+      {onDragStart && (
+        <span className="task-grip" title="Drag onto the timeline to place one more">
+          ⠿
+        </span>
+      )}
       <span className="task-title">{score.title}</span>
+      {score.remaining > 0 && <span className="task-dur">{score.remaining} left</span>}
       <span className="habit-meter" title={`${score.done} of ${score.target} this week`}>
         <span className="habit-dots" aria-hidden="true">
           {'●'.repeat(filled)}

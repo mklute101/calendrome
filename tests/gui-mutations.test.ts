@@ -313,7 +313,7 @@ describe('GUI habit-instance mutations (#118)', () => {
     expect(instance.scheduled_start).toBe('2026-07-13T09:00:00Z'); // untouched
     expect(entry.start_at).toBe('2026-07-13T18:00:00Z');
     expect(() =>
-      guiHabitMove(db, inst.id, { start: '2026-07-14T09:00:00Z' }),
+      guiHabitMove(db, inst.id, { start: '2026-07-20T09:00:00Z' }),
     ).toThrow(/skip, not a move/);
   });
 

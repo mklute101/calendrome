@@ -250,12 +250,12 @@ describe('GUI habit-instance API over HTTP', () => {
     expect(movedBody.instance.scheduled_start).toBe('2026-07-13T09:00:00Z');
     expect(movedBody.entry.start_at).toBe('2026-07-13T18:00:00Z');
 
-    // Leaving the day is a skip, not a move → 409.
-    const offDay = await post(`/api/habit-instances/${instId}/move`, {
-      start: '2026-07-14T09:00:00Z',
+    // Leaving the week is a skip, not a move → 409.
+    const offWeek = await post(`/api/habit-instances/${instId}/move`, {
+      start: '2026-07-20T09:00:00Z',
     });
-    expect(offDay.status).toBe(409);
-    expect((await json(offDay)).error).toMatch(/skip, not a move/);
+    expect(offWeek.status).toBe(409);
+    expect((await json(offWeek)).error).toMatch(/skip, not a move/);
 
     // Complete; double-complete 409s; move-after-complete 409s.
     const done = await post(`/api/habit-instances/${instId}/complete`);

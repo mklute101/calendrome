@@ -59,6 +59,11 @@ export function migrate(db: DB): void {
   if (!hasColumn(db, 'habits', 'times_per_week')) {
     db.exec('ALTER TABLE habits ADD COLUMN times_per_week INTEGER');
   }
+  // Hand-placed habit instances (#138) keep their time through
+  // schedule edits; everything that predates placement was generated.
+  if (!hasColumn(db, 'habit_instances', 'origin')) {
+    db.exec("ALTER TABLE habit_instances ADD COLUMN origin TEXT NOT NULL DEFAULT 'generated'");
+  }
 
   // M5 cutover (#173): project caps move from
   // projects.weekly_budget_minutes into standing assignment rows.

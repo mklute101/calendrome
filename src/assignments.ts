@@ -120,13 +120,23 @@ function assertEnvelopeExists(db: DB, type: EnvelopeType, id: string): void {
   if (!found) throw new Error(`${type} ${id} not found`);
 }
 
+/** A retired habit keeps its rows readable as history but takes no new
+ *  minutes: assign_hours (non-null) and pull_hours *into* it refuse
+ *  (#131). Releasing what it already holds still works. */
+function assertNotRetiredHabit(db: DB, type: EnvelopeType, id: string): void {
+  if (type !== 'habit') return;
+  if (!getHabit(db, Number(id))?.active) {
+    throw new Error(`habit ${id} is retired; it cannot be assigned hours`);
+  }
+}
+
 /**
  * The standing weekly default for an envelope, used when no
  * assignments row exists: project → its standing assignment row
  * (`week_start = 'standing'`, the cap side of the envelope, #173; NULL
  * when absent — a deliberately uncapped project has *no* cap, not a 0h
  * one, #150), goal → its weekly ask, habit → instances-per-week ×
- * duration.
+ * duration (0 once retired).
  */
 export function standingDefault(
   db: DB,
@@ -142,6 +152,9 @@ export function standingDefault(
   }
   const habit = getHabit(db, Number(id));
   if (!habit) throw new Error(`habit ${id} not found`);
+  // A retired habit asks for nothing (#131): only minutes an explicit
+  // row still holds can be released from it.
+  if (!habit.active) return 0;
   const perWeek =
     habit.times_per_week != null
       ? habit.times_per_week
@@ -196,6 +209,10 @@ export interface AssignHoursInput {
 export function assignHours(db: DB, input: AssignHoursInput): Assignment {
   assertMonday(input.week_start);
   assertEnvelopeExists(db, input.envelope_type, input.envelope_id);
+  // Clearing (null) is allowed: it releases a retired habit's week.
+  if (input.minutes !== null) {
+    assertNotRetiredHabit(db, input.envelope_type, input.envelope_id);
+  }
   if (
     input.minutes !== null &&
     (!Number.isInteger(input.minutes) || input.minutes < 0)
@@ -259,6 +276,9 @@ export function pullHours(db: DB, input: PullHoursInput): EnvelopeMove {
   }
   if (from) assertEnvelopeExists(db, from.type, from.id);
   if (to) assertEnvelopeExists(db, to.type, to.id);
+  // Only inflows are refused: pulling minutes *out* of a retired habit
+  // is how its already-assigned week gets released.
+  if (to) assertNotRetiredHabit(db, to.type, to.id);
 
   const setMinutes = db.prepare(
     `INSERT INTO assignments (envelope_type, envelope_id, week_start, minutes, updated_at)

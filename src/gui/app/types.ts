@@ -46,6 +46,8 @@ export interface Placement {
 export interface HabitInstance {
   id: number;
   habit_id: number;
+  /** 'placed' instances were put on the grid by hand (#138). */
+  origin: 'generated' | 'placed';
   /** Immutable slot identity (regeneration dedupe) — never moves. */
   scheduled_start: string;
   scheduled_end: string;
@@ -59,9 +61,6 @@ export interface HabitInstance {
   habit_title: string;
   project_id: string;
   habit_duration: number;
-  /** Frequency form: null = fixed-days (drag within its own day);
-   *  set = N-per-week target (drag anywhere in its week). */
-  times_per_week: number | null;
 }
 
 export interface TimeLog {
@@ -142,8 +141,11 @@ export interface HabitScore {
   habit_id: number;
   title: string;
   project_id: string;
+  duration_minutes: number;
   done: number;
   target: number;
+  /** Instances still placeable this week: target - (PLANNED + COMPLETE). */
+  remaining: number;
 }
 
 /** Week-level envelope totals — the first ambient budget signal. */

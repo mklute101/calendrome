@@ -57,6 +57,8 @@ import {
   guiHabitComplete,
   guiHabitSkip,
   guiHabitMove,
+  guiPlaceHabit,
+  guiUnplaceHabit,
   reopenHabitInstance,
 } from './mutations.js';
 import type { EnvelopeRef, EnvelopeType } from '../assignments.js';
@@ -406,10 +408,34 @@ export function createApp(
   });
 
   /**
-   * Move a habit instance within its frequency range (#118). Body:
-   * `{start, end?}`. Fixed-days habits move within their own day,
-   * times_per_week habits within their week — leaving the range is a
-   * skip, not a move, and 409s here.
+   * Place one habit instance (#138), same path as the
+   * `place_habit_instance` MCP tool. Body: `{habit_id, start}`. 409
+   * when the week already meets the habit's target or the slot is
+   * taken.
+   */
+  app.post('/api/habit-instances', (req, res) => {
+    const { habit_id, start } = req.body ?? {};
+    if (typeof habit_id !== 'number' || typeof start !== 'string') {
+      res.status(400).json({ error: 'body requires habit_id (number) and start (string)' });
+      return;
+    }
+    const db = getDb();
+    mutate(res, () => guiPlaceHabit(db, { habit_id, start })).finally(() => db.close());
+  });
+
+  /**
+   * Undo a habit placement (#138): deletes a PLANNED, hand-placed
+   * instance and its entry. 409 for a generated or non-PLANNED one.
+   */
+  app.post('/api/habit-instances/:id/unplace', (req, res) => {
+    const db = getDb();
+    mutate(res, () => guiUnplaceHabit(db, idParam(req))).finally(() => db.close());
+  });
+
+  /**
+   * Move a habit instance anywhere in its local week (#129). Body:
+   * `{start, end?}`. Leaving the week is a skip, not a move, and 409s
+   * here.
    */
   app.post('/api/habit-instances/:id/move', (req, res) => {
     const { start, end } = req.body ?? {};

@@ -15,6 +15,7 @@ import {
   confirmTimeEntry,
   insertTimeEntry,
   moveTimeEntry,
+  relabelTimeEntry,
   skipTimeEntry,
   type TimeEntryRow,
 } from './time-entry.js';
@@ -46,6 +47,10 @@ export interface HabitInstance {
   calendar_event_id: string | null;
   completed_at: string | null;
   time_entry_id: number | null;
+  /** 'generated' by the schedule, or 'placed' by hand (#138). Placed
+   *  instances keep their time through schedule edits and can be
+   *  unplaced; generated ones follow the schedule. */
+  origin: 'generated' | 'placed';
 }
 
 export interface CreateHabitInput {
@@ -61,6 +66,7 @@ export interface CreateHabitInput {
 }
 
 export interface UpdateHabitInput {
+  project_id?: string;
   title?: string;
   notes?: string | null;
   duration_minutes?: number;
@@ -213,27 +219,40 @@ export function deactivateHabit(db: DB, id: number): void {
 }
 
 /**
- * Generate one habit_instance per matching weekday in the inclusive date
- * range. Idempotent: re-running for the same range will not create
- * duplicates (UNIQUE(habit_id, scheduled_start) enforces this).
+ * Generate habit_instances for the inclusive local date range.
+ * Idempotent: re-running for the same range creates nothing new.
+ *
+ * Dedupe is by occupancy, not by exact slot, so a schedule edit or a
+ * moved/placed instance never doubles up a day (#129, #131):
+ *  - fixed-days form: a listed date gets an instance only when the
+ *    habit has no instance (any status) whose `scheduled_start` falls
+ *    on that local date.
+ *  - N-per-week target form (#106): each local Mon-Sun week is filled
+ *    up to N instances (any status counts, so a skip is not refilled),
+ *    on the earliest dates in range that have none. These are
+ *    *candidates* — they slide anywhere in the week.
+ *
+ * `opts.notBefore` (canonical UTC) drops any slot that would start
+ * before it, so a mid-week re-materialization never manufactures
+ * already-past sessions.
  *
  * The date range is interpreted in the habit's local timezone — a habit at
  * "11:30 America/Chicago" generated for 2026-05-04..2026-05-04 produces an
  * instance at `2026-05-04T16:30:00Z` (CDT, UTC-5). DST transitions inside
  * the range are handled correctly because the wall-clock → UTC conversion
- * resolves the offset per-date.
+ * resolves the offset per-date. A retired habit generates nothing.
  */
 export function generateHabitInstances(
   db: DB,
   habitId: number,
   fromDate: string,
   toDate: string,
+  opts: { notBefore?: string } = {},
 ): HabitInstance[] {
   const habit = getHabit(db, habitId);
   if (!habit) throw new Error(`habit ${habitId} not found`);
+  if (!habit.active) throw new Error(`habit ${habitId} is retired`);
 
-  const [hh, mm] = habit.start_time.split(':').map(Number);
-  const dur = habit.duration_minutes;
   const tz = habit.timezone || 'UTC';
 
   // Validate the date range parses.
@@ -242,87 +261,272 @@ export function generateHabitInstances(
     throw new Error(`invalid date range: ${fromDate}..${toDate}`);
   }
 
-  // Which dates in the range get an instance?
-  //  - Fixed-days form: every date whose weekday is in days_of_week.
-  //  - N-per-week target form (#106): the first N days of the range.
-  //    These are *candidates* — mobility lets them slide anywhere in
-  //    the week; the anchor is just a materialization convenience.
-  const dates: string[] = [];
-  if (habit.times_per_week != null) {
-    for (
-      let date = fromDate;
-      date <= toDate && dates.length < habit.times_per_week;
-      date = addDays(date, 1)
-    ) {
-      dates.push(date);
+  const inRange = (r: HabitInstance) => {
+    const day = localDayOf(new Date(r.scheduled_start), tz);
+    return day >= fromDate && day <= toDate;
+  };
+  // Fast path, read-only: the common GUI poll finds the range already
+  // materialized. Otherwise plan again under an IMMEDIATE transaction
+  // so the occupancy read and the inserts are atomic against the other
+  // process sharing the file (GUI server vs MCP server).
+  const first = planGeneration(db, habit, fromDate, toDate, opts.notBefore);
+  if (first.dates.length === 0) return first.existing.filter(inRange);
+
+  const stmts = instanceStatements(db);
+  db.transaction(() => {
+    const { dates } = planGeneration(db, habit, fromDate, toDate, opts.notBefore);
+    for (const date of dates) {
+      insertInstance(db, habit, slotStart(habit, date), 'generated', stmts);
     }
-  } else {
-    const days = new Set(parseDaysOfWeek(habit.days_of_week));
-    for (let date = fromDate; date <= toDate; date = addDays(date, 1)) {
-      if (days.has(weekdayOfIsoDate(date))) dates.push(date);
+  }).immediate();
+  return instancesInLocalDays(db, habit, fromDate, toDate);
+}
+
+/**
+ * Which local dates in range get a new generated instance (see
+ * `generateHabitInstances`). Both forms respect the weekly target:
+ * PLANNED + COMPLETE instances already in a week (placed ones
+ * included) use up its headroom, so a placed make-up plus the
+ * schedule never exceeds the target. Any instance on a date occupies
+ * it, so a skip is never refilled.
+ */
+function planGeneration(
+  db: DB,
+  habit: Habit,
+  fromDate: string,
+  toDate: string,
+  notBefore: string | undefined,
+): { existing: HabitInstance[]; dates: string[] } {
+  const tz = habit.timezone || 'UTC';
+  const existing = instancesInLocalDays(db, habit, mondayOfDay(fromDate), addDays(mondayOfDay(toDate), 6));
+  const occupied = new Set<string>();
+  const perWeek = new Map<string, number>();
+  for (const r of existing) {
+    const day = localDayOf(new Date(r.scheduled_start), tz);
+    occupied.add(day);
+    // The target form counts every status (a skipped candidate is not
+    // re-offered); fixed-days counts only live ones, since a skipped
+    // listed day already occupies its own date.
+    if (habit.times_per_week != null || r.status !== 'SKIPPED') {
+      const wk = mondayOfDay(day);
+      perWeek.set(wk, (perWeek.get(wk) ?? 0) + 1);
     }
   }
+  const target = weeklyTarget(habit);
+  const listed = habit.times_per_week == null ? new Set(parseDaysOfWeek(habit.days_of_week)) : null;
+  const dates: string[] = [];
+  for (let date = fromDate; date <= toDate; date = addDays(date, 1)) {
+    if (listed && !listed.has(weekdayOfIsoDate(date))) continue;
+    if (occupied.has(date)) continue;
+    const wk = mondayOfDay(date);
+    const have = perWeek.get(wk) ?? 0;
+    if (have >= target) continue;
+    if (notBefore && slotStart(habit, date) < notBefore) continue;
+    dates.push(date);
+    perWeek.set(wk, have + 1);
+  }
+  return { existing, dates };
+}
 
-  const insert = db.prepare(
-    `INSERT OR IGNORE INTO habit_instances
-        (habit_id, scheduled_start, scheduled_end)
-     VALUES (?, ?, ?)`,
-  );
-  const linkTimeEntry = db.prepare(
-    `UPDATE habit_instances SET time_entry_id = ? WHERE id = ?`,
-  );
-  const lookupExisting = db.prepare(
-    `SELECT id FROM habit_instances WHERE habit_id = ? AND scheduled_start = ?`,
-  );
+/** The habit's generated slot on a local date: wall clock → canonical
+ *  UTC through the shared DST-safe helper (src/day-range.ts). */
+function slotStart(habit: Habit, date: string): string {
+  const [hh, mm] = habit.start_time.split(':').map(Number);
+  const ms = zonedTimeToUtcMs(date, `${pad2(hh)}:${pad2(mm)}`, habit.timezone || 'UTC');
+  return toCanonicalUtc(new Date(ms).toISOString(), 'scheduled_start');
+}
 
-  const touchedIds: number[] = [];
+function plusMinutes(iso: string, minutes: number, label: string): string {
+  return toCanonicalUtc(new Date(new Date(iso).getTime() + minutes * 60_000).toISOString(), label);
+}
 
-  const generateTx = db.transaction(() => {
-    for (const date of dates) {
-      // Wall clock -> UTC through the shared helper (src/day-range.ts),
-      // whose two-pass offset lookup is right on both DST nights: the
-      // skipped spring hour shifts back, and the hours after a
-      // fall-back use the new offset (the old single-pass version put
-      // post-fall-back times one hour early).
-      const startMs = zonedTimeToUtcMs(date, `${pad2(hh)}:${pad2(mm)}`, tz);
-      const start = toCanonicalUtc(new Date(startMs).toISOString(), 'scheduled_start');
-      const end = toCanonicalUtc(
-        new Date(startMs + dur * 60_000).toISOString(),
-        'scheduled_end',
-      );
-
-      const result = insert.run(habitId, start, end);
-      if (result.changes === 0) {
-        const existing = lookupExisting.get(habitId, start) as { id: number } | undefined;
-        if (existing) touchedIds.push(existing.id);
-        continue;
-      }
-      const instanceId = Number(result.lastInsertRowid);
-      touchedIds.push(instanceId);
-      const teId = insertTimeEntry(db, {
-        task_id: null,
-        project_id: habit.project_id,
-        start_at: start,
-        end_at: end,
-        status: 'UNCONFIRMED',
-        source: 'habit',
-        notes: habit.title,
-      });
-      linkTimeEntry.run(teId, instanceId);
-    }
+/** A habit's instances whose `scheduled_start` falls on a local date in
+ *  `[from, to]` (habit timezone), ordered by slot. */
+function instancesInLocalDays(
+  db: DB,
+  habit: Habit,
+  from: string,
+  to: string,
+): HabitInstance[] {
+  const tz = habit.timezone || 'UTC';
+  const startIso = weekRange(mondayOfDay(from), tz).startIso;
+  const endIso = weekRange(mondayOfDay(to), tz).endIso;
+  return (
+    db
+      .prepare(
+        `SELECT * FROM habit_instances
+          WHERE habit_id = ? AND scheduled_start >= ? AND scheduled_start < ?
+          ORDER BY scheduled_start`,
+      )
+      .all(habit.id, startIso, endIso) as HabitInstance[]
+  ).filter((r) => {
+    const day = localDayOf(new Date(r.scheduled_start), tz);
+    return day >= from && day <= to;
   });
-  generateTx();
+}
 
-  if (touchedIds.length === 0) return [];
+type InstanceStatements = ReturnType<typeof instanceStatements>;
 
-  const placeholders = touchedIds.map(() => '?').join(',');
-  return db
+/** Prepared once per batch so a generation loop does not recompile. */
+function instanceStatements(db: DB) {
+  return {
+    taken: db.prepare('SELECT id FROM habit_instances WHERE habit_id = ? AND scheduled_start = ?'),
+    insert: db.prepare(
+      `INSERT INTO habit_instances (habit_id, scheduled_start, scheduled_end, origin)
+       VALUES (?, ?, ?, ?)`,
+    ),
+    link: db.prepare('UPDATE habit_instances SET time_entry_id = ? WHERE id = ?'),
+  };
+}
+
+/**
+ * Insert one PLANNED instance at `start` plus its linked UNCONFIRMED
+ * habit entry, sized by the habit's duration. Caller owns the
+ * transaction. UNIQUE(habit_id, scheduled_start) surfaces as a clear
+ * error rather than a raw constraint message.
+ */
+function insertInstance(
+  db: DB,
+  habit: Habit,
+  start: string,
+  origin: HabitInstance['origin'],
+  stmts: InstanceStatements,
+): number {
+  const startCanon = toCanonicalUtc(start, 'scheduled_start');
+  const end = plusMinutes(startCanon, habit.duration_minutes, 'scheduled_end');
+  const taken = stmts.taken.get(habit.id, startCanon) as { id: number } | undefined;
+  if (taken) {
+    throw new Error(
+      `habit ${habit.id} already has an instance at ${startCanon} (habit_instance ${taken.id})`,
+    );
+  }
+  const instanceId = Number(stmts.insert.run(habit.id, startCanon, end, origin).lastInsertRowid);
+  const teId = insertTimeEntry(db, {
+    task_id: null,
+    project_id: habit.project_id,
+    start_at: startCanon,
+    end_at: end,
+    status: 'UNCONFIRMED',
+    source: 'habit',
+    notes: habit.title,
+  });
+  stmts.link.run(teId, instanceId);
+  return instanceId;
+}
+
+/** Instances-per-week target: `times_per_week`, or the listed-day count. */
+function weeklyTarget(habit: Habit): number {
+  return habit.times_per_week != null
+    ? habit.times_per_week
+    : parseDaysOfWeek(habit.days_of_week).length;
+}
+
+/**
+ * Put one habit instance on the calendar at `start` (#138), outside
+ * the generated schedule: a skipped Monday made up on Tuesday, or a
+ * 3x/week session dropped onto Saturday of a week not yet filled.
+ *
+ * Allowed only while the habit's local week is under target — PLANNED
+ * + COMPLETE instances below `weeklyTarget` (a skip frees its slot).
+ * A fixed-days week is materialized first, because its listed days
+ * will be generated regardless and count against the target. A
+ * target-form week is not: generation later fills only what the
+ * placements leave open, so placing into an unfilled week just works.
+ * Any time of day is valid; out-of-window placement is the caller's
+ * informational note, never a refusal. Duration is the habit's
+ * instance duration. The instance is marked `origin = 'placed'`.
+ */
+export function placeHabitInstance(
+  db: DB,
+  habitId: number,
+  start: string,
+): { instance: HabitInstance; entry: TimeEntryRow } {
+  const placeTx = db.transaction((): number => {
+    const habit = getHabit(db, habitId);
+    if (!habit) throw new Error(`habit ${habitId} not found`);
+    if (!habit.active) throw new Error(`habit ${habitId} is retired; it cannot be placed`);
+    const startCanon = toCanonicalUtc(start, 'start');
+    const tz = habit.timezone || 'UTC';
+    const week = mondayOfDay(localDayOf(new Date(startCanon), tz));
+    if (habit.times_per_week == null) {
+      generateHabitInstances(db, habitId, week, addDays(week, 6));
+    }
+    const { remaining, target } = habitWeekRemaining(db, habit, week);
+    if (remaining <= 0) {
+      throw new Error(
+        `habit ${habitId} already meets its target of ${target} for the week of ${week}; ` +
+          'skip an instance to free a slot, or move one instead',
+      );
+    }
+    return insertInstance(db, habit, startCanon, 'placed', instanceStatements(db));
+  });
+  // IMMEDIATE: the headroom check and the insert are atomic against a
+  // concurrent generation in the other process.
+  const id = placeTx.immediate();
+  return instanceWithEntry(db, id);
+}
+
+/**
+ * Undo a placement (#138): delete a PLANNED, hand-placed instance and
+ * its unconfirmed entry outright, freeing the slot. Not a skip — a
+ * skip is a record that a session did not happen; an undone placement
+ * never existed. Generated instances are skipped, not unplaced.
+ */
+export function unplaceHabitInstance(db: DB, id: number): { deleted: HabitInstance } {
+  return db.transaction(() => {
+    const inst = db.prepare('SELECT * FROM habit_instances WHERE id = ?').get(id) as
+      | HabitInstance
+      | undefined;
+    if (!inst) throw new Error(`habit_instance ${id} not found`);
+    if (inst.origin !== 'placed') {
+      throw new Error(`habit_instance ${id} was generated by the schedule; skip it instead`);
+    }
+    if (inst.status !== 'PLANNED') {
+      throw new Error(`habit_instance ${id} is ${inst.status}, not PLANNED`);
+    }
+    const te = inst.time_entry_id == null
+      ? undefined
+      : (db.prepare('SELECT status FROM time_entry WHERE id = ?').get(inst.time_entry_id) as
+          | { status: string }
+          | undefined);
+    if (te?.status === 'CONFIRMED') {
+      throw new Error(`habit_instance ${id} is already logged (its entry is confirmed); it cannot be unplaced`);
+    }
+    deleteInstances(db, [inst]);
+    return { deleted: inst };
+  })();
+}
+
+function instanceWithEntry(db: DB, id: number): { instance: HabitInstance; entry: TimeEntryRow } {
+  const instance = db
+    .prepare('SELECT * FROM habit_instances WHERE id = ?')
+    .get(id) as HabitInstance;
+  const entry = db
+    .prepare('SELECT * FROM time_entry WHERE id = ?')
+    .get(instance.time_entry_id) as TimeEntryRow;
+  return { instance, entry };
+}
+
+/**
+ * Placement headroom for a habit in a local week (#138): the target
+ * minus PLANNED + COMPLETE instances whose slot falls in that week.
+ * SKIPPED instances do not count — a skip is what frees a slot.
+ */
+export function habitWeekRemaining(
+  db: DB,
+  habit: Habit,
+  weekStart: string,
+): { remaining: number; target: number } {
+  const { startIso, endIso } = weekRange(weekStart, habit.timezone || 'UTC');
+  const row = db
     .prepare(
-      `SELECT * FROM habit_instances
-       WHERE id IN (${placeholders})
-       ORDER BY scheduled_start`,
+      `SELECT COUNT(*) AS n FROM habit_instances
+        WHERE habit_id = ? AND status IN ('PLANNED', 'COMPLETE')
+          AND scheduled_start >= ? AND scheduled_start < ?`,
     )
-    .all(...touchedIds) as HabitInstance[];
+    .get(habit.id, startIso, endIso) as { n: number };
+  const target = weeklyTarget(habit);
+  return { remaining: target - row.n, target };
 }
 
 export function completeHabitInstance(
@@ -347,23 +551,21 @@ export function completeHabitInstance(
 }
 
 /**
- * Move a PLANNED habit instance's linked time_entry within the habit's
- * frequency range (#118, spec: 2026-07-17-commitment-taxonomy-design).
+ * Move a PLANNED habit instance's linked time_entry anywhere in its
+ * local Mon-Sun week (#129; was own-day-only for fixed-days, #118).
  *
- * The frequency range is the load-bearing rule: sliding *within* it is
- * a move; leaving it is a skip, never a move. Enforced server-side:
- *  - fixed-days form: the new start must land on the same local day
- *    (in the habit's timezone) as `scheduled_start` — a Mon/Wed/Fri
- *    instance slides within its own day only.
- *  - times_per_week form: the new start must stay inside the instance's
- *    Mon-Sun week — an N-per-week candidate slides anywhere in its week.
+ * The week is the load-bearing rule for both habit forms: sliding
+ * within it is a move (a Monday 11:00 session done Tuesday 18:00);
+ * leaving it is a skip, never a move — skip it and place one in the
+ * other week instead (`placeHabitInstance`). The week is computed in
+ * the habit's timezone (#146).
  *
  * `habit_instances.scheduled_start` is the immutable slot identity
- * (UNIQUE(habit_id, scheduled_start) is the regeneration dedupe) and is
- * never rewritten; the linked entry's start/end is the display truth.
- * `newEnd` exists for parity with `moveTimeEntry` but a habit's chunk
- * size is its instance duration (non-combinable) — callers normally
- * omit it and the duration is preserved.
+ * (regeneration dedupes on its local date) and is never rewritten; the
+ * linked entry's start/end is the display truth. `newEnd` exists for
+ * parity with `moveTimeEntry` but a habit's chunk size is its instance
+ * duration (non-combinable) — callers normally omit it and the
+ * duration is preserved.
  */
 export function moveHabitInstance(
   db: DB,
@@ -389,24 +591,12 @@ export function moveHabitInstance(
 
     const startCanon = toCanonicalUtc(newStart, 'new_start');
     const tz = habit.timezone || 'UTC';
-    if (habit.times_per_week != null) {
-      // Target form: anywhere in the instance's Mon-Sun week.
-      const fromWeek = mondayOfDay(localDayOf(new Date(inst.scheduled_start), tz));
-      const toWeek = mondayOfDay(localDayOf(new Date(startCanon), tz));
-      if (fromWeek !== toWeek) {
-        throw new Error(
-          `cannot move habit_instance ${id} out of its week (${fromWeek}): leaving the frequency range is a skip, not a move`,
-        );
-      }
-    } else {
-      // Fixed-days form: within its own day only.
-      const fromDay = localDayOf(new Date(inst.scheduled_start), tz);
-      const toDay = localDayOf(new Date(startCanon), tz);
-      if (fromDay !== toDay) {
-        throw new Error(
-          `cannot move habit_instance ${id} off its day (${fromDay}): leaving the frequency range is a skip, not a move`,
-        );
-      }
+    const fromWeek = mondayOfDay(localDayOf(new Date(inst.scheduled_start), tz));
+    const toWeek = mondayOfDay(localDayOf(new Date(startCanon), tz));
+    if (fromWeek !== toWeek) {
+      throw new Error(
+        `cannot move habit_instance ${id} out of its week (${fromWeek}): leaving the week is a skip, not a move`,
+      );
     }
 
     moveTimeEntry(db, inst.time_entry_id, startCanon, {
@@ -414,14 +604,7 @@ export function moveHabitInstance(
     });
   });
   moveTx();
-
-  const instance = db
-    .prepare('SELECT * FROM habit_instances WHERE id = ?')
-    .get(id) as HabitInstance;
-  const entry = db
-    .prepare('SELECT * FROM time_entry WHERE id = ?')
-    .get(instance.time_entry_id) as TimeEntryRow;
-  return { instance, entry };
+  return instanceWithEntry(db, id);
 }
 
 /**
@@ -454,11 +637,7 @@ export function habitWeekScore(
     )
     .get(habitId, startIso, endIso) as { n: number };
 
-  const target =
-    habit.times_per_week != null
-      ? habit.times_per_week
-      : parseDaysOfWeek(habit.days_of_week).length;
-  return { done: row.n, target };
+  return { done: row.n, target: weeklyTarget(habit) };
 }
 
 export function skipHabitInstance(db: DB, id: number): HabitInstance {
@@ -477,4 +656,247 @@ export function skipHabitInstance(db: DB, id: number): HabitInstance {
   return db
     .prepare('SELECT * FROM habit_instances WHERE id = ?')
     .get(id) as HabitInstance;
+}
+
+/**
+ * Move an entry by its time_entry id, routing habit entries through
+ * `moveHabitInstance` so `move_placement` and the GUI placement drag
+ * enforce the same week rule as the habit-instance route (#129).
+ * Non-habit entries go straight to `moveTimeEntry`.
+ */
+export function moveEntryRespectingHabit(
+  db: DB,
+  timeEntryId: number,
+  newStart: string,
+  opts: { newEnd?: string } = {},
+): void {
+  const inst = db
+    .prepare('SELECT id FROM habit_instances WHERE time_entry_id = ?')
+    .get(timeEntryId) as { id: number } | undefined;
+  if (inst) {
+    moveHabitInstance(db, inst.id, newStart, opts);
+    return;
+  }
+  moveTimeEntry(db, timeEntryId, newStart, { new_end_at: opts.newEnd });
+}
+
+/**
+ * Future, still-plannable instances of a habit: PLANNED, with a linked
+ * entry that is UNCONFIRMED and starts at or after now. This is the set
+ * a schedule edit rewrites and a retire removes; anything past, logged,
+ * completed or skipped is history and is never touched (#131).
+ */
+function futurePlanned(
+  db: DB,
+  habitId: number,
+): Array<HabitInstance & { te_start: string; te_end: string }> {
+  return db
+    .prepare(
+      `SELECT hi.*, te.start_at AS te_start, te.end_at AS te_end
+         FROM habit_instances hi
+         JOIN time_entry te ON te.id = hi.time_entry_id
+        WHERE hi.habit_id = ? AND hi.status = 'PLANNED'
+          AND te.status = 'UNCONFIRMED' AND te.start_at >= ?
+        ORDER BY hi.scheduled_start`,
+    )
+    .all(habitId, now()) as Array<HabitInstance & { te_start: string; te_end: string }>;
+}
+
+/** Delete instances and their unconfirmed entries (through
+ *  `skipTimeEntry`, which refuses a confirmed one). */
+function deleteInstances(db: DB, rows: Array<{ id: number; time_entry_id: number | null }>): void {
+  const delInst = db.prepare('DELETE FROM habit_instances WHERE id = ?');
+  for (const r of rows) {
+    delInst.run(r.id);
+    if (r.time_entry_id != null) skipTimeEntry(db, r.time_entry_id);
+  }
+}
+
+/**
+ * Edit a habit and carry the edit into its future (#131). The template
+ * is patched (`updateHabit` rules: one frequency form, valid timezone),
+ * then future plannable instances (see `futurePlanned`) follow it.
+ *
+ * An instance *follows the schedule* when it was generated and its
+ * entry still sits exactly on its slot; one the user placed, moved or
+ * resized is *adjusted* and keeps the time they chose.
+ *  - title / project: every future entry is relabelled.
+ *  - duration: following instances take the new length; adjusted ones
+ *    are resized from their current start.
+ *  - start_time / timezone (frequency unchanged): following instances
+ *    move to the new time on the same local date, unless that time has
+ *    already passed or another instance holds that exact slot — then
+ *    they keep their (still future) time.
+ *  - frequency (days_of_week / times_per_week): following instances
+ *    are removed and the affected weeks re-materialized under the new
+ *    schedule, future slots only.
+ * Past, confirmed, completed and skipped rows are never touched. One
+ * transaction.
+ */
+export function editHabit(db: DB, id: number, patch: UpdateHabitInput): Habit {
+  const tx = db.transaction((): Habit => {
+    const before = getHabit(db, id);
+    if (!before) throw new Error(`habit ${id} not found`);
+    if (!before.active) throw new Error(`habit ${id} is retired; it cannot be edited`);
+    // MCP args arrive with absent keys as undefined; `active` is not an
+    // edit (retire_habit owns it).
+    const rest = Object.fromEntries(
+      Object.entries(patch).filter(([k, v]) => v !== undefined && k !== 'active'),
+    ) as UpdateHabitInput;
+    if (Object.keys(rest).length === 0) throw new Error('update_habit needs at least one field to change');
+    if (rest.timezone !== undefined) assertValidTimezone(rest.timezone);
+    if (rest.project_id !== undefined) {
+      const p = db.prepare('SELECT id FROM projects WHERE id = ?').get(rest.project_id);
+      if (!p) throw new Error(`project ${rest.project_id} not found`);
+    }
+    if (rest.duration_minutes !== undefined &&
+        (!Number.isInteger(rest.duration_minutes) || rest.duration_minutes < 1)) {
+      throw new Error(`duration_minutes must be a positive integer, got: ${rest.duration_minutes}`);
+    }
+    const after = updateHabit(db, id, rest);
+
+    const oldTz = before.timezone || 'UTC';
+    const freqChanged =
+      before.days_of_week !== after.days_of_week ||
+      before.times_per_week !== after.times_per_week;
+    const timeChanged =
+      before.start_time !== after.start_time || oldTz !== (after.timezone || 'UTC');
+    const durChanged = before.duration_minutes !== after.duration_minutes;
+    const stamp = now();
+
+    const setSlot = db.prepare(
+      'UPDATE habit_instances SET scheduled_start = ?, scheduled_end = ? WHERE id = ?',
+    );
+    const clashAt = db.prepare(
+      'SELECT id FROM habit_instances WHERE habit_id = ? AND scheduled_start = ? AND id != ?',
+    );
+
+    const future = futurePlanned(db, id);
+    const follows = (r: (typeof future)[number]) =>
+      r.origin === 'generated' && r.te_start === r.scheduled_start && r.te_end === r.scheduled_end;
+    const following = future.filter(follows);
+    const adjusted = future.filter((r) => !follows(r));
+
+    if (before.title !== after.title || before.project_id !== after.project_id) {
+      const survivors = freqChanged ? adjusted : future;
+      for (const r of survivors) {
+        relabelTimeEntry(db, r.time_entry_id as number, {
+          project_id: after.project_id,
+          notes: after.title,
+        });
+      }
+    }
+
+    let regenTo: string | null = null;
+    if (freqChanged) {
+      for (const r of following) {
+        const day = localDayOf(new Date(r.scheduled_start), oldTz);
+        if (regenTo === null || day > regenTo) regenTo = day;
+      }
+      deleteInstances(db, following);
+    } else if (timeChanged || durChanged) {
+      for (const r of following) {
+        let start = r.scheduled_start;
+        if (timeChanged) {
+          const moved = slotStart(after, localDayOf(new Date(r.scheduled_start), oldTz));
+          // Never move a still-future session into the past, nor onto a
+          // slot another instance (e.g. a placed one) already holds —
+          // either way it keeps its current time.
+          if (moved >= stamp && !clashAt.get(id, moved, r.id)) start = moved;
+        }
+        const end = plusMinutes(start, after.duration_minutes, 'scheduled_end');
+        setSlot.run(start, end, r.id);
+        moveTimeEntry(db, r.time_entry_id as number, start, { new_end_at: end });
+      }
+    }
+    if (durChanged) {
+      for (const r of adjusted) {
+        moveTimeEntry(db, r.time_entry_id as number, r.te_start, {
+          new_end_at: plusMinutes(r.te_start, after.duration_minutes, 'end_at'),
+        });
+        setSlot.run(
+          r.scheduled_start,
+          plusMinutes(r.scheduled_start, after.duration_minutes, 'scheduled_end'),
+          r.id,
+        );
+      }
+    }
+
+    if (freqChanged) {
+      const today = localDayOf(new Date(stamp), after.timezone || 'UTC');
+      const through = addDays(mondayOfDay(regenTo !== null && regenTo > today ? regenTo : today), 6);
+      generateHabitInstances(db, id, today, through, { notBefore: stamp });
+    }
+    return after;
+  });
+  return tx();
+}
+
+/**
+ * Retire a habit (#131): `active = 0`, and its future plannable
+ * instances (see `futurePlanned`) are removed with their entries.
+ * COMPLETE / SKIPPED instances, past PLANNED ones still awaiting
+ * review, and every confirmed entry stay — retiring ends the habit,
+ * it never erases what happened. A retired habit generates nothing,
+ * cannot be placed or edited, and refuses new assignments.
+ */
+export function retireHabit(
+  db: DB,
+  id: number,
+): { habit: Habit; removed_instances: number } {
+  const tx = db.transaction(() => {
+    const habit = getHabit(db, id);
+    if (!habit) throw new Error(`habit ${id} not found`);
+    if (!habit.active) throw new Error(`habit ${id} is already retired`);
+    deactivateHabit(db, id);
+    const future = futurePlanned(db, id);
+    deleteInstances(db, future);
+    return { habit: getHabit(db, id) as Habit, removed_instances: future.length };
+  });
+  return tx();
+}
+
+/**
+ * Hard-delete a habit with no history (#131) — the duplicate-habit
+ * case. Refuses, writing nothing, when the habit has any COMPLETE
+ * instance, any confirmed linked entry, or any envelope pull logged
+ * against it; those habits are retired (`retireHabit`), never erased.
+ * Otherwise removes the template, every instance, their (unconfirmed)
+ * entries, and its assignment rows.
+ */
+export function deleteHabit(
+  db: DB,
+  id: number,
+): { deleted_habit: number; deleted_instances: number; deleted_entries: number } {
+  const tx = db.transaction(() => {
+    const habit = getHabit(db, id);
+    if (!habit) throw new Error(`habit ${id} not found`);
+    const history = db
+      .prepare(
+        `SELECT
+           (SELECT COUNT(*) FROM habit_instances WHERE habit_id = ? AND status = 'COMPLETE') AS complete,
+           (SELECT COUNT(*) FROM habit_instances hi JOIN time_entry te ON te.id = hi.time_entry_id
+             WHERE hi.habit_id = ? AND te.status = 'CONFIRMED') AS confirmed,
+           (SELECT COUNT(*) FROM envelope_moves
+             WHERE (from_type = 'habit' AND from_id = ?) OR (to_type = 'habit' AND to_id = ?)) AS moves`,
+      )
+      .get(id, id, String(id), String(id)) as { complete: number; confirmed: number; moves: number };
+    if (history.complete > 0 || history.confirmed > 0 || history.moves > 0) {
+      throw new Error(
+        `habit ${id} has history (${history.complete} complete, ${history.confirmed} confirmed, ${history.moves} envelope moves); use retire_habit instead`,
+      );
+    }
+    const rows = db
+      .prepare('SELECT id, time_entry_id FROM habit_instances WHERE habit_id = ?')
+      .all(id) as Array<{ id: number; time_entry_id: number | null }>;
+    deleteInstances(db, rows);
+    db.prepare("DELETE FROM assignments WHERE envelope_type = 'habit' AND envelope_id = ?").run(String(id));
+    db.prepare('DELETE FROM habits WHERE id = ?').run(id);
+    return {
+      deleted_habit: id,
+      deleted_instances: rows.length,
+      deleted_entries: rows.filter((r) => r.time_entry_id != null).length,
+    };
+  });
+  return tx();
 }

@@ -7,17 +7,20 @@
  * Four drag kinds share one state machine:
  *   move       — grab a placement block's body, drop at a new day+time
  *   resize     — grab the bottom edge, adjust the end (min 15 min)
- *   place      — drag a task row from the panel onto the timeline
- *   move-habit — slide a habit instance within its frequency range
- *                (#118): fixed-days habits stay on their own day,
- *                times_per_week habits roam the week. Outside the
- *                range the ghost is invalid — leaving the range is a
- *                skip, never a move, and v1 simply blocks the drop.
- *                No resize kind for habits: chunk size is the
- *                instance duration (non-combinable).
+ *   place       — drag a task row from the panel onto the timeline
+ *   place-goal  — drag a goal row from the panel (a goal block)
+ *   place-habit — drag a habit row from the panel (one more instance
+ *                 this week, #138; offered only while under target)
+ *   move-habit  — slide a habit instance anywhere in its week (#129,
+ *                 both habit forms). Every rendered column is in the
+ *                 instance's week, so the grid itself is the range;
+ *                 the server still owns the habit-timezone week edge
+ *                 and 409s a crossing (leaving the week is a skip).
+ *                 No resize kind for habits: chunk size is the
+ *                 instance duration (non-combinable).
  */
 import { useCallback, useRef, useState } from 'react';
-import type { Goal, HabitInstance, Placement, Task } from '../types';
+import type { Goal, HabitInstance, HabitScore, Placement, Task } from '../types';
 import { placementLabel } from '../lib/weekdays';
 import {
   HOUR_END,
@@ -32,6 +35,7 @@ export type DragSource =
   | { kind: 'resize'; placement: Placement; color: string }
   | { kind: 'place'; task: Task; color: string }
   | { kind: 'place-goal'; goal: Goal; color: string }
+  | { kind: 'place-habit'; habit: HabitScore; color: string }
   | { kind: 'move-habit'; habit: HabitInstance; color: string };
 
 export interface DragGhost {
@@ -84,22 +88,28 @@ export function useTimelineDrag(opts: {
           ? source.task.title
           : source.kind === 'place-goal'
             ? source.goal.title
-            : source.kind === 'move-habit'
-              ? source.habit.habit_title
-              : placementLabel(source.placement);
+            : source.kind === 'place-habit'
+              ? source.habit.title
+              : source.kind === 'move-habit'
+                ? source.habit.habit_title
+                : placementLabel(source.placement);
       const duration =
         source.kind === 'place'
           ? source.task.duration_minutes
           : source.kind === 'place-goal'
             ? (source.goal.min_chunk_minutes ?? 60)
-            : source.kind === 'move-habit'
-              ? source.habit.habit_duration
-              : source.placement.duration_minutes;
+            : source.kind === 'place-habit'
+              ? source.habit.duration_minutes
+              : source.kind === 'move-habit'
+                ? source.habit.habit_duration
+                : source.placement.duration_minutes;
 
-      // Panel-origin drags ('place' / 'place-goal') have no origin
-      // block on the grid to measure a grab offset against.
+      // Panel-origin drags have no origin block on the grid to
+      // measure a grab offset against.
+      const fromPanel =
+        source.kind === 'place' || source.kind === 'place-goal' || source.kind === 'place-habit';
       const blockRect =
-        source.kind !== 'place' && source.kind !== 'place-goal'
+        !fromPanel
           ? (e.currentTarget.closest('.timeline-block') ?? e.currentTarget).getBoundingClientRect()
           : null;
       const grabOffsetY = blockRect ? e.clientY - blockRect.top : 0;
@@ -156,15 +166,7 @@ export function useTimelineDrag(opts: {
               : durationMinutes;
         }
 
-        // A fixed-days habit's valid dayIndex is its own day only;
-        // a times_per_week habit roams the rendered week (every grid
-        // column is inside its week — the payload bucketed it here).
-        const inRange =
-          s.source.kind !== 'move-habit' ||
-          s.source.habit.times_per_week != null ||
-          dayIndex === dayIndexOfIso(s.source.habit.start_at);
-        const valid =
-          inGridX && y > -20 && startMinutes >= HOUR_START * 60 && inRange;
+        const valid = inGridX && y > -20 && startMinutes >= HOUR_START * 60;
         const g: DragGhost = {
           kind: s.source.kind,
           dayIndex: s.source.kind === 'resize'
@@ -244,8 +246,7 @@ export function useTimelineDrag(opts: {
 
 function dayIndexOfIso(iso: string): number {
   // Day index within the rendered week comes from the block's own
-  // date — resize never changes the day, and a fixed-days habit may
-  // not leave it.
+  // date — resize never changes the day.
   const d = new Date(iso);
   const dow = d.getDay();
   return dow === 0 ? 6 : dow - 1; // Mon=0 … Sun=6

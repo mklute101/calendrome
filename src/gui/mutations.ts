@@ -27,7 +27,6 @@ import {
 import { notePlacedEntry } from '../supply.js';
 import { recordEntityWrite } from '../observability/spans.js';
 import {
-  moveTimeEntry,
   confirmTimeEntry,
   insertTimeEntry,
   skipTimeEntry,
@@ -39,6 +38,9 @@ import {
   completeHabitInstance,
   getHabit,
   moveHabitInstance,
+  moveEntryRespectingHabit,
+  placeHabitInstance,
+  unplaceHabitInstance,
   skipHabitInstance,
   type HabitInstance,
 } from '../habits.js';
@@ -90,7 +92,7 @@ export function guiMove(
   id: number,
   args: { start: string; end?: string },
 ): { placement: TimeEntryRow } {
-  moveTimeEntry(db, id, args.start, { new_end_at: args.end });
+  moveEntryRespectingHabit(db, id, args.start, { newEnd: args.end });
   return { placement: getEntry(db, id) };
 }
 
@@ -198,10 +200,29 @@ export function guiHabitSkip(db: DB, id: number): { instance: HabitInstance } {
 }
 
 /**
- * Move a habit instance within its frequency range (#118) — thin
- * wrapper over `moveHabitInstance`, which enforces the range rule
- * (fixed-days: its own day; times_per_week: its week) and moves the
- * linked entry without touching `scheduled_start`.
+ * Place one habit instance at a slot (#138) — same core as the
+ * `place_habit_instance` MCP tool, including the target-met refusal
+ * and the informational out-of-window note.
+ */
+export function guiPlaceHabit(
+  db: DB,
+  args: { habit_id: number; start: string },
+): { instance: HabitInstance; entry: TimeEntryRow; note?: string } {
+  const result = placeHabitInstance(db, args.habit_id, args.start);
+  const note = notePlacedEntry(db, result.entry.id);
+  return note ? { ...result, note } : result;
+}
+
+/** Undo a habit placement (#138): deletes the placed instance and its
+ *  entry, same core as `unplace_habit_instance`. */
+export function guiUnplaceHabit(db: DB, id: number): { deleted: HabitInstance } {
+  return unplaceHabitInstance(db, id);
+}
+
+/**
+ * Move a habit instance anywhere in its local week (#129) — thin
+ * wrapper over `moveHabitInstance`, which enforces the week rule and
+ * moves the linked entry without touching `scheduled_start`.
  */
 export function guiHabitMove(
   db: DB,
