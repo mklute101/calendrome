@@ -38,6 +38,28 @@ if (resolve(dbPath).endsWith('/calendrome.db')) {
   process.exit(1);
 }
 
+// Bookkeeping stamps follow the server clock convention (src/clock.ts,
+// #149): canonical UTC ISO, shifted by CALENDROME_NOW (a fixed ISO
+// timestamp or a -3d/+2h/-90m offset) — never SQL-side datetime('now').
+function stampNow() {
+  const override = process.env.CALENDROME_NOW;
+  let ms = Date.now();
+  if (override) {
+    const offset = /^([+-])(\d+)([mhd])$/.exec(override);
+    if (offset) {
+      const unit = { m: 60_000, h: 3_600_000, d: 86_400_000 }[offset[3]];
+      ms += (offset[1] === '-' ? -1 : 1) * Number(offset[2]) * unit;
+    } else {
+      ms = Date.parse(override);
+      if (Number.isNaN(ms)) {
+        console.error(`CALENDROME_NOW is not an ISO timestamp or offset: ${override}`);
+        process.exit(1);
+      }
+    }
+  }
+  return new Date(ms).toISOString().replace(/\.\d{3}Z$/, 'Z');
+}
+
 const db = new Database(dbPath);
 db.pragma('journal_mode = WAL');
 
@@ -123,11 +145,11 @@ const insertProject = db.prepare(
    VALUES (?, ?, ?, ?, ?)`,
 );
 const insertStanding = db.prepare(
-  `INSERT INTO assignments (envelope_type, envelope_id, week_start, minutes)
-   VALUES ('project', ?, 'standing', ?)`,
+  `INSERT INTO assignments (envelope_type, envelope_id, week_start, minutes, updated_at)
+   VALUES ('project', ?, 'standing', ?, ?)`,
 );
 insertProject.run('acme', 'ACME retainer', 'ACME', '#2563eb', 'work');
-insertStanding.run('acme', 1200); // 20h cap
+insertStanding.run('acme', 1200, stampNow()); // 20h cap
 insertProject.run('personal', 'Personal', 'PERSONAL', '#a855f7', 'personal');
 
 // 5. Week math — canonical UTC timestamps (YYYY-MM-DDTHH:MM:SSZ).

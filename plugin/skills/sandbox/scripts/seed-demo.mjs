@@ -29,6 +29,28 @@ if (resolve(dbPath).endsWith('/calendrome.db')) {
   process.exit(1);
 }
 
+// Bookkeeping stamps follow the server clock convention (src/clock.ts,
+// #149): canonical UTC ISO, shifted by CALENDROME_NOW (a fixed ISO
+// timestamp or a -3d/+2h/-90m offset) — never SQL-side datetime('now').
+function stampNow() {
+  const override = process.env.CALENDROME_NOW;
+  let ms = Date.now();
+  if (override) {
+    const offset = /^([+-])(\d+)([mhd])$/.exec(override);
+    if (offset) {
+      const unit = { m: 60_000, h: 3_600_000, d: 86_400_000 }[offset[3]];
+      ms += (offset[1] === '-' ? -1 : 1) * Number(offset[2]) * unit;
+    } else {
+      ms = Date.parse(override);
+      if (Number.isNaN(ms)) {
+        console.error(`CALENDROME_NOW is not an ISO timestamp or offset: ${override}`);
+        process.exit(1);
+      }
+    }
+  }
+  return new Date(ms).toISOString().replace(/\.\d{3}Z$/, 'Z');
+}
+
 const db = new Database(dbPath);
 db.pragma('journal_mode = WAL');
 
@@ -63,6 +85,32 @@ if (haveCategories.n === 0) {
 //    in the [acme, globex, hobby] set so we never touch user data).
 const seedProjectIds = ['acme', 'globex', 'hobby'];
 const placeholders = seedProjectIds.map(() => '?').join(',');
+// Envelope rows hanging off the seed projects and their habits/goals:
+// standing and per-week assignments plus Recent Moves, so a reseed
+// never inherits a stale week's override or pull.
+const seedHabitIds = db
+  .prepare(`SELECT id FROM habits WHERE project_id IN (${placeholders})`)
+  .all(...seedProjectIds)
+  .map((r) => String(r.id));
+const seedGoalIds = db
+  .prepare(`SELECT id FROM goals WHERE project_id IN (${placeholders})`)
+  .all(...seedProjectIds)
+  .map((r) => String(r.id));
+const wipeEnvelope = (type, ids) => {
+  if (ids.length === 0) return;
+  const idPh = ids.map(() => '?').join(',');
+  db.prepare(
+    `DELETE FROM assignments WHERE envelope_type = ? AND envelope_id IN (${idPh})`,
+  ).run(type, ...ids);
+  db.prepare(
+    `DELETE FROM envelope_moves
+      WHERE (from_type = ? AND from_id IN (${idPh}))
+         OR (to_type = ? AND to_id IN (${idPh}))`,
+  ).run(type, ...ids, type, ...ids);
+};
+wipeEnvelope('project', seedProjectIds);
+wipeEnvelope('habit', seedHabitIds);
+wipeEnvelope('goal', seedGoalIds);
 db.prepare(`DELETE FROM time_log WHERE task_id IN (SELECT id FROM tasks WHERE project_id IN (${placeholders}))`).run(...seedProjectIds);
 db.prepare(`DELETE FROM habit_instances WHERE habit_id IN (SELECT id FROM habits WHERE project_id IN (${placeholders}))`).run(...seedProjectIds);
 db.prepare(`DELETE FROM habits WHERE project_id IN (${placeholders})`).run(...seedProjectIds);
@@ -76,15 +124,16 @@ const insertProject = db.prepare(
    VALUES (?, ?, ?, ?, 'work')`,
 );
 const insertStanding = db.prepare(
-  `INSERT OR REPLACE INTO assignments (envelope_type, envelope_id, week_start, minutes)
-   VALUES ('project', ?, 'standing', ?)`,
+  `INSERT OR REPLACE INTO assignments (envelope_type, envelope_id, week_start, minutes, updated_at)
+   VALUES ('project', ?, 'standing', ?, ?)`,
 );
+const stamp = stampNow();
 insertProject.run('acme', 'Acme Corp', 'ACME', '#2563eb');
-insertStanding.run('acme', 1200); // 20h
+insertStanding.run('acme', 1200, stamp); // 20h
 insertProject.run('globex', 'Globex Industries', 'GLBX', '#16a34a');
-insertStanding.run('globex', 600); // 10h
+insertStanding.run('globex', 600, stamp); // 10h
 insertProject.run('hobby', 'Hobby Project', 'HOBBY', '#a855f7');
-insertStanding.run('hobby', 300); // 5h
+insertStanding.run('hobby', 300, stamp); // 5h
 
 // 5. Compute this week's Monday in local time → ISO with offset.
 function mondayOfThisWeek() {
