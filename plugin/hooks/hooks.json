@@ -1,0 +1,28 @@
+{
+  "description": "Start the calendrome week-view GUI when /calendrome:today or /calendrome:week runs",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/gui-autostart.mjs\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Skill",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/gui-autostart.mjs\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
