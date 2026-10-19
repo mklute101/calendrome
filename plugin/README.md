@@ -14,6 +14,10 @@ Calendar-as-source-of-truth task scheduling, exposed to Claude Code as a set of 
 | `/calendrome:sandbox` | Spin up a throwaway calendrome instance on an alt port + alt DB. Pass `demo` to pre-seed sample data. |
 | `/calendrome:harvest-push` | Push the week's calendrome time entries to Harvest, with a dry-run preview. |
 
+## Hooks
+
+`/calendrome:today` and `/calendrome:week` start the week-view GUI (`http://localhost:3737`) when it isn't already running, the same as calling `gui_start`. The hook finds the server through `calendrome_repo_path` in `~/.claude/calendrome.local.md` (default `~/dev/tools/calendrome`) and needs a built checkout (`npm run build`). If a GUI is already running but `npm run build` has produced a newer `server.js` since it started, the hook restarts it, including one started by hand with `npm run gui`, as long as the process on the port is this checkout's GUI server. A running process keeps serving the code it booted with, and an old build can fail against a database a newer build migrated. It never blocks the session: a missing build or a failed start just skips the GUI. Stop it with `gui_stop`.
+
 ## Settings
 
 Per-user configuration lives in `~/.claude/calendrome.local.md` (created and edited by `/calendrome:onboard`). Includes Atlassian IDs, calendar ID/timezone, JIRA project keys, and the prefix → calendrome project ID mapping.
