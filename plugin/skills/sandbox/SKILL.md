@@ -1,7 +1,7 @@
 ---
 name: sandbox
-description: Spin up a throwaway calendrome instance (alt DB + alt port) for testing or demos. Use when the user runs `/calendrome:sandbox`, says they want to "test calendrome safely", "play around without breaking my data", "demo calendrome", or "show calendrome to someone". Optional `demo` argument seeds rich realistic-looking sample data for screen-shares.
-argument-hint: "[demo]  — optional. Pass 'demo' to pre-seed rich sample data."
+description: Spin up a throwaway calendrome instance (alt DB + alt port) for testing or demos. Use when the user runs `/calendrome:sandbox`, says they want to "test calendrome safely", "play around without breaking my data", "demo calendrome", or "show calendrome to someone". Optional `demo` argument copies the committed fictional demo database for screen-shares.
+argument-hint: "[demo]  — optional. Pass 'demo' to copy the committed demo database."
 allowed-tools: Bash, Read, Write
 ---
 
@@ -30,9 +30,14 @@ Read `~/.claude/calendrome.local.md` to find `calendrome_repo_path`. If no setti
 ### Step 2: Decide DB target
 
 - Default sandbox DB: `<calendrome_repo_path>/sandbox.db`
-- If the user passed `demo`: same path, but seed rich data afterward.
+- In `demo` mode, copy the committed `<calendrome_repo_path>/demo/calendrome-demo.db` to this path. The committed file is the source; the sandbox copy is the working database.
 
-If `<calendrome_repo_path>/sandbox.db` already exists, ask: "Sandbox DB exists from a previous run. Reuse, or wipe and re-seed?"
+If `<calendrome_repo_path>/sandbox.db` already exists:
+
+- In normal sandbox mode, ask whether to reuse it or wipe it and start with an empty DB.
+- In `demo` mode, ask whether to reuse it or replace it with the committed demo database.
+
+Never replace an existing sandbox without the user's choice.
 
 ### Step 3: Print start instructions
 
@@ -49,22 +54,15 @@ CALENDROME_DB=./sandbox.db PORT=3838 npm run gui
 # → http://localhost:3838
 ```
 
-### Step 4: Seed (if `demo` mode)
+### Step 4: Copy the demo database (if `demo` mode)
 
-If the user invoked `/calendrome:sandbox demo`, run the seed script:
+If the user invoked `/calendrome:sandbox demo` and chose a new or replacement sandbox, stop any process using the sandbox DB. For a replacement, remove the existing sandbox DB and its SQLite sidecars only after the user chose replacement. Then copy the committed demo DB:
 
 ```bash
-CALENDROME_DB=<calendrome_repo_path>/sandbox.db node <calendrome_repo_path>/plugin/skills/sandbox/scripts/seed-demo.mjs
+cp "<calendrome_repo_path>/demo/calendrome-demo.db" "<calendrome_repo_path>/sandbox.db"
 ```
 
-The seed script populates:
-- 3 fictional projects with weekly budgets (Acme Corp, Globex, Hobby)
-- Default categories (work, personal)
-- A week of scheduled tasks across the three projects
-- A few completed tasks with logged time
-- One placeholder task and one habit
-
-(The seed script is the SQL fixtures equivalent of the in-memory tests in `tests/`.)
+If the user chose to reuse an existing sandbox, leave it unchanged. The copy reads `demo/calendrome-demo.db` and writes `sandbox.db`; replacement cleanup may remove only the user-approved sandbox DB and its SQLite sidecars. The committed demo DB is fictional and is built through the real MCP tool path by `demo/play-demo.mjs`, whose existing guard against writing to `calendrome.db` remains in place.
 
 ### Step 4b: Commitments seed (on request)
 
@@ -121,25 +119,18 @@ rm <calendrome_repo_path>/sandbox.db
 
 Do not auto-rm the file.
 
-## Demo seed contents
+## Demo database contents
 
-The demo seed (see `scripts/seed-demo.mjs`) produces a realistic-feeling fictional setup:
-
-- **Acme Corp** — 20h/week budget, 4 active tasks across the week
-- **Globex** — 10h/week budget, 2 tasks (one over-budget for visual effect)
-- **Hobby** — 5h/week, 1 task (under-utilized — shows the visual cue)
-- A morning standup meeting habit
-- A logged Monday entry on Acme to populate the "Spent" column
-
-This gives a screen-share viewer enough variety to see budgets, scheduling, and time logs in action.
+The copied database contains the fictional, three-week planning scenario documented in [`demo/README.md`](../../../demo/README.md). It is produced by `demo/play-demo.mjs` through real MCP tool calls, so the sandbox uses the same data path as the application instead of maintaining a second SQL fixture.
 
 ## Why setup-only (not full lifecycle)
 
-Real lifecycle management for two background node processes from inside a Claude Code skill is fragile: PID tracking across sessions, port conflicts, and silent failures are all common. Letting the user run `npm start` and `npm run gui` themselves keeps responsibility in the right place. The skill's value is configuration + seed data, not process supervision.
+Real lifecycle management for two background node processes from inside a Claude Code skill is fragile: PID tracking across sessions, port conflicts, and silent failures are all common. Letting the user run `npm start` and `npm run gui` themselves keeps responsibility in the right place. The skill's value is configuration + a safe demo DB copy, not process supervision.
 
 ## Additional resources
 
-- `scripts/seed-demo.mjs` — demo data seeder used by `/calendrome:sandbox demo`
+- `../../../demo/calendrome-demo.db` — committed fictional database copied by `/calendrome:sandbox demo`
+- `../../../demo/play-demo.mjs` — rebuilds the demo database through real tool calls
 - `scripts/seed-commitments.mjs` — commitments seeder (the
   design doc's worked examples); prints an envelope-call cheat-sheet
 - `scripts/seed-helpers.mjs` — clock-convention timestamps and envelope
